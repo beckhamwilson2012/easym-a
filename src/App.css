@@ -36,3 +36,61 @@
     transform: rotate(360deg);
   }
 }
+
+/* Range input (cash percentage slider) */
+input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #0F2244;
+  cursor: pointer;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+}
+
+input[type='range']::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #0F2244;
+  cursor: pointer;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-3px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.collapsible-content {
+  animation: slideDown 0.15s ease-in;
+}
+
+/* Cash percentage number input — hide spinners */
+.cash-pct-input::-webkit-inner-spin-button,
+.cash-pct-input::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.cash-pct-input {
+  -moz-appearance: textfield;
+}
+
+/* Mobile: larger thumb touch targets for cash % slider */
+@media (max-width: 767px) {
+  .cash-pct-slider::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+  }
+  .cash-pct-slider::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+  }
+}
