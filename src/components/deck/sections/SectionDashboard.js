@@ -3,7 +3,7 @@ import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
   computeFlags, computeDealScore, buildNarrative,
-  calcProFormaEPS, PRICE_MULTS, PRICE_LABELS, SYN_MULTS, SYN_LABELS,
+  calcProFormaEPS, SYN_MULTS, SYN_LABELS,
 } from '../../../utils/dealCalc';
 import { calcStockIssuancePct, triggers199Rule } from '../../../lib/dealMath';
 import {
@@ -75,8 +75,29 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     ? inputs.synergiesY1
     : Math.max(1, Math.round(0.02 * ((inputs.companyARevenue || 0) + (inputs.companyBRevenue || 0))));
 
-  const sensitivityData = PRICE_MULTS.map(pm =>
-    SYN_MULTS.map(sm => calcProFormaEPS(inputs.offerPricePerShare * pm, synSensBase * sm, inputs))
+  // Row anchoring: 5 rows centered on current premium (5% steps)
+  const rawPremium = parseFloat(results.purchasePremium) || 0;
+  const roundedPremium = Math.round(rawPremium / 5) * 5;
+  const rowPremiums = [
+    roundedPremium - 10,
+    roundedPremium - 5,
+    roundedPremium,
+    roundedPremium + 5,
+    roundedPremium + 10,
+  ].map(p => Math.max(0, p));
+  const sensitivityCurrentRow = 2; // center row is always "current"
+
+  // Target market price (basis for premium calculation — same formula as dealCalc.js)
+  const targetMktPrice = inputs.companyBEPS > 0
+    ? inputs.companyBEPS * 15
+    : inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare / (1 + rawPremium / 100) : inputs.offerPricePerShare;
+
+  const rowOfferPrices = rowPremiums.map(prem =>
+    targetMktPrice > 0 ? targetMktPrice * (1 + prem / 100) : inputs.offerPricePerShare
+  );
+
+  const sensitivityData = rowOfferPrices.map(offerPrice =>
+    SYN_MULTS.map(sm => calcProFormaEPS(offerPrice, synSensBase * sm, inputs))
   );
 
   const handleExportPDF = async () => {
@@ -322,15 +343,20 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 </tr>
               </thead>
               <tbody>
-                {PRICE_LABELS.map((pl, i) => (
+                {rowPremiums.map((prem, i) => {
+                  const isCurRow = i === sensitivityCurrentRow;
+                  const offerPriceAtRow = rowOfferPrices[i];
+                  return (
                   <tr key={i}>
-                    <td style={{ padding: '8px 10px', background: i === 2 ? '#E8EFFE' : '#F9FAFB', borderBottom: '1px solid #F3F4F6', color: i === 2 ? '#0F2244' : '#6B7280', fontWeight: i === 2 ? 700 : 400 }}>
-                      {pl}
-                      {i !== 2 && <span style={{ fontSize: 10, display: 'block', color: '#9CA3AF' }}>${(inputs.offerPricePerShare * PRICE_MULTS[i]).toFixed(2)}</span>}
+                    <td style={{ padding: '8px 10px', background: isCurRow ? '#E8EFFE' : '#F9FAFB', borderBottom: '1px solid #F3F4F6', color: isCurRow ? '#0F2244' : '#6B7280', fontWeight: isCurRow ? 700 : 400 }}>
+                      <span>{prem}% premium</span>
+                      <span style={{ fontSize: 10, display: 'block', color: '#9CA3AF' }}>
+                        ${offerPriceAtRow.toFixed(2)}/share
+                      </span>
                     </td>
                     {SYN_MULTS.map((_, j) => {
                       const eps = sensitivityData?.[i]?.[j];
-                      const isCurrent = i === 2 && j === 2;
+                      const isCurrent = i === sensitivityCurrentRow && j === 2;
                       const breakeven = inputs.companyAEPS;
                       const delta = (eps !== null && breakeven > 0) ? (eps - breakeven) / breakeven : 0;
                       let bg, color;
@@ -348,7 +374,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                       );
                     })}
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
