@@ -14,6 +14,7 @@ export function CashPercentageSlider({
 }) {
   const [open, setOpen] = useState(false);
   const [warnOpen, setWarnOpen] = useState(false);
+  const [sliderActive, setSliderActive] = useState(false);
   const containerRef = useRef(null);
   const isTouch = typeof window !== 'undefined' && 'ontouchstart' in window;
 
@@ -104,6 +105,10 @@ export function CashPercentageSlider({
           step={1}
           value={pct}
           onChange={(e) => onChange(Number(e.target.value))}
+          onPointerDown={() => setSliderActive(true)}
+          onPointerUp={() => setSliderActive(false)}
+          onFocus={() => setSliderActive(true)}
+          onBlur={() => setSliderActive(false)}
           style={{
             width: '100%', appearance: 'none', height: 6,
             borderRadius: 3, outline: 'none', cursor: 'pointer',
@@ -111,8 +116,8 @@ export function CashPercentageSlider({
           }}
         />
 
-        {/* Tick marks */}
-        <div style={{ position: 'relative', height: 18 }}>
+        {/* Tick marks — labels only on interaction, 19.9% red line always visible */}
+        <div style={{ position: 'relative', height: sliderActive ? 18 : 8 }}>
           {TICKS.map((tick) => {
             const is199 = tick === 19.9;
             return (
@@ -126,19 +131,23 @@ export function CashPercentageSlider({
                   pointerEvents: 'none',
                 }}
               >
-                <div style={{
-                  width: 1, height: 4,
-                  background: is199 ? '#DC2626' : '#9CA3AF',
-                  marginBottom: 1,
-                }} />
-                <span style={{
-                  fontSize: 9,
-                  color: is199 ? '#DC2626' : '#9CA3AF',
-                  fontWeight: is199 ? 700 : 400,
-                  whiteSpace: 'nowrap',
-                }}>
-                  {is199 ? '19.9%' : `${tick}%`}
-                </span>
+                {(is199 || sliderActive) && (
+                  <div style={{
+                    width: 1, height: 4,
+                    background: is199 ? '#DC2626' : '#9CA3AF',
+                    marginBottom: 1,
+                  }} />
+                )}
+                {sliderActive && (
+                  <span style={{
+                    fontSize: 9,
+                    color: is199 ? '#DC2626' : '#9CA3AF',
+                    fontWeight: is199 ? 700 : 400,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {is199 ? '19.9%' : `${tick}%`}
+                  </span>
+                )}
               </div>
             );
           })}
