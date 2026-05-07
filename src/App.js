@@ -210,10 +210,11 @@ function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSour
   );
 }
 
-function PremiumCaption({ offerPrice, sharePrice }) {
+function PremiumCaption({ offerPrice, sharePrice, showUnavailable }) {
   const price = parseFloat(offerPrice) || 0;
   if (!price) return null;
   if (!sharePrice) {
+    if (!showUnavailable) return null;
     return (
       <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4, fontStyle: 'italic' }}>
         Current price unavailable — premium cannot be computed
@@ -337,8 +338,10 @@ function App() {
   const [bankFactsA, setBankFactsA] = useState(null);
   const [bankFactsB, setBankFactsB] = useState(null);
   const [priceStatusB, setPriceStatusB] = useState({ loading: false, price: null, source: null, attempts: [] });
+  const [offerPriceTouched, setOfferPriceTouched] = useState(false);
 
   const handleChange = (e) => setInputs(prev => ({ ...prev, [e.target.name]: parseFloat(e.target.value) || 0 }));
+  const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
 
   // Auto-set cash% default when bank mode activates/deactivates
   useEffect(() => {
@@ -409,6 +412,7 @@ function App() {
     setDataSrcA(''); setDataSrcB('');
     setBankFactsA(null); setBankFactsB(null);
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
+    setOfferPriceTouched(false);
   };
 
   const handleSaveAnalysis = () => {
@@ -701,9 +705,9 @@ function App() {
                       )}
 
                       {/* Offer price input + conditional premium caption */}
-                      <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleChange} placeholder="e.g., 974.06" />
+                      <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange} placeholder="e.g., 974.06" />
                       {inputs.offerPricePerShare > 0 && (
-                        <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} />
+                        <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} />
                       )}
 
                       {/* Cash/Stock Mix */}
@@ -838,9 +842,9 @@ function App() {
                 {/* ── Deal Terms (manual) ────────────────────────────── */}
                 <div style={cardStyle}>
                   <h2 style={sectionTitle}>Deal Terms</h2>
-                  <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleChange} placeholder="e.g., 974.06" />
+                  <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange} placeholder="e.g., 974.06" />
                   {inputs.offerPricePerShare > 0 && (
-                    <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} />
+                    <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} />
                   )}
                   <CashPercentageSlider
                     value={inputs.cashPercent}
