@@ -331,9 +331,16 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                     {SYN_MULTS.map((_, j) => {
                       const eps = sensitivityData?.[i]?.[j];
                       const isCurrent = i === 2 && j === 2;
-                      const acc = eps !== null && eps > inputs.companyAEPS;
-                      const bg    = isCurrent ? '#0F2244' : eps === null ? '#F9FAFB' : acc ? '#F0FDF4' : '#FEF2F2';
-                      const color = isCurrent ? '#fff'    : eps === null ? '#9CA3AF' : acc ? '#166534' : '#991B1B';
+                      const breakeven = inputs.companyAEPS;
+                      const delta = (eps !== null && breakeven > 0) ? (eps - breakeven) / breakeven : 0;
+                      let bg, color;
+                      if (isCurrent) { bg = '#0F2244'; color = '#fff'; }
+                      else if (eps === null) { bg = '#F9FAFB'; color = '#9CA3AF'; }
+                      else if (delta < -0.10) { bg = '#FEE2E2'; color = '#991B1B'; }
+                      else if (delta < -0.03) { bg = '#FEF2F2'; color = '#B91C1C'; }
+                      else if (delta < +0.03) { bg = '#F3F4F6'; color = '#374151'; }
+                      else if (delta < +0.10) { bg = '#F0FDF4'; color = '#166534'; }
+                      else { bg = '#DCFCE7'; color = '#14532D'; }
                       return (
                         <td key={j} style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderBottom: '1px solid #F3F4F6', borderLeft: '1px solid #F3F4F6', color, fontWeight: isCurrent ? 700 : 500 }}>
                           {eps === null ? 'N/A' : fmtPerShare(eps)}
