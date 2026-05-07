@@ -240,12 +240,24 @@ function PriceDiagnostic({ attempts }) {
   const SOURCE_NAMES = { fmp: 'FMP', finnhub: 'Finnhub', alphavantage: 'Alpha Vantage' };
   return (
     <div style={{ fontSize: 11, marginTop: -4, marginBottom: 8 }}>
-      <button onClick={() => setOpen(o => !o)}
-        style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 11, color: '#6B7280', padding: 0, textDecoration: 'underline' }}>
-        Why no live price? {open ? '↑' : '↓'}
-      </button>
+      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+        <span style={{ color: '#6B7280' }}>based on EPS × P/E blend</span>
+        <button
+          onClick={() => setOpen(o => !o)}
+          aria-expanded={open}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer',
+            fontSize: 12, color: '#0070D2', padding: '0 0 0 4px',
+            lineHeight: 1, display: 'inline-flex', alignItems: 'center',
+            transition: 'transform 0.15s',
+            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = '#004A99'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = '#0070D2'; }}
+        >▾</button>
+      </span>
       {open && (
-        <div style={{ marginTop: 4, padding: '6px 10px', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 4 }}>
+        <div className="collapsible-content" style={{ marginTop: 4, padding: '6px 10px', background: '#F8FAFC', borderTop: '1px solid #E5E7EB', borderRadius: 4 }}>
           {attempts.length === 0
             ? <span style={{ color: '#9CA3AF' }}>No price sources configured.</span>
             : attempts.map(a => (
@@ -674,7 +686,7 @@ function App() {
                           : `${fmtPerShare(suggestedPrice)}/share`;
                         const captionText = sp > 0
                           ? `30% control premium over current ${fmtPerShare(sp)} share price`
-                          : 'based on EPS × P/E blend — no live price available';
+                          : null;
                         return (
                           <SuggestionBadge
                             primary={primaryText}
