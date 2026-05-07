@@ -512,9 +512,6 @@ function App() {
   const synAuto2 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 2) : null;
   const synAuto3 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 3) : null;
   const hasSynSuggestions = synAuto1 != null && synAuto2 != null && synAuto3 != null;
-  const synLabel = hasSynSuggestions
-    ? `${fmtMoney(synAuto1)} → ${fmtMoney(synAuto2)} → ${fmtMoney(synAuto3)}`
-    : null;
   // ── Layout helpers ────────────────────────────────────────────────────────────
 
   const scrollToApp = () => document.getElementById('app-section').scrollIntoView({ behavior: 'smooth' });
@@ -718,23 +715,6 @@ function App() {
 
                       {hasSynSuggestions ? (
                         <>
-                          {/* Summary row */}
-                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                            background: '#F8FAFC', border: '1px solid #E5E7EB', borderRadius: 6,
-                            padding: '7px 10px', marginBottom: 6 }}>
-                            <div style={{ fontSize: 12, color: '#0F2244', fontWeight: 600 }}>
-                              💡 {synLabel}
-                            </div>
-                            <button
-                              onClick={() => setInputs(prev => ({ ...prev, synergiesY1: synAuto1, synergiesY2: synAuto2, synergiesY3: synAuto3 }))}
-                              style={{ background: '#0F2244', color: '#fff', border: 'none',
-                                borderRadius: 4, padding: '3px 8px', fontSize: 11,
-                                cursor: 'pointer', marginLeft: 8, flexShrink: 0 }}>
-                              Use all
-                            </button>
-                          </div>
-
-                          {/* Per-year badges + inputs */}
                           {[1, 2, 3].map(yr => {
                             const suggested = yr === 1 ? synAuto1 : yr === 2 ? synAuto2 : synAuto3;
                             const name = `synergiesY${yr}`;
@@ -859,20 +839,6 @@ function App() {
                     }
                     return (
                       <>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                          background: '#F8FAFC', border: '1px solid #E5E7EB', borderRadius: 6,
-                          padding: '7px 10px', marginBottom: 6 }}>
-                          <div style={{ fontSize: 12, color: '#0F2244', fontWeight: 600 }}>
-                            💡 {fmtMoney(s1)} → {fmtMoney(s2)} → {fmtMoney(s3)}
-                          </div>
-                          <button
-                            onClick={() => setInputs(prev => ({ ...prev, synergiesY1: s1, synergiesY2: s2, synergiesY3: s3 }))}
-                            style={{ background: '#0F2244', color: '#fff', border: 'none',
-                              borderRadius: 4, padding: '3px 8px', fontSize: 11,
-                              cursor: 'pointer', marginLeft: 8, flexShrink: 0 }}>
-                            Use all
-                          </button>
-                        </div>
                         {[1, 2, 3].map(yr => {
                           const suggested = yr === 1 ? s1 : yr === 2 ? s2 : s3;
                           const name = `synergiesY${yr}`;
