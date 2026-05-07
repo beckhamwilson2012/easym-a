@@ -13,8 +13,6 @@ export function CashPercentageSlider({
   acquirerSharesOutstanding,
 }) {
   const [open, setOpen] = useState(false);
-  const [warnOpen, setWarnOpen] = useState(false);
-  const [sliderActive, setSliderActive] = useState(false);
   const containerRef = useRef(null);
   const isTouch = typeof window !== 'undefined' && 'ontouchstart' in window;
 
@@ -26,13 +24,6 @@ export function CashPercentageSlider({
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [open]);
-
-  useEffect(() => {
-    if (!warnOpen) return;
-    const handler = (e) => { if (e.key === 'Escape') setWarnOpen(false); };
-    document.addEventListener('keydown', handler);
-    return () => document.removeEventListener('keydown', handler);
-  }, [warnOpen]);
 
   const pct = Number(value) || 0;
   const band = getCashBand(pct);
@@ -76,24 +67,6 @@ export function CashPercentageSlider({
         <span style={{ marginLeft: 'auto', fontSize: 12, fontWeight: 700, color: band.color }}>
           {pct}% cash / {100 - pct}% stock
         </span>
-        {warningColor && (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-            <span style={{ fontSize: 11, color: warningColor, fontWeight: 600 }}>
-              {hitMajority ? '⚠ majority stock' : '🟡 vote required'}
-            </span>
-            <button
-              onClick={() => setWarnOpen(o => !o)}
-              aria-expanded={warnOpen}
-              style={{
-                background: 'none', border: 'none', cursor: 'pointer',
-                fontSize: 12, color: '#0070D2', padding: '0 0 0 2px',
-                lineHeight: 1, display: 'inline-flex', alignItems: 'center',
-                transition: 'transform 0.15s',
-                transform: warnOpen ? 'rotate(180deg)' : 'rotate(0deg)',
-              }}
-            >▾</button>
-          </span>
-        )}
       </div>
 
       {/* Slider track */}
@@ -105,10 +78,6 @@ export function CashPercentageSlider({
           step={1}
           value={pct}
           onChange={(e) => onChange(Number(e.target.value))}
-          onPointerDown={() => setSliderActive(true)}
-          onPointerUp={() => setSliderActive(false)}
-          onFocus={() => setSliderActive(true)}
-          onBlur={() => setSliderActive(false)}
           style={{
             width: '100%', appearance: 'none', height: 6,
             borderRadius: 3, outline: 'none', cursor: 'pointer',
@@ -116,8 +85,8 @@ export function CashPercentageSlider({
           }}
         />
 
-        {/* Tick marks — labels only on interaction, 19.9% red line always visible */}
-        <div style={{ position: 'relative', height: sliderActive ? 18 : 8 }}>
+        {/* Tick marks */}
+        <div style={{ position: 'relative', height: 18 }}>
           {TICKS.map((tick) => {
             const is199 = tick === 19.9;
             return (
@@ -131,42 +100,37 @@ export function CashPercentageSlider({
                   pointerEvents: 'none',
                 }}
               >
-                {(is199 || sliderActive) && (
-                  <div style={{
-                    width: 1, height: 4,
-                    background: is199 ? '#DC2626' : '#9CA3AF',
-                    marginBottom: 1,
-                  }} />
-                )}
-                {sliderActive && (
-                  <span style={{
-                    fontSize: 9,
-                    color: is199 ? '#DC2626' : '#9CA3AF',
-                    fontWeight: is199 ? 700 : 400,
-                    whiteSpace: 'nowrap',
-                  }}>
-                    {is199 ? '19.9%' : `${tick}%`}
-                  </span>
-                )}
+                <div style={{
+                  width: 1, height: 4,
+                  background: is199 ? '#DC2626' : '#9CA3AF',
+                  marginBottom: 1,
+                }} />
+                <span style={{
+                  fontSize: 9,
+                  color: is199 ? '#DC2626' : '#9CA3AF',
+                  fontWeight: is199 ? 700 : 400,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {is199 ? '19.9%' : `${tick}%`}
+                </span>
               </div>
             );
           })}
         </div>
       </div>
 
-      {/* Regulatory warning dropdown */}
-      {warnOpen && warningColor && stockIssuancePct != null && (
-        <div
-          className="collapsible-content"
-          style={{
-            background: '#F8FAFC', borderTop: '1px solid #E5E7EB',
-            padding: 12, fontSize: 12, color: '#374151',
-            lineHeight: 1.5, marginTop: 4, borderRadius: 4,
-          }}
-        >
+      {/* Regulatory warning callout */}
+      {warningColor && stockIssuancePct != null && (
+        <div style={{
+          marginTop: 6, padding: '8px 10px', borderRadius: 6,
+          background: hitMajority ? '#FEE2E2' : '#FEF3C7',
+          border: `1px solid ${hitMajority ? '#FECACA' : '#FDE68A'}`,
+          fontSize: 12, color: hitMajority ? '#991B1B' : '#92400E',
+          lineHeight: 1.5,
+        }}>
           {hitMajority
-            ? `Stock issuance of ${stockIssuancePct.toFixed(1)}% exceeds the 50% majority threshold, triggering heightened board scrutiny and potential regulatory review. Most large mergers avoid majority-stock structures due to dilution risk and shareholder approval requirements.`
-            : `Stock issuance of ${stockIssuancePct.toFixed(1)}% exceeds the 19.9% threshold under NYSE Listed Company Manual §312.03 and Nasdaq Rule 5635. The acquirer must hold a shareholder vote before closing. Adds 2–4 months to the timeline; vote can fail.`
+            ? `⚠ Stock issuance of ${stockIssuancePct.toFixed(1)}% exceeds the 50% majority threshold, triggering heightened board scrutiny and potential regulatory review. Most large mergers avoid majority-stock structures due to dilution risk and shareholder approval requirements.`
+            : `🟡 Stock issuance of ${stockIssuancePct.toFixed(1)}% exceeds the 19.9% threshold under NYSE Listed Company Manual §312.03 and Nasdaq Rule 5635. The acquirer must hold a shareholder vote before closing. Adds 2–4 months to the timeline; vote can fail.`
           }
         </div>
       )}

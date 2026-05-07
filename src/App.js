@@ -19,7 +19,6 @@ import {
   buildSynergyTooltip,
 } from './lib/suggestionTooltips';
 import { explainPremium } from './lib/explanations';
-import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import './App.css';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -237,42 +236,14 @@ function PremiumCaption({ offerPrice, sharePrice, showUnavailable }) {
 
 
 function PriceDiagnostic({ attempts }) {
-  const [open, setOpen] = useState(false);
   const SOURCE_NAMES = { fmp: 'FMP', finnhub: 'Finnhub', alphavantage: 'Alpha Vantage' };
   return (
-    <div style={{ fontSize: 11, marginTop: -4, marginBottom: 8 }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center' }}>
-        <span style={{ color: '#6B7280' }}>based on EPS × P/E blend</span>
-        <button
-          onClick={() => setOpen(o => !o)}
-          aria-expanded={open}
-          style={{
-            background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 12, color: '#0070D2', padding: '0 0 0 4px',
-            lineHeight: 1, display: 'inline-flex', alignItems: 'center',
-            transition: 'transform 0.15s',
-            transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = '#004A99'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = '#0070D2'; }}
-        >▾</button>
-      </span>
-      {open && (
-        <div className="collapsible-content" style={{ marginTop: 4, padding: '6px 10px', background: '#F8FAFC', borderTop: '1px solid #E5E7EB', borderRadius: 4 }}>
-          {attempts.length === 0
-            ? <span style={{ color: '#9CA3AF' }}>No price sources configured.</span>
-            : attempts.map(a => (
-                <div key={a.source} style={{ display: 'flex', gap: 6, alignItems: 'flex-start', marginBottom: 3 }}>
-                  <span style={{ color: a.ok ? '#16A34A' : '#DC2626', fontWeight: 700, flexShrink: 0 }}>{a.ok ? '✓' : '✗'}</span>
-                  <span style={{ color: '#374151' }}>{SOURCE_NAMES[a.source] || a.source}</span>
-                  {a.error && <span style={{ color: '#9CA3AF', fontStyle: 'italic' }}>— {a.error}</span>}
-                  {!a.ok && !a.error && a.source !== 'fmp' && (
-                    <span style={{ color: '#9CA3AF', fontStyle: 'italic' }}>— no data or API key not configured</span>
-                  )}
-                </div>
-              ))
-          }
-        </div>
+    <div style={{ fontSize: 11, marginTop: -4, marginBottom: 8, color: '#9CA3AF' }}>
+      Live price unavailable — suggestion based on EPS × P/E blend.
+      {attempts.length > 0 && (
+        <span style={{ marginLeft: 4 }}>
+          ({attempts.map(a => `${SOURCE_NAMES[a.source] || a.source}: ${a.ok ? '✓' : '✗'}`).join(', ')})
+        </span>
       )}
     </div>
   );
@@ -544,10 +515,6 @@ function App() {
   const synLabel = hasSynSuggestions
     ? `${fmtMoney(synAuto1)} → ${fmtMoney(synAuto2)} → ${fmtMoney(synAuto3)}`
     : null;
-  const synSubtitle = bankDeal
-    ? '5% / 8% / 11% of combined non-interest expense'
-    : '2% / 3.5% / 5% of combined revenue';
-
   // ── Layout helpers ────────────────────────────────────────────────────────────
 
   const scrollToApp = () => document.getElementById('app-section').scrollIntoView({ behavior: 'smooth' });
@@ -767,23 +734,20 @@ function App() {
                             </button>
                           </div>
 
-                          {/* Ramp subtitle with chevron */}
-                          <CollapsibleNote label={`Suggested ramp: ${synSubtitle}`}>
-                            {bankDeal
-                              ? 'Cost savings ramp based on 5% / 8% / 11% of combined non-interest expense. Year 1 reflects initial back-office consolidation; Years 2–3 include branch rationalization and workforce optimization. These targets are consistent with large bank merger precedents.'
-                              : 'Synergy ramp based on 2% / 3.5% / 5% of combined revenue. Year 1 captures quick-win cost overlaps; Years 2–3 include procurement, headcount reduction, and revenue cross-sell synergies. Industry precedents suggest 2–5% combined synergies over a 3-year integration window.'}
-                          </CollapsibleNote>
-
                           {/* Per-year badges + inputs */}
                           {[1, 2, 3].map(yr => {
                             const suggested = yr === 1 ? synAuto1 : yr === 2 ? synAuto2 : synAuto3;
                             const name = `synergiesY${yr}`;
                             const fieldLabel = bankDeal ? `Year ${yr} Cost Savings ($M)` : `Year ${yr} Synergies ($M)`;
+                            const pcts = bankDeal ? ['5%', '8%', '11%'] : ['2%', '3.5%', '5%'];
+                            const base = bankDeal ? 'combined non-interest expense' : 'combined revenue';
+                            const caption = `Year ${yr}: ${pcts[yr - 1]} of ${base}`;
                             return (
                               <div key={yr}>
                                 {suggested != null && (
                                   <SuggestionBadge
                                     primary={fmtMoneyDual(suggested)}
+                                    caption={caption}
                                     tooltip={buildSynergyTooltip(partialTarget, partialAcquirer, yr)}
                                     onUse={() => setInputs(prev => ({ ...prev, [name]: suggested }))}
                                   />
@@ -909,18 +873,17 @@ function App() {
                             Use all
                           </button>
                         </div>
-                        {/* Ramp subtitle with chevron */}
-                        <CollapsibleNote label="Suggested ramp: 2% / 3.5% / 5% of combined revenue">
-                          Synergy ramp based on 2% / 3.5% / 5% of combined revenue. Year 1 captures quick-win cost overlaps; Years 2–3 include procurement, headcount reduction, and revenue cross-sell synergies. Industry precedents suggest 2–5% combined synergies over a 3-year integration window.
-                        </CollapsibleNote>
                         {[1, 2, 3].map(yr => {
                           const suggested = yr === 1 ? s1 : yr === 2 ? s2 : s3;
                           const name = `synergiesY${yr}`;
+                          const pcts = ['2%', '3.5%', '5%'];
+                          const caption = `Year ${yr}: ${pcts[yr - 1]} of combined revenue`;
                           return (
                             <div key={yr}>
                               {suggested != null && (
                                 <SuggestionBadge
                                   primary={fmtMoneyDual(suggested)}
+                                  caption={caption}
                                   tooltip={buildSynergyTooltip(manualTarget, manualAcquirer, yr)}
                                   onUse={() => setInputs(prev => ({ ...prev, [name]: suggested }))}
                                 />
