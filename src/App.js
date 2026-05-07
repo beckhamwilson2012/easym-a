@@ -19,6 +19,7 @@ import {
   buildSynergyTooltip,
 } from './lib/suggestionTooltips';
 import { explainPremium } from './lib/explanations';
+import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import './App.css';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -750,8 +751,12 @@ function App() {
                             </button>
                           </div>
 
-                          {/* Ramp subtitle — plain text for now, chevron added in next commit */}
-                          <div style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 10 }}>{synSubtitle}</div>
+                          {/* Ramp subtitle with chevron */}
+                          <CollapsibleNote label={`Suggested ramp: ${synSubtitle}`}>
+                            {bankDeal
+                              ? 'Cost savings ramp based on 5% / 8% / 11% of combined non-interest expense. Year 1 reflects initial back-office consolidation; Years 2–3 include branch rationalization and workforce optimization. These targets are consistent with large bank merger precedents.'
+                              : 'Synergy ramp based on 2% / 3.5% / 5% of combined revenue. Year 1 captures quick-win cost overlaps; Years 2–3 include procurement, headcount reduction, and revenue cross-sell synergies. Industry precedents suggest 2–5% combined synergies over a 3-year integration window.'}
+                          </CollapsibleNote>
 
                           {/* Per-year badges + inputs */}
                           {[1, 2, 3].map(yr => {
@@ -888,8 +893,10 @@ function App() {
                             Use all
                           </button>
                         </div>
-                        {/* Ramp subtitle — plain text for now, chevron added in next commit */}
-                        <div style={{ fontSize: 11, color: '#9CA3AF', marginBottom: 10 }}>2% / 3.5% / 5% of combined revenue</div>
+                        {/* Ramp subtitle with chevron */}
+                        <CollapsibleNote label="Suggested ramp: 2% / 3.5% / 5% of combined revenue">
+                          Synergy ramp based on 2% / 3.5% / 5% of combined revenue. Year 1 captures quick-win cost overlaps; Years 2–3 include procurement, headcount reduction, and revenue cross-sell synergies. Industry precedents suggest 2–5% combined synergies over a 3-year integration window.
+                        </CollapsibleNote>
                         {[1, 2, 3].map(yr => {
                           const suggested = yr === 1 ? s1 : yr === 2 ? s2 : s3;
                           const name = `synergiesY${yr}`;
