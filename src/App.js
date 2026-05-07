@@ -113,43 +113,124 @@ const selectStyles = {
 };
 
 function BankFactsDisplay({ bankFacts }) {
-  const fmtM   = (v) => v != null ? `$${parseFloat(v).toFixed(0)}M` : '—';
-  const fmtPct = (v) => v != null ? `${(v * 100).toFixed(2)}%` : '—';
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const containerRef = useRef(null);
+  const isTouch = typeof window !== 'undefined' && 'ontouchstart' in window;
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+    const handler = (e) => { if (!containerRef.current?.contains(e.target)) setPopoverOpen(false); };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [popoverOpen]);
+
+  useEffect(() => {
+    if (!popoverOpen) return;
+    const handler = (e) => { if (e.key === 'Escape') setPopoverOpen(false); };
+    document.addEventListener('keydown', handler);
+    return () => document.removeEventListener('keydown', handler);
+  }, [popoverOpen]);
+
+  const fmtM   = (v) => v != null ? `$${(parseFloat(v) / 1000).toFixed(1)}B` : '—';
+  const fmtPct = (v) => v != null ? `${(v * 100).toFixed(1)}%` : '—';
 
   if (!bankFacts) {
     return (
-      <div style={{ marginBottom: 12, padding: '8px 10px', background: '#F0F9FF',
-        border: '1px solid #BFDBFE', borderRadius: 6, fontSize: 12, color: '#9CA3AF' }}>
+      <div style={{ marginBottom: 12, padding: '8px 10px', background: '#EFF6FF',
+        border: '1px solid #BFDBFE', borderRadius: 6, fontSize: 13, color: '#9CA3AF' }}>
         Fetching bank metrics from SEC EDGAR…
       </div>
     );
   }
 
-  const rows = [
-    { label: 'Tangible Book Value',    value: fmtM(bankFacts.tangibleBookValue) },
-    { label: 'CET1 Ratio',             value: fmtPct(bankFacts.cet1Ratio) },
-    { label: 'Net Interest Income',    value: fmtM(bankFacts.netInterestIncome) },
-    { label: 'Non-Interest Income',    value: fmtM(bankFacts.nonInterestIncome) },
-    { label: 'Non-Interest Expense',   value: fmtM(bankFacts.nonInterestExpense) },
+  const tbv = fmtM(bankFacts.tangibleBookValue);
+  const cet1 = fmtPct(bankFacts.cet1Ratio);
+  const nie = fmtM(bankFacts.nonInterestExpense);
+
+  const popoverFields = [
+    {
+      label: 'Tangible Book Value', value: fmtMoneyDual(bankFacts.tangibleBookValue),
+      formula: "Stockholders’ Equity − Goodwill − Intangibles",
+    },
+    {
+      label: 'CET1 Ratio', value: fmtPct(bankFacts.cet1Ratio),
+      formula: 'Common Equity Tier 1 Capital ÷ Risk-Weighted Assets',
+    },
+    {
+      label: 'Net Interest Income', value: fmtMoneyDual(bankFacts.netInterestIncome),
+      formula: 'Interest Income − Interest Expense',
+    },
+    {
+      label: 'Non-Interest Income', value: fmtMoneyDual(bankFacts.nonInterestIncome),
+      formula: null,
+    },
+    {
+      label: 'Non-Interest Expense', value: fmtMoneyDual(bankFacts.nonInterestExpense),
+      formula: 'Used in synergy calculation: 5/8/11% × combined NIE',
+    },
   ];
 
   return (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ fontSize: 11, color: '#1E3A5F', marginBottom: 4, fontWeight: 600, letterSpacing: 0.3 }}>
-        Bank Metrics (SEC EDGAR)
+    <div style={{ position: 'relative', marginBottom: 12 }} ref={containerRef}>
+      <div style={{
+        background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6,
+        padding: '6px 10px', fontSize: 13, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap',
+      }}>
+        <span style={{ fontWeight: 700, color: '#1E3A5F', fontSize: 12, flexShrink: 0 }}>Bank Metrics (SEC EDGAR):</span>
+        <span style={{ color: '#374151' }}>TBV {tbv}</span>
+        <span style={{ color: '#9CA3AF' }}>·</span>
+        <span style={{ color: '#374151' }}>CET1 {cet1}</span>
+        <span style={{ color: '#9CA3AF' }}>·</span>
+        <span style={{ color: '#374151' }}>NIE {nie}</span>
+        <button
+          onMouseEnter={() => !isTouch && setPopoverOpen(true)}
+          onMouseLeave={() => !isTouch && setPopoverOpen(false)}
+          onClick={(e) => { e.stopPropagation(); setPopoverOpen(v => !v); }}
+          aria-label="All bank metrics"
+          style={{
+            width: 16, height: 16, borderRadius: '50%',
+            border: '1px solid #9CA3AF', background: 'transparent',
+            color: '#6B7280', fontSize: 9, fontWeight: 700,
+            cursor: 'pointer', padding: 0,
+            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+            flexShrink: 0, lineHeight: 1,
+          }}
+        >ⓘ</button>
       </div>
-      <div style={{ border: '1px solid #BFDBFE', borderRadius: 6, overflow: 'hidden' }}>
-        {rows.map((row, i) => (
-          <div key={row.label} style={{
-            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-            padding: '5px 10px', background: i % 2 === 0 ? '#EFF6FF' : '#F0F9FF',
-            borderBottom: i < rows.length - 1 ? '1px solid #DBEAFE' : 'none',
-          }}>
-            <span style={{ fontSize: 11, color: '#374151' }}>{row.label}</span>
-            <span style={{ fontSize: 12, fontWeight: 600, color: '#1E3A5F' }}>{row.value}</span>
+
+      {popoverOpen && (
+        <div
+          onMouseEnter={() => !isTouch && setPopoverOpen(true)}
+          onMouseLeave={() => !isTouch && setPopoverOpen(false)}
+          style={{
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 100,
+            background: '#fff', border: '1px solid #E5E7EB',
+            borderRadius: 8, padding: 12,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+            width: 'min(360px, calc(100vw - 32px))',
+            fontFamily: 'Arial, sans-serif',
+          }}
+        >
+          <div style={{ fontSize: 10, fontWeight: 700, color: '#6B7280', letterSpacing: 0.5, marginBottom: 8, textTransform: 'uppercase' }}>
+            Bank Metrics — SEC EDGAR
           </div>
-        ))}
-      </div>
+          {popoverFields.map((field, i) => (
+            <div key={field.label} style={{
+              paddingBottom: 8, marginBottom: 8,
+              borderBottom: i < popoverFields.length - 1 ? '1px solid #F3F4F6' : 'none',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
+                <span style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>{field.label}</span>
+                <span style={{ fontSize: 12, color: '#0F2244', fontWeight: 700, textAlign: 'right', flexShrink: 0 }}>{field.value}</span>
+              </div>
+              {field.formula && (
+                <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 2, fontStyle: 'italic' }}>{field.formula}</div>
+              )}
+              <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 2 }}>Source: SEC EDGAR FY2024 10-K</div>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
