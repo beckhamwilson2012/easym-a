@@ -38,20 +38,22 @@ function fmtVal(value, unit) {
   return String(n);
 }
 
-function StatusCell({ status }) {
+function StatusCell({ status, bg }) {
   const g = GLYPH[status] || GLYPH.single;
   return (
-    <td style={{ padding: '5px 10px', textAlign: 'center', color: g.color, fontWeight: 700, fontSize: 12 }}>
+    <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, textAlign: 'center', color: g.color, fontWeight: 700, fontSize: 12 }}>
       {g.symbol}
     </td>
   );
 }
 
-function SourceCell({ meta, unit, isSot }) {
-  if (!meta) return <td style={{ padding: '5px 10px', fontSize: 10, color: '#9CA3AF', textAlign: 'right' }}>—</td>;
+function SourceCell({ meta, unit, isSot, bg }) {
+  if (!meta) return (
+    <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10, color: '#9CA3AF', textAlign: 'right' }}>—</td>
+  );
   const fy = meta.period?.fy ?? meta.period?.calendarYear;
   return (
-    <td style={{ padding: '5px 10px', fontSize: 10, textAlign: 'right', color: isSot ? NAVY : '#374151', fontWeight: isSot ? 600 : 400 }}>
+    <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10, textAlign: 'right', color: isSot ? NAVY : '#374151', fontWeight: isSot ? 600 : 400 }}>
       {fmtVal(meta.value, unit)}
       {fy && <span style={{ color: '#9CA3AF', marginLeft: 4 }}>FY{fy}</span>}
       {isSot && <span style={{ color: '#4A9FD4', marginLeft: 3, fontSize: 9 }}>★</span>}
@@ -134,15 +136,15 @@ export function SectionDataVerification({ target, pageNum }) {
                       {label}
                     </td>
                     {fd
-                      ? <StatusCell status={fd.status} />
-                      : <td style={{ padding: '5px 10px', textAlign: 'center', color: '#9CA3AF' }}>—</td>
+                      ? <StatusCell status={fd.status} bg={bg} />
+                      : <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, textAlign: 'center', color: '#9CA3AF' }}>—</td>
                     }
                     <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, textAlign: 'right', fontWeight: 600, color: NAVY }}>
                       {fd ? fmtVal(fd.value, fd.unit) : '—'}
                     </td>
-                    <SourceCell meta={fd?.sourceMeta?.edgar} unit={fd?.unit} isSot={fd?.sot === 'edgar'} />
-                    <SourceCell meta={fd?.sourceMeta?.fmp}   unit={fd?.unit} isSot={fd?.sot === 'fmp'} />
-                    <SourceCell meta={fd?.sourceMeta?.yahoo} unit={fd?.unit} isSot={fd?.sot === 'yahoo'} />
+                    <SourceCell meta={fd?.sourceMeta?.edgar} unit={fd?.unit} isSot={fd?.sot === 'edgar'} bg={bg} />
+                    <SourceCell meta={fd?.sourceMeta?.fmp}   unit={fd?.unit} isSot={fd?.sot === 'fmp'}   bg={bg} />
+                    <SourceCell meta={fd?.sourceMeta?.yahoo} unit={fd?.unit} isSot={fd?.sot === 'yahoo'} bg={bg} />
                   </tr>
                 );
               })}
