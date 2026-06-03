@@ -1,4 +1,6 @@
 import { useState, useRef } from 'react';
+import { useVerifiedData } from '../../../hooks/useVerifiedData';
+import { VerifiedValue, StatusDot } from '../../shared/VerifiedValue';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
@@ -27,6 +29,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const pdfRef = useRef(null);
   const windowWidth = useWindowWidth();
   const isMobile = windowWidth < 768;
+
+  const { data: verifiedTarget } = useVerifiedData(target?.ticker ?? null);
 
   if (!results || !inputs) return null;
 
@@ -75,9 +79,10 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     ? inputs.synergiesY1
     : Math.max(1, Math.round(0.02 * ((inputs.companyARevenue || 0) + (inputs.companyBRevenue || 0))));
 
-  // Row anchoring: 5 rows centered on current premium (5% steps)
+  // Row anchoring: 5 rows centered on current premium (5% steps).
+  // If rawPremium is deeply negative (offer price = 0), default pivot to 25%.
   const rawPremium = parseFloat(results.purchasePremium) || 0;
-  const roundedPremium = Math.round(rawPremium / 5) * 5;
+  const roundedPremium = rawPremium > -50 ? Math.round(rawPremium / 5) * 5 : 25;
   const rowPremiums = [
     roundedPremium - 10,
     roundedPremium - 5,
@@ -99,6 +104,25 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const sensitivityData = rowOfferPrices.map(offerPrice =>
     SYN_MULTS.map(sm => calcProFormaEPS(offerPrice, synSensBase * sm, inputs))
   );
+
+  // Footer: find minimum synergy level for accretion on current row
+  const breakevenEPS = inputs.companyAEPS;
+  const currentRowData = sensitivityData[sensitivityCurrentRow] || [];
+  const currentScenarioEPS = currentRowData[2]; // Base column (100%)
+  let sensitivityFooter = null;
+  if (breakevenEPS > 0 && currentRowData.length > 0) {
+    const firstAccretiveIdx = currentRowData.findIndex(eps => eps !== null && eps >= breakevenEPS);
+    if (firstAccretiveIdx === -1) {
+      // Find minimum synergy mult needed (extrapolate beyond 150%)
+      sensitivityFooter = `Deal is dilutive across all synergy scenarios at the current offer price. Synergy realization beyond 150% would be required to break even.`;
+    } else if (firstAccretiveIdx === 0) {
+      sensitivityFooter = `Deal remains accretive across all synergy scenarios at the current offer price.`;
+    } else {
+      const breakMult = SYN_MULTS[firstAccretiveIdx];
+      const breakPct = Math.round(breakMult * 100);
+      sensitivityFooter = `Synergy realization can fall to ~${breakPct}% of the announced figure before the deal turns dilutive (breakeven EPS: $${breakevenEPS.toFixed(2)}).`;
+    }
+  }
 
   const handleExportPDF = async () => {
     if (!pdfRef.current) return;
@@ -176,7 +200,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               value: (() => {
                 const v = calcPTBV(target);
                 if (v != null) return fmtRatio(v);
-                if (target?.tangibleBookValue) return 'Acquirer TBV missing';
+                if (target?.tangibleBookValue) return 'Market cap unavailable';
                 if (target?.marketCap) return 'Loading TBV…';
                 return 'N/A';
               })(),
@@ -325,21 +349,36 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         {/* Sensitivity Analysis */}
         <div style={{ ...cardStyle, marginBottom: 24 }}>
           <h3 style={{ color: '#0F2244', marginTop: 0, marginBottom: 4 }}>Sensitivity Analysis</h3>
-          <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 16px' }}>
-            Pro Forma EPS at different offer prices (rows) and Year 1 synergy levels (columns). Green = accretive, red = dilutive. Navy = current scenario.
+          <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 16px', lineHeight: 1.6 }}>
+            Pro forma EPS at varying premium levels (rows) and synergy realization (columns).<br />
+            {breakevenEPS > 0 && <>Breakeven: <strong style={{ color: '#374151' }}>${breakevenEPS.toFixed(2)}</strong> (acquirer standalone EPS).<br /></>}
+            Cells above breakeven are accretive; below are dilutive.
           </p>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 460 }}>
               <thead>
                 <tr>
-                  <th style={{ padding: '8px 10px', textAlign: 'left', background: '#F9FAFB', borderBottom: '2px solid #E5E7EB', color: '#6B7280', fontWeight: 600 }}>
+                  <th rowSpan={2} style={{ padding: '8px 10px', textAlign: 'left', background: '#F9FAFB', borderBottom: '2px solid #E5E7EB', color: '#6B7280', fontWeight: 600, verticalAlign: 'bottom' }}>
                     Price \ Synergies
                   </th>
-                  {SYN_LABELS.map((l, j) => (
-                    <th key={j} style={{ padding: '8px 10px', textAlign: 'center', background: j === 2 ? '#E8EFFE' : '#F9FAFB', borderBottom: '2px solid #E5E7EB', color: j === 2 ? '#0F2244' : '#6B7280', fontWeight: j === 2 ? 700 : 600 }}>
-                      {l}
-                    </th>
-                  ))}
+                  <th colSpan={5} style={{ padding: '6px 10px', textAlign: 'center', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', color: '#9CA3AF', fontWeight: 600, fontSize: 11, fontStyle: 'italic' }}>
+                    Synergy realization vs. announced figure
+                  </th>
+                </tr>
+                <tr>
+                  {SYN_LABELS.map((l, j) => {
+                    const subLabel = j === 0 ? '(Bear)' : j === 2 ? '(Base)' : j === 4 ? '(Bull)' : null;
+                    return (
+                      <th key={j} style={{ padding: '6px 10px', textAlign: 'center', background: j === 2 ? '#E8EFFE' : '#F9FAFB', borderBottom: '2px solid #E5E7EB', color: j === 2 ? '#0F2244' : '#6B7280', fontWeight: j === 2 ? 700 : 600 }}>
+                        {l}
+                        {subLabel && (
+                          <span style={{ display: 'block', fontSize: 10, color: '#9CA3AF', fontStyle: 'italic', fontWeight: 400 }}>
+                            {subLabel}
+                          </span>
+                        )}
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -360,15 +399,19 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                       const breakeven = inputs.companyAEPS;
                       const delta = (eps !== null && breakeven > 0) ? (eps - breakeven) / breakeven : 0;
                       let bg, color;
-                      if (isCurrent) { bg = '#0F2244'; color = '#fff'; }
-                      else if (eps === null) { bg = '#F9FAFB'; color = '#9CA3AF'; }
-                      else if (delta < -0.10) { bg = '#FEE2E2'; color = '#991B1B'; }
-                      else if (delta < -0.03) { bg = '#FEF2F2'; color = '#B91C1C'; }
+                      if (eps === null) { bg = '#F9FAFB'; color = '#9CA3AF'; }
+                      else if (delta < -0.10) { bg = '#DC2626'; color = '#fff'; }
+                      else if (delta < -0.03) { bg = '#FCA5A5'; color = '#7F1D1D'; }
                       else if (delta < +0.03) { bg = '#F3F4F6'; color = '#374151'; }
-                      else if (delta < +0.10) { bg = '#F0FDF4'; color = '#166534'; }
-                      else { bg = '#DCFCE7'; color = '#14532D'; }
+                      else if (delta < +0.10) { bg = '#86EFAC'; color = '#14532D'; }
+                      else { bg = '#10B981'; color = '#fff'; }
                       return (
-                        <td key={j} style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderBottom: '1px solid #F3F4F6', borderLeft: '1px solid #F3F4F6', color, fontWeight: isCurrent ? 700 : 500 }}>
+                        <td key={j} style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderBottom: '1px solid #F3F4F6', borderLeft: '1px solid #F3F4F6', color, fontWeight: isCurrent ? 700 : 500, position: 'relative', outline: isCurrent ? '2px solid #0F2244' : 'none', outlineOffset: isCurrent ? '-2px' : undefined }}>
+                          {isCurrent && (
+                            <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 9, fontWeight: 700, color: '#0F2244', letterSpacing: 0.3 }}>
+                              Current
+                            </span>
+                          )}
                           {eps === null ? 'N/A' : fmtPerShare(eps)}
                         </td>
                       );
@@ -379,6 +422,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               </tbody>
             </table>
           </div>
+          {sensitivityFooter && (
+            <p style={{ fontSize: 11, color: '#6B7280', margin: '10px 0 0', fontStyle: 'italic', lineHeight: 1.5 }}>
+              {sensitivityFooter}
+            </p>
+          )}
         </div>
 
         {/* Cash Structure Sensitivity Strip */}
@@ -406,6 +454,50 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             })}
           </div>
         </div>
+
+        {/* Source Verification */}
+        {verifiedTarget && (() => {
+          const f = verifiedTarget.fields;
+          const VERIFIED_ROWS = [
+            { label: 'Revenue',          key: 'revenue' },
+            { label: 'Net Income',       key: 'netIncome' },
+            { label: 'Shares Out.',      key: 'sharesOutstanding' },
+            { label: 'Cash',             key: 'cash' },
+            { label: 'Total Debt',       key: 'totalDebt' },
+            { label: 'Free Cash Flow',   key: 'freeCashFlow' },
+            { label: 'Price',            key: 'price' },
+            { label: 'Analyst Target',   key: 'analystTargetMean' },
+          ];
+          const counts = { verified: 0, flagged: 0, single: 0, missing: 0 };
+          VERIFIED_ROWS.forEach(r => { if (f[r.key]) counts[f[r.key].status]++; });
+          const allGood = counts.flagged === 0 && counts.missing === 0;
+
+          return (
+            <div style={{ ...cardStyle, marginBottom: 24 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                <h3 style={{ color: '#0F2244', margin: 0, fontSize: 15 }}>Source Verification — {target?.ticker}</h3>
+                <span style={{ fontSize: 11, color: allGood ? '#16A34A' : '#B45309', fontWeight: 600 }}>
+                  {counts.verified} verified · {counts.single} single · {counts.flagged} flagged
+                </span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6 }}>
+                {VERIFIED_ROWS.map(({ label, key }) => {
+                  const fd = f[key];
+                  return (
+                    <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 8px', background: '#F9FAFB', borderRadius: 6, fontSize: 12 }}>
+                      <StatusDot status={fd?.status ?? 'missing'} />
+                      <span style={{ color: '#374151', minWidth: 90 }}>{label}</span>
+                      <VerifiedValue fieldResult={fd} compact />
+                    </div>
+                  );
+                })}
+              </div>
+              <p style={{ fontSize: 10, color: '#9CA3AF', margin: '8px 0 0' }}>
+                ✓ verified = 2+ sources agree · – single source · ⚠ flagged = sources disagree · hover for detail
+              </p>
+            </div>
+          );
+        })()}
 
         {/* Risk Flags */}
         <div style={{ ...cardStyle, marginBottom: 24 }}>
