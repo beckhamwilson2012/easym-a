@@ -877,6 +877,22 @@ app.get('/api/peers/:ticker', async (req, res) => {
   }
 });
 
+// ── Verified data endpoint ─────────────────────────────────────────────────────
+const { lookup: verifiedLookup } = require('./server/services/verifiedLookup');
+
+app.get('/api/verified/:ticker', async (req, res) => {
+  const ticker = req.params.ticker.toUpperCase();
+  try {
+    await loadTickers();
+    const cik = cikBySymbol[ticker] || null;
+    const result = await verifiedLookup(ticker, cik);
+    res.json(result);
+  } catch (err) {
+    console.error(`[/api/verified] ${ticker}:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 console.log('[server] routes mounted. Available routes:',
   app._router.stack
     .filter(r => r.route)
