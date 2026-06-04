@@ -6,6 +6,10 @@ import {
   fmtMoney, fmtPct, fmtMult, fmtRatio, isBankDeal,
 } from '../shared/deckTokens';
 import { computeDealScore } from '../../../utils/dealCalc';
+import { useVerifiedData } from '../../../hooks/useVerifiedData';
+import { composeSourceLine } from '../../../lib/composeSourceLine';
+
+const USED_FIELDS = ['revenue', 'sharesOutstanding'];
 
 // ── Row builders ───────────────────────────────────────────────────────────────
 
@@ -175,6 +179,8 @@ function EditPeersModal({ autoPeers, customPeers, onSave, onClose }) {
 export function SectionComparables({ target, acquirer, comparables, pageNum }) {
   const bankMode     = isBankDeal(target, acquirer);
   const targetTicker = target?.ticker;
+  const { data: verifiedData } = useVerifiedData(targetTicker ?? null);
+  const sourceLine = composeSourceLine(USED_FIELDS, verifiedData?.fields, verifiedData?.asOf);
   console.log('[SectionComparables] render, target:', targetTicker, 'isBank:', bankMode);
 
   const [autoPeers, setAutoPeers]   = useState([]);
@@ -428,6 +434,11 @@ export function SectionComparables({ target, acquirer, comparables, pageNum }) {
           onSave={handleSavePeers}
           onClose={() => setEditOpen(false)}
         />
+      )}
+      {sourceLine && (
+        <div style={{ padding: '0 24px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
+          {sourceLine}
+        </div>
       )}
     </PageFrame>
   );
