@@ -1,7 +1,8 @@
 'use strict';
-const edgarClient = require('./edgarClient');
-const fmpClient   = require('./fmpClient');
-const yahooClient = require('./yahooClient');
+const edgarClient   = require('./edgarClient');
+const fmpClient     = require('./fmpClient');
+const yahooClient   = require('./yahooClient');
+const finnhubClient = require('./finnhubClient');
 const { reconcile } = require('../data/reconcile');
 const FIELDS = require('../data/fieldRegistry');
 
@@ -30,15 +31,17 @@ async function lookup(ticker, cik) {
   const cached = getCached(ticker);
   if (cached) return cached;
 
-  const [edgarRes, fmpRes, yahooRes] = await Promise.allSettled([
+  const [edgarRes, fmpRes, yahooRes, finnhubRes] = await Promise.allSettled([
     cik ? edgarClient.fetchFields(cik) : Promise.resolve({}),
     fmpClient.fetchFields(ticker),
     yahooClient.fetchFields(ticker),
+    finnhubClient.fetchFields(ticker),
   ]);
 
-  const edgar = edgarRes.status === 'fulfilled' ? edgarRes.value : {};
-  const fmp   = fmpRes.status   === 'fulfilled' ? fmpRes.value   : {};
-  const yahoo = yahooRes.status === 'fulfilled' ? yahooRes.value : {};
+  const edgar   = edgarRes.status   === 'fulfilled' ? edgarRes.value   : {};
+  const fmp     = fmpRes.status     === 'fulfilled' ? fmpRes.value     : {};
+  const yahoo   = yahooRes.status   === 'fulfilled' ? yahooRes.value   : {};
+  const finnhub = finnhubRes.status === 'fulfilled' ? finnhubRes.value : {};
 
   const asOf = new Date().toISOString();
   const fields = {};
@@ -48,7 +51,7 @@ async function lookup(ticker, cik) {
 
     for (const rawSrc of fieldSpec.sources) {
       const srcName = rawSrc.replace('?', ''); // strip optional marker
-      const srcMap  = srcName === 'edgar' ? edgar : srcName === 'fmp' ? fmp : yahoo;
+      const srcMap  = srcName === 'edgar' ? edgar : srcName === 'fmp' ? fmp : srcName === 'finnhub' ? finnhub : yahoo;
       const fd      = srcMap[fieldSpec.key];
 
       if (!fd) { values[srcName] = null; continue; }
@@ -70,7 +73,7 @@ async function lookup(ticker, cik) {
     const sourceMeta = {};
     for (const rawSrc of fieldSpec.sources) {
       const srcName = rawSrc.replace('?', '');
-      const srcMap  = srcName === 'edgar' ? edgar : srcName === 'fmp' ? fmp : yahoo;
+      const srcMap  = srcName === 'edgar' ? edgar : srcName === 'fmp' ? fmp : srcName === 'finnhub' ? finnhub : yahoo;
       const fd      = srcMap[fieldSpec.key];
       if (fd) sourceMeta[srcName] = { value: fd.value, asOf: fd.asOf, period: fd.period };
     }
