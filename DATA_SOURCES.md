@@ -639,22 +639,107 @@ Values in Yahoo Finance are often wrapped: `{ "raw": 2950000000000, "fmt": "2.95
 
 ---
 
+## 4. Finnhub API
+
+Free-tier quote + basic-financials (52-week range). Confirmed 2026-06-04 via official OpenAPI spec.
+
+**Base URL:** `https://finnhub.io/api/v1/`  
+**Auth:** `?token={FINNHUB_KEY}` query parameter  
+**Rate limit:** 30 API calls/second (applies across all plans; multiple subscriptions do not stack)  
+**Key source:** `process.env.FINNHUB_KEY` in `server.js` — no fallback value, client returns empty if unset
+
+---
+
+### 4.1 Quote Endpoint (free tier — confirmed)
+
+```
+GET https://finnhub.io/api/v1/quote?symbol={TICKER}&token={KEY}
+```
+
+**Response fields (all `float`):**
+
+| Field | Meaning |
+|---|---|
+| `c` | Current price ← `price` |
+| `h` | Day high |
+| `l` | Day low |
+| `o` | Day open |
+| `pc` | Previous close |
+| `d` | Absolute change vs previous close |
+| `dp` | Percent change vs previous close |
+| `t` | Unix timestamp of last tick |
+
+**EasyM&A usage:** `price` ← `c`
+
+---
+
+### 4.2 Basic Financials — 52-Week Range (free tier — confirmed)
+
+```
+GET https://finnhub.io/api/v1/stock/metric?symbol={TICKER}&metric=all&token={KEY}
+```
+
+**Response structure:**
+```json
+{
+  "symbol": "AAPL",
+  "metricType": "all",
+  "metric": {
+    "52WeekHigh": 198.23,
+    "52WeekLow": 164.08,
+    "52WeekLowDate": "2024-01-05",
+    "52WeekPriceReturnDaily": 14.2,
+    "beta": 1.24,
+    "10DayAverageTradingVolume": 55.3
+  },
+  "series": { ... }
+}
+```
+
+**Exact field names (confirmed from official Swagger sampleResponse):**
+- 52-week high: `metric["52WeekHigh"]`
+- 52-week low: `metric["52WeekLow"]`
+
+**EasyM&A usage:** `week52High` ← `metric["52WeekHigh"]`, `week52Low` ← `metric["52WeekLow"]`
+
+---
+
+### 4.3 Free Tier vs Paid
+
+**Free (confirmed unrestricted):** `/quote`, `/stock/metric`, `/stock/profile2`, `/stock/peers`, `/stock/recommendation`, `/stock/insider-sentiment`, `/news`, `/search`, `/stock/earnings`
+
+**Paid only (Premium+):** `/stock/candle` (historical OHLCV), `/stock/financials` (standardized), `/stock/price-target` and all forward estimates, `/indicator` (technical), `/index/constituents`, `/stock/ownership`
+
+---
+
+### 4.4 Commercial / Display Terms
+
+From Finnhub ToS (finnhub.io/terms-of-service), confirmed 2026-06-04:
+
+- **Personal use only.** Free-tier plans are "strictly for personal use unless explicitly stated otherwise." Using the data for business purposes, displaying it in a commercial product, or deducting the cost as a business expense disqualifies the personal plan.
+- **No redistribution.** Data and derived results may not be shared with any third party without written approval from Finnhub.
+- **Commercial SaaS/display requires a paid commercial plan.** Contact Finnhub sales before any public launch that displays Finnhub data to end users.
+
+> **Status for EasyM&A:** Free key is suitable for personal development and testing. Same commercial-launch gate as FMP.
+
+---
+
 ## Appendix: Source Comparison
 
-| Data Point | FMP (Starter) | SEC EDGAR | Yahoo Finance |
-|---|---|---|---|
-| Live price | Yes (`stable/quote`) | No | Yes (`v8/chart`) |
-| Market cap | Yes (`marketCap`) | No | v10 only (auth) |
-| 52-week high/low | Yes (`yearHigh/yearLow`) | No | Yes |
-| Revenue (annual) | Yes (`income-statement`) | Yes (XBRL tag) | No |
-| Operating income | Yes | Yes | No |
-| Net income | Yes | Yes | No |
-| Shares outstanding | Yes (`sharesOutstanding`) | Yes (DEI tag) | No |
-| Free cash flow | Yes (`freeCashFlow`) | Compute from tags | No |
-| Total debt | Yes (`totalDebt`) | Compute from tags | No |
-| Cash | Yes (`cashAndCashEquivalents`) | Yes (XBRL tag) | No |
-| Analyst price targets | Yes (`stable/price-target-consensus`) | No | No |
-| Auth required | API key | User-Agent header | Crumb (v10) |
-| Rate limit | Tier-dependent | 10 req/s | Unofficial |
-| Commercial use | Data Display Agreement required | Free/public | Terms unclear |
-| Cost | $22/mo+ | Free | Free (unofficial) |
+| Data Point | FMP (Starter) | SEC EDGAR | Finnhub (Free) | Yahoo Finance |
+|---|---|---|---|---|
+| Live price | Yes (`stable/quote`) — **403 on free key** | No | Yes (`/quote`, `c`) | Yes (`v8/chart`) |
+| Market cap | Yes (`marketCap`) — **403 on free key** | No | No | v10 only (auth) |
+| 52-week high/low | Yes — **403 on free key** | No | Yes (`/stock/metric`) | Yes |
+| Revenue (annual) | Yes — **403 on free key** | Yes (XBRL tag) | No | No |
+| Operating income | Yes — **403** | Yes | No | No |
+| Net income | Yes — **403** | Yes | No | No |
+| Shares outstanding | Yes — **403** | Yes (DEI tag) | No | No |
+| Free cash flow | Yes — **403** | Compute from tags | No | No |
+| Total debt | Yes — **403** | Compute from tags | No | No |
+| Cash | Yes — **403** | Yes (XBRL tag) | No | No |
+| Analyst price targets | Yes — **403** | No | No (paid only) | No |
+| Auth required | API key | User-Agent header | API key | Crumb (v10) |
+| Rate limit | Tier-dependent | 10 req/s | 30 req/s (all plans) | Unofficial |
+| Commercial use | Data Display Agreement required | Free/public | Commercial plan required | Terms unclear |
+| Cost | $22/mo+ | Free | Free (personal) | Free (unofficial) |
