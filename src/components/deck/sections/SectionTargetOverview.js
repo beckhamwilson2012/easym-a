@@ -85,7 +85,15 @@ export function SectionTargetOverview({ target, deal, pageNum }) {
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit A">
       <PageHeader
         title={`Target Overview — ${target.name || 'N/A'}`}
-        subtitle={target.ticker ? `${target.ticker} · Financial Data (Most Recent Annual)` : 'Financial Data (Most Recent Annual)'}
+        subtitle={(() => {
+          const fy  = target?.fiscalYear;
+          const end = target?.fiscalYearEnd;
+          const fyStr = fy ? (end
+            ? `FY${fy} · ended ${new Date(end + 'T12:00:00Z').toLocaleDateString('en-US',{month:'short',year:'numeric',timeZone:'UTC'})}`
+            : `FY${fy}`)
+            : 'Most Recent Annual';
+          return target.ticker ? `${target.ticker} · ${fyStr}` : fyStr;
+        })()}
       />
 
       <div style={{ display: 'flex', gap: 0, padding: '16px 20px 36px', minHeight: 520 }}>

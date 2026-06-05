@@ -82,11 +82,23 @@ export function SectionStandalonePL({ target, deal, pageNum }) {
 
   const commentary = buildFinancialCommentary(target, deal);
 
+  // Build an honest fiscal-year label from the server-supplied metadata.
+  // CRM FY ends Jan → "FY2026 (ended Jan 2026)"; TEAM FY ends Jun → "FY2025 (ended Jun 2025)".
+  const fyLabel = (() => {
+    const fy  = target?.fiscalYear;
+    const end = target?.fiscalYearEnd;
+    if (!fy && !end) return 'Most Recent Annual Filing';
+    if (!end) return `FY${fy}`;
+    const endDate = new Date(end + 'T12:00:00Z');
+    const month   = endDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric', timeZone: 'UTC' });
+    return `FY${fy} — Ended ${month}`;
+  })();
+
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit B">
       <PageHeader
         title={`Standalone Financial Profile — ${target.name || 'N/A'}`}
-        subtitle="Most Recent Annual Figures (LTM)"
+        subtitle={fyLabel}
       />
 
       <div style={{ display: 'flex', gap: 20, padding: '16px 20px 36px' }}>

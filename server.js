@@ -176,7 +176,7 @@ function pickWithSource(namespace, names, unit = 'USD') {
     if (!entry) continue;
     if (!best || entry.end > best.end) { best = entry; bestName = name; }
   }
-  return { val: best?.val ?? 0, concept: bestName };
+  return { val: best?.val ?? 0, concept: bestName, entry: best };
 }
 
 function inM(val) {
@@ -214,15 +214,16 @@ async function fetchFromEDGAR(symbol, cik) {
   console.log(`[${symbol}] EDGAR using ${useIfrs ? 'IFRS (20-F filer)' : 'US-GAAP (10-K filer)'}`);
 
   let revenue, revenueConcept;
+  let revenueEntry = null;
   if (useIfrs) {
-    ({ val: revenue, concept: revenueConcept } = pickWithSource(ifrs, [
+    ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(ifrs, [
       'Revenue',
       'RevenueFromContractsWithCustomers',
       'OtherRevenue',
       'RevenueAndOtherIncome',
     ]));
   } else {
-    ({ val: revenue, concept: revenueConcept } = pickWithSource(gaap, [
+    ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(gaap, [
       'RevenueFromContractWithCustomerExcludingAssessedTax',
       'Revenues',
       'SalesRevenueNet',
@@ -302,6 +303,11 @@ async function fetchFromEDGAR(symbol, cik) {
     sic:            sicData.sic,
     sicDescription: sicData.sicDescription,
     dataSource:     'sec_edgar',
+    // Fiscal period of the revenue figure — used for correct deck labels
+    fiscalYearEnd:  revenueEntry?.end   ?? null,  // e.g. "2025-06-30"
+    fiscalYear:     revenueEntry?.fy    ?? null,  // e.g. 2025 (EDGAR fy field)
+    fiscalPeriod:   revenueEntry?.fp    ?? null,  // "FY", "Q1"–"Q4"
+    filingForm:     revenueEntry?.form  ?? null,  // "10-K" or "20-F"
   };
 }
 

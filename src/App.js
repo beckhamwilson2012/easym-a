@@ -397,6 +397,10 @@ function App() {
   const [offerPriceTouched, setOfferPriceTouched] = useState(false);
   const [expandedA, setExpandedA] = useState(false);
   const [expandedB, setExpandedB] = useState(false);
+  const [fiscalYearA, setFiscalYearA] = useState(null);   // e.g. 2025
+  const [fiscalYearEndA, setFiscalYearEndA] = useState(null);
+  const [fiscalYearB, setFiscalYearB] = useState(null);
+  const [fiscalYearEndB, setFiscalYearEndB] = useState(null);
 
   const handleChange = (e) => setInputs(prev => ({ ...prev, [e.target.name]: parseFloat(e.target.value) || 0 }));
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
@@ -416,6 +420,7 @@ function App() {
       setNameA(data.name); setTickerA(symbol.toUpperCase());
       setCompanyTypeA(data.companyType || 'standard'); setDataSrcA(data.dataSource || '');
       setSicA(data.sic || null); setSicDescriptionA(data.sicDescription || null);
+      setFiscalYearA(data.fiscalYear ?? null); setFiscalYearEndA(data.fiscalYearEnd ?? null);
       setInputs(prev => ({ ...prev, companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
         companyANetIncome: data.netIncome, companyAShares: data.shares, companyAEPS: data.eps,
         companyACash: data.cash, companyADebt: data.debt,
@@ -434,6 +439,7 @@ function App() {
       setNameB(data.name); setTickerB(symbol.toUpperCase());
       setCompanyTypeB(data.companyType || 'standard'); setDataSrcB(data.dataSource || '');
       setSicB(data.sic || null); setSicDescriptionB(data.sicDescription || null);
+      setFiscalYearB(data.fiscalYear ?? null); setFiscalYearEndB(data.fiscalYearEnd ?? null);
       setInputs(prev => ({ ...prev, companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
         companyBNetIncome: data.netIncome, companyBShares: data.shares, companyBEPS: data.eps,
         companyBCash: data.cash, companyBDebt: data.debt,
@@ -486,6 +492,8 @@ function App() {
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
     setOfferPriceTouched(false);
     setExpandedA(false); setExpandedB(false);
+    setFiscalYearA(null); setFiscalYearEndA(null);
+    setFiscalYearB(null); setFiscalYearEndB(null);
   };
 
   const handleSaveAnalysis = () => {
@@ -538,6 +546,8 @@ function App() {
     riskWeightedAssets: bankFactsB?.riskWeightedAssets ?? null,
     totalAssets:        bankFactsB?.totalAssets ?? null,
     totalDeposits:      bankFactsB?.totalDeposits ?? null,
+    fiscalYear:    fiscalYearB,
+    fiscalYearEnd: fiscalYearEndB,
   });
 
   const buildAcquirerForDeck = () => ({
@@ -556,6 +566,8 @@ function App() {
     riskWeightedAssets: bankFactsA?.riskWeightedAssets ?? null,
     totalAssets:        bankFactsA?.totalAssets ?? null,
     totalDeposits:      bankFactsA?.totalDeposits ?? null,
+    fiscalYear:    fiscalYearA,
+    fiscalYearEnd: fiscalYearEndA,
   });
 
   const buildDealForDeck = () => ({
