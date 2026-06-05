@@ -6,11 +6,12 @@ import html2canvas from 'html2canvas';
 import {
   computeFlags, computeDealScore, buildNarrative,
   calcProFormaEPS, SYN_MULTS, SYN_LABELS,
+  acquirerSharePrice, targetMarketPrice,
 } from '../../../utils/dealCalc';
 import { calcStockIssuancePct, triggers199Rule } from '../../../lib/dealMath';
 import {
   isBankDeal, calcPTBV, combinedCET1, computeBankFlags, buildBankNarrative,
-  fmtRatio, fmtPct, fmtMoneyTable, fmtMoneyDual, fmtPerShare, fmtPctSigned,
+  fmtRatio, fmtPct, fmtMoneyTable, fmtMoneyDual, fmtMoneyAccounting, fmtPerShare, fmtPctSigned,
 } from '../shared/deckTokens';
 import { useWindowWidth } from '../../../hooks/useWindowWidth';
 import { ExplainButton } from '../../shared/ExplainButton';
@@ -48,8 +49,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const col2         = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, marginBottom: 24 };
 
   // Stock issuance risk flags
-  const acquirerSharePx = inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA
-    : (inputs.companyAEPS > 0 ? inputs.companyAEPS * 15 : 0);
+  const acquirerSharePx = acquirerSharePrice(inputs);
   const stockIssuancePct = calcStockIssuancePct({
     dealSize: parseFloat(results.totalPurchasePrice) || 0,
     cashPercent: inputs.cashPercent,
@@ -92,9 +92,10 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   ].map(p => Math.max(0, p));
   const sensitivityCurrentRow = 2; // center row is always "current"
 
-  // Target market price (basis for premium calculation — same formula as dealCalc.js)
-  const targetMktPrice = inputs.companyBEPS > 0
-    ? inputs.companyBEPS * 15
+  // Target market price (basis for premium calculation — same real-price basis as dealCalc.js).
+  // Falls back to deriving from the offer + premium only when no real price is available at all.
+  const targetMktPrice = targetMarketPrice(inputs) > 0
+    ? targetMarketPrice(inputs)
     : inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare / (1 + rawPremium / 100) : inputs.offerPricePerShare;
 
   const rowOfferPrices = rowPremiums.map(prem =>
@@ -304,16 +305,20 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Combined Net Interest Income',  value: fmtMoneyTable((target?.netInterestIncome || 0) + (acquirer?.netInterestIncome || 0)) },
               { label: 'Combined Non-Interest Income',  value: fmtMoneyTable((target?.nonInterestIncome || 0) + (acquirer?.nonInterestIncome || 0)) },
               { label: 'Combined Non-Interest Expense', value: `(${fmtMoneyTable((target?.nonInterestExpense || 0) + (acquirer?.nonInterestExpense || 0))})`, red: true },
-              { label: 'Year 1 Cost Synergies',         value: `+${fmtMoneyTable(results.synergiesY1)}`, green: true },
-              { label: 'Transaction Fees',              value: `(${fmtMoneyTable(results.transactionFees)})`, red: true, explain: () => explainTransactionFees({ fees: results.transactionFees, dealSize: results.totalPurchasePrice }) },
-              { label: 'Combined Net Income',           value: fmtMoneyTable(results.combinedNetIncome) },
+              { label: 'Acquirer Net Income',           value: fmtMoneyAccounting(inputs.companyANetIncome) },
+              { label: 'Target Net Income',             value: fmtMoneyAccounting(inputs.companyBNetIncome) },
+              { label: 'After-Tax Cost Synergies (Y1)', value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true },
+              { label: 'After-Tax Financing Cost',      value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true },
+              { label: 'Pro Forma Net Income',          value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',                 value: fmtPerShare(results.proFormaEPS), bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ] : [
               { label: 'Combined Revenue',    value: fmtMoneyTable(results.combinedRevenue)                          },
-              { label: 'Combined EBITDA',     value: fmtMoneyTable(results.combinedEBITDA)                           },
-              { label: 'Year 1 Synergies',    value: `+${fmtMoneyTable(results.synergiesY1)}`,   green: true, explain: () => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, combinedRevenue: results.combinedRevenue, isBank: false }) },
-              { label: 'Transaction Fees',    value: `(${fmtMoneyTable(results.transactionFees)})`, red: true, explain: () => explainTransactionFees({ fees: results.transactionFees, dealSize: results.totalPurchasePrice }) },
-              { label: 'Combined Net Income', value: fmtMoneyTable(results.combinedNetIncome)                        },
+              { label: 'Combined EBITDA (incl. Y1 synergies)', value: fmtMoneyTable(results.combinedEBITDA) },
+              { label: 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
+              { label: 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
+              { label: 'After-Tax Synergies (Y1)',  value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true, explain: () => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, combinedRevenue: results.combinedRevenue, isBank: false }) },
+              { label: 'After-Tax Financing Cost',  value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true },
+              { label: 'Pro Forma Net Income', value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',       value: fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F3F4F6' }}>
@@ -330,6 +335,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Cash Portion',         value: fmtMoneyTable(results.cashPortion), explain: () => explainCashPercent({ cashPercent: inputs.cashPercent, dealSize: results.totalPurchasePrice }) },
               { label: 'Stock Portion',        value: fmtMoneyTable(results.stockPortion)      },
               { label: 'New Shares Issued',    value: `${results.newSharesIssued}M`            },
+              { label: 'Transaction Fees (one-time)', value: fmtMoneyTable(results.transactionFees), explain: () => explainTransactionFees({ fees: results.transactionFees, dealSize: results.totalPurchasePrice }) },
               { label: 'Purchase Premium',     value: (() => {
                 const pp = parseFloat(results.purchasePremium);
                 return (!isFinite(pp) || Math.abs(pp) > 200) ? 'N/A' : `${pp >= 0 ? '+' : ''}${pp.toFixed(1)}%`;

@@ -8,10 +8,12 @@ import { fetchLivePrice } from './services/priceService';
 import { SuggestionBadge } from './components/shared/SuggestionBadge';
 import { ExplainButton } from './components/shared/ExplainButton';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
+import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import { fmtMoneyDual, fmtMoney, fmtPerShare } from './components/deck/shared/deckTokens';
 import {
   calcSuggestedOfferPrice,
   calcSuggestedTransactionFees,
+  calcAllInFeeEstimate,
   calcSuggestedSynergy,
   buildOfferPriceTooltip,
   buildCashPercentTooltip,
@@ -331,6 +333,29 @@ function PriceDiagnostic({ attempts }) {
 }
 
 
+// Reference-only all-in fee breakdown shown inside the collapsible note. The MODEL uses only the
+// base advisory fee; legal & financing here are rough, clearly-labeled estimates (Phase 2.4).
+function AllInFeeBreakdown({ allIn }) {
+  const row = (label, value, strong) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0',
+      borderTop: strong ? '1.5px solid #0F2244' : '1px solid #EEF2F6' }}>
+      <span style={{ color: strong ? '#0F2244' : '#6B7280', fontWeight: strong ? 700 : 400 }}>{label}</span>
+      <span style={{ color: '#111827', fontWeight: strong ? 700 : 500 }}>{fmtMoney(value)}</span>
+    </div>
+  );
+  return (
+    <div>
+      {row('Base advisory fee (model input)', allIn.advisorFee)}
+      {row('Legal & regulatory (est.)', allIn.legalFee)}
+      {row('Financing & other (est.)', allIn.otherFee)}
+      {row('All-in estimate', allIn.total, true)}
+      <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 6, fontStyle: 'italic', lineHeight: 1.4 }}>
+        Reference only — the model uses the base advisory fee above. Legal & financing are rough estimates.
+      </div>
+    </div>
+  );
+}
+
 const SearchIcon = () => (
   <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
     <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#0F2244" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -393,6 +418,7 @@ function App() {
   const [showSaved, setShowSaved] = useState(false);
   const [bankFactsA, setBankFactsA] = useState(null);
   const [bankFactsB, setBankFactsB] = useState(null);
+  const [priceStatusA, setPriceStatusA] = useState({ loading: false, price: null, source: null, attempts: [] });
   const [priceStatusB, setPriceStatusB] = useState({ loading: false, price: null, source: null, attempts: [] });
   const [offerPriceTouched, setOfferPriceTouched] = useState(false);
   const [expandedA, setExpandedA] = useState(false);
@@ -416,6 +442,8 @@ function App() {
 
   const handleSelectA = (symbol) => {
     setLoadingA(true); setErrorA(''); setBankFactsA(null);
+    setPriceStatusA({ loading: true, price: null, source: null, attempts: [] });
+    setInputs(prev => ({ ...prev, currentSharePriceA: 0 })); // clear stale price; live fetch resets it
     fetchCompanyData(symbol).then(data => {
       setNameA(data.name); setTickerA(symbol.toUpperCase());
       setCompanyTypeA(data.companyType || 'standard'); setDataSrcA(data.dataSource || '');
@@ -424,17 +452,32 @@ function App() {
       setInputs(prev => ({ ...prev, companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
         companyANetIncome: data.netIncome, companyAShares: data.shares, companyAEPS: data.eps,
         companyACash: data.cash, companyADebt: data.debt,
-        currentSharePriceA: data.sharePrice || 0 }));
+        // Don't clobber a live price that the parallel /api/price fetch may have already set.
+        // EDGAR (the acquirer's primary source) returns no sharePrice, so falling back to `|| 0`
+        // here would overwrite the live price and force the EPS×15 proxy (0 new shares bug).
+        currentSharePriceA: data.sharePrice || prev.currentSharePriceA || 0 }));
       setFetchedA(true); setLoadingA(false);
       if (data.companyType === 'financial') {
         getBankFacts(symbol).then(facts => { if (facts) setBankFactsA(facts); });
       }
-    }).catch(() => { setErrorA('Could not load company. Try another.'); setLoadingA(false); });
+    }).catch(() => { setErrorA('Could not load company. Try another.'); setLoadingA(false); setPriceStatusA(p => ({ ...p, loading: false })); });
+
+    // Live price fetch runs in parallel — EDGAR (the acquirer's primary source) does NOT return a
+    // share price, so without this the acquirer price is 0 and no new shares can be issued.
+    fetchLivePrice(symbol).then(({ price, source, attempts }) => {
+      if (price != null) {
+        setInputs(prev => ({ ...prev, currentSharePriceA: price }));
+      }
+      setPriceStatusA({ loading: false, price, source, attempts });
+    }).catch(() => {
+      setPriceStatusA({ loading: false, price: null, source: null, attempts: [] });
+    });
   };
 
   const handleSelectB = (symbol) => {
     setLoadingB(true); setErrorB(''); setBankFactsB(null);
     setPriceStatusB({ loading: true, price: null, source: null, attempts: [] });
+    setInputs(prev => ({ ...prev, currentSharePriceB: 0 })); // clear stale price; live fetch resets it
     fetchCompanyData(symbol).then(data => {
       setNameB(data.name); setTickerB(symbol.toUpperCase());
       setCompanyTypeB(data.companyType || 'standard'); setDataSrcB(data.dataSource || '');
@@ -443,7 +486,8 @@ function App() {
       setInputs(prev => ({ ...prev, companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
         companyBNetIncome: data.netIncome, companyBShares: data.shares, companyBEPS: data.eps,
         companyBCash: data.cash, companyBDebt: data.debt,
-        currentSharePriceB: data.sharePrice || 0 }));
+        // Preserve any live price already set by the parallel /api/price fetch (see handleSelectA).
+        currentSharePriceB: data.sharePrice || prev.currentSharePriceB || 0 }));
       setFetchedB(true); setLoadingB(false);
       if (data.companyType === 'financial') {
         getBankFacts(symbol).then(facts => { if (facts) setBankFactsB(facts); });
@@ -489,6 +533,7 @@ function App() {
     setDataSrcA(''); setDataSrcB('');
     setSicA(null); setSicB(null); setSicDescriptionA(null); setSicDescriptionB(null);
     setBankFactsA(null); setBankFactsB(null);
+    setPriceStatusA({ loading: false, price: null, source: null, attempts: [] });
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
     setOfferPriceTouched(false);
     setExpandedA(false); setExpandedB(false);
@@ -532,10 +577,13 @@ function App() {
     netIncome: inputs.companyBNetIncome, eps: inputs.companyBEPS,
     shares: inputs.companyBShares, cash: inputs.companyBCash,
     debt: inputs.companyBDebt, companyType: companyTypeB,
-    // Acquisition price is the effective market cap being paid for TBV calc
+    sharePrice: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null,
+    // Current market cap = live price × shares (real). Used for trading profile / relative contribution.
+    currentMarketCap: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB * inputs.companyBShares : null,
+    // `marketCap` is the effective acquisition price being paid (basis for bank P/TBV).
     marketCap: (() => {
       const tpp = results ? parseFloat(results.totalPurchasePrice) : 0;
-      return tpp > 0 ? tpp : inputs.companyBEPS * 15 * inputs.companyBShares;
+      return tpp > 0 ? tpp : (inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : inputs.companyBEPS * 15) * inputs.companyBShares;
     })(),
     // Bank-specific fields (null for non-financial companies)
     tangibleBookValue: bankFactsB?.tangibleBookValue ?? null,
@@ -557,7 +605,9 @@ function App() {
     netIncome: inputs.companyANetIncome, eps: inputs.companyAEPS,
     shares: inputs.companyAShares, cash: inputs.companyACash,
     debt: inputs.companyADebt, companyType: companyTypeA,
-    marketCap: inputs.companyAEPS * 15 * inputs.companyAShares,
+    sharePrice: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null,
+    // Real market cap = live price × shares; fall back to a P/E proxy only if no live price.
+    marketCap: (inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : inputs.companyAEPS * 15) * inputs.companyAShares,
     tangibleBookValue: bankFactsA?.tangibleBookValue ?? null,
     netInterestIncome: bankFactsA?.netInterestIncome ?? null,
     nonInterestIncome: bankFactsA?.nonInterestIncome ?? null,
@@ -719,11 +769,17 @@ function App() {
                     companyName={nameA} loading={loadingA} dataSource={dataSrcA} />
                   {fetchedA && (
                     <div style={{ marginTop: 10 }}>
+                      {priceStatusA.loading && (
+                        <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6, fontStyle: 'italic' }}>⟳ Fetching live price…</div>
+                      )}
                       {/* Summary line */}
                       <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
                         <div style={{ fontSize: 12, color: '#374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                           <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                             Rev {fmtMoney(inputs.companyARevenue)} · {inputs.companyAShares > 0 ? `${Number(inputs.companyAShares).toFixed(0)}M sh` : '— sh'} · {fmtPerShare(inputs.companyAEPS)} EPS · {fmtMoney(inputs.companyACash)} cash
+                            {inputs.currentSharePriceA > 0 && (
+                              <span style={{ color: '#6B7280', marginLeft: 4 }}>· {fmtPerShare(inputs.currentSharePriceA)} mkt</span>
+                            )}
                           </span>
                           <button onClick={() => setExpandedA(v => !v)}
                             style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 12, cursor: 'pointer', padding: 0, flexShrink: 0 }}>
@@ -864,6 +920,17 @@ function App() {
                       <LargeNumericField label="Transaction Fees — Base Advisory ($M)"
                         name="transactionFees" value={inputs.transactionFees} onChange={handleChange}
                         placeholder="Base advisory fee only" />
+                      {(() => {
+                        const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare : (suggestedPrice ?? 0);
+                        const dealSizeM = price > 0 && inputs.companyBShares > 0 ? price * inputs.companyBShares : 0;
+                        const allIn = calcAllInFeeEstimate(dealSizeM);
+                        if (!allIn) return null;
+                        return (
+                          <CollapsibleNote label="All-in estimate (reference only)">
+                            <AllInFeeBreakdown allIn={allIn} />
+                          </CollapsibleNote>
+                        );
+                      })()}
                     </div>
 
                     {/* ── Synergies with preset buttons ───────────────────── */}

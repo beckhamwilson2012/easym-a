@@ -13,6 +13,9 @@
 
 # misc
 .DS_Store
+
+# runtime caches written by the server
+sic-cache.json
 .env.local
 .env.development.local
 .env.test.local

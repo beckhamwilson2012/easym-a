@@ -303,9 +303,12 @@ async function fetchFromEDGAR(symbol, cik) {
     sic:            sicData.sic,
     sicDescription: sicData.sicDescription,
     dataSource:     'sec_edgar',
-    // Fiscal period of the revenue figure — used for correct deck labels
+    // Fiscal period of the revenue figure — used for correct deck labels.
+    // EDGAR's `fy` field is frequently empty in companyfacts, so derive the fiscal year from the
+    // period-END calendar year (the standard convention: CRM FYE 2026-01-31 → FY2026,
+    // TEAM FYE 2025-06-30 → FY2025). This prevents mislabeling TEAM's FY25 figures as FY26.
     fiscalYearEnd:  revenueEntry?.end   ?? null,  // e.g. "2025-06-30"
-    fiscalYear:     revenueEntry?.fy    ?? null,  // e.g. 2025 (EDGAR fy field)
+    fiscalYear:     revenueEntry?.fy ?? (revenueEntry?.end ? parseInt(revenueEntry.end.slice(0, 4), 10) : null),
     fiscalPeriod:   revenueEntry?.fp    ?? null,  // "FY", "Q1"–"Q4"
     filingForm:     revenueEntry?.form  ?? null,  // "10-K" or "20-F"
   };
@@ -915,8 +918,11 @@ app.get('/api/verified/:ticker', async (req, res) => {
   }
 });
 
+// Express 5 lazily creates the router and exposes it as `app.router` (no `_router`).
+// Guard so route introspection never crashes startup across Express versions.
+const _routerStack = app.router?.stack || app._router?.stack || [];
 console.log('[server] routes mounted. Available routes:',
-  app._router.stack
+  _routerStack
     .filter(r => r.route)
     .map(r => Object.keys(r.route.methods).join(',') + ' ' + r.route.path)
 );
