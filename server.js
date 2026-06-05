@@ -257,10 +257,14 @@ async function fetchFromEDGAR(symbol, cik) {
   const companyType = ['RevenuesNetOfInterestExpense', 'InterestAndFeeIncomeLoansAndLeases']
     .includes(revenueConcept) ? 'financial' : 'standard';
 
-  // DEI namespace covers both domestic and foreign annual filers
+  // DEI namespace covers both domestic and foreign annual filers.
+  // Atlassian (and other IFRS 20-F filers) have no CommonStockSharesOutstanding 10-K entries
+  // but DO have WeightedAverageNumberOfSharesOutstandingBasic in a 10-K filing.
   const shares =
     latestAnnual(gaap['CommonStockSharesOutstanding'], 'shares') ??
     latestAnnual(dei['EntityCommonStockSharesOutstanding'], 'shares') ??
+    latestAnnual(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares') ??
+    latestAnnual(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares') ??
     0;
 
   const eps = useIfrs
