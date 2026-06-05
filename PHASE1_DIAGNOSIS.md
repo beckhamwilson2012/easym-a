@@ -1,53 +1,44 @@
-# Phase 1 Reactivity Diagnosis
+# Phase 1 — Core Merger Math Diagnosis (CRM acquires TEAM)
 
-## Root cause: two compounding bugs make it appear inputs don't change outputs
+Diagnosis of the four reported bugs against the model code in `src/utils/dealCalc.js`.
+Bugs 1, 2, and most of 4 were already corrected in commit 3c21c9e; this pass aligns the
+pro-forma EPS to the hand-worked acceptance example and tightens the negative-EPS rule.
 
-### Bug 1 — EDGAR shares fallback missing (primary)
+## Bug 1 — Roles flipped ("Atlassian's acquisition of Salesforce") → ALREADY FIXED
+No variable swap exists. `calculate()` uses `companyA*` for the acquirer and `companyB*` for the
+target throughout. The narrative is `${nameA}'s acquisition of ${nameB}` (dealCalc.js `buildNarrative`,
+also deckTokens.js `buildBankNarrative`), and `nameA` is bound to the user's Company-A selection in
+App.js `handleSelectA`. The live app renders "Salesforce, Inc.'s acquisition of Atlassian Corporation".
+The flip in the original screenshot was a symptom of the price=0 / shares=0 era, not an A/B swap.
 
-`fetchFromEDGAR` in `server.js` (line 261–264) resolves shares via:
-```
-CommonStockSharesOutstanding (us-gaap, 10-K/20-F) ??
-EntityCommonStockSharesOutstanding (dei, 10-K/20-F) ??
-0
-```
+## Bug 2 — New Shares Issued = 0M → ALREADY FIXED
+Root cause was twofold: (a) the acquirer price was faked as `companyAEPS × 15`, and (b) a state race
+where the `/quote` response overwrote the live price with 0 (EDGAR returns no share price). Now:
+- `acquirerSharePrice(inputs)` (dealCalc.js:14) returns the real `currentSharePriceA` (EPS×15 only as a
+  labeled fallback, never from a loss).
+- `newSharesIssued = stockPortion / acqPrice` (dealCalc.js:49) → ~84M for CRM/TEAM @ $150, never 0.
+- App.js `handleSelectA` now fetches the acquirer live price and the `/quote` handler no longer clobbers it.
 
-For Atlassian (TEAM, CIK 0001650372), both tags have **zero** annual 10-K/20-F entries.
-`WeightedAverageNumberOfSharesOutstandingBasic` (us-gaap) HAS the data: 9 entries, most recent
-FY2025 10-K (filed 2025-08-15), val = 261,787,000 shares. Not in the fallback chain → shares = 0.
+## Bug 3 — Pro Forma EPS does not match the worked example → FIX NEEDED
+The EPS is a real computed number (not $0.00), but lines 58–62 subtract an after-tax **financing cost**
+(`DEBT_INTEREST_RATE = 0.05` × cash portion × (1−tax)). For CRM/TEAM @ $150/60% cash that is
+≈ 23,580 × 0.05 × 0.79 ≈ **$931M** of interest drag, giving proFormaEPS ≈ **$6.92**.
+The acceptance example ignores incremental financing cost and expects proFormaEPS ≈ **$7.84**.
+**Fix:** default the incremental financing-cost drag to 0 in the base accretion/dilution check
+(`DEBT_INTEREST_RATE = 0`), documented as an assumption. This makes the base check match the worked
+example and the standard "quick" accretion/dilution convention; a non-zero rate can be reintroduced
+later to model fully debt-funded cash.
 
-With shares = 0:
-- `totalPurchasePrice = offerPrice × 0 = 0` (changing offer price does nothing)
-- `newSharesIssued = 0`
-- `proFormaEPS` doesn't respond to offer price
-- Suggested offer price falls back to revenue method (~$39.8/sh) because shares = 0 prevents
-  all EV/EBITDA and revenue-per-share calculations too
+## Bug 4 — Accretion label + "−100%" → MOSTLY FIXED, needs broader guard
+Lines 66–70 already compute `isAccretive = proFormaEPS > standaloneEPS` and suppress the percent
+(`epsChangePct = null`) when `standaloneEPS ≤ 0`, so the "−100% ✓ Accretive" nonsense is gone.
+The spec rule is broader: suppress the percent when `standaloneEPS ≤ 0` **OR** `proFormaEPS ≤ 0`, and
+"lean dilutive" in degenerate cases.
+**Fix:** `accretionMeaningful = standaloneEPS > 0 && proFormaEPS > 0`; and
+`isAccretive = accretionMeaningful && proFormaEPS > standaloneEPS` (so any non-positive EPS leans dilutive).
 
-**Fix**: add `WeightedAverageNumberOfSharesOutstandingBasic` (and diluted variant) to the
-fallback chain in `fetchFromEDGAR`.
-
-### Bug 2 — No free live price source wired (secondary)
-
-The `/api/price/:ticker` waterfall tries FMP → Finnhub → AlphaVantage. FMP returns 403. Finnhub
-requires `FINNHUB_KEY` env var (not set). AlphaVantage requires `ALPHAVANTAGE_KEY` (not set).
-Yahoo v8/chart endpoint works without auth and returns `regularMarketPrice` but is not in the
-waterfall. Result: `currentSharePriceB = 0` → suggested offer falls back to fundamentals.
-
-With negative EBITDA and EPS (TEAM), the only fallback is revenue-based: (revenue × 2) / shares.
-Since shares = 0 from Bug 1, this returns null → suggested offer = null → the UI cannot even
-prefill an offer price suggestion.
-
-**Fix**: Add Yahoo v8/chart to the price waterfall (first or second position). Move Finnhub to
-first so it works when the key IS set.
-
-## The React/prop flow is correct
-
-- `buildTargetForDeck()` / `buildDealForDeck()` are plain object literals computed at render time.
-  Every render that changes `inputs` or `results` flows correct new values into DeckShell props.
-- No stale closure, no `useMemo`/`useCallback` with wrong deps found in the App→DeckShell path.
-- The uncontrolled-input pattern (defaultValue + useEffect sync) fires correctly.
-- PDF export captures live rendered DOM; no async race between `setExporting` and `html2canvas`.
-
-## Fix sequence
-1. `fetchFromEDGAR`: add `WeightedAverageNumberOfSharesOutstandingBasic` fallback → shares ≈ 262M
-2. `/api/price/:ticker`: add Yahoo v8/chart, reorder waterfall → live price ≈ $115–$120
-3. After both: Phase 1.3 acceptance tests pass naturally (inputs visibly change all outputs).
+## Hand-worked acceptance target (offer $150, 60% cash, A.price 188, synergiesY1 935, tax 21%)
+dealValue 39,300 · premium +29.3% · stockConsideration 15,720 · newShares ≈83.6M ·
+combinedShares ≈1,012.6 · afterTaxSynergies ≈739 · combinedNetIncome ≈7,939 ·
+proFormaEPS ≈ **$7.84** · acquirerStandaloneEPS ≈ **$8.03** · **DILUTIVE**, ≈ **−2.4%**.
+Acquirer must remain CRM throughout.
