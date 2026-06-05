@@ -6,28 +6,65 @@ const YAHOO_HEADERS = {
   'Accept': 'application/json',
 };
 
-// Yahoo v8/chart requires no auth and returns live price + 52-week range.
-// Treat as fragile: failure must never break the caller.
-async function fetchFields(ticker) {
-  const now = new Date().toISOString().substring(0, 10);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  const data = await get(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`,
-    YAHOO_HEADERS
-  );
+// Shared 5-minute cache so the deal model (/api/price) and the Source Verification panel
+// (/api/verified) reuse ONE Yahoo call per ticker instead of each hitting Yahoo separately —
+// halving the request rate, which is what triggers Yahoo's HTTP 429 rate-limiting.
+const cache = new Map();
+const inflight = new Map(); // share a single in-flight request across concurrent callers
+const TTL = 300_000;
 
-  const meta = data?.chart?.result?.[0]?.meta;
-  if (!meta) return {};
-
-  function makeField(value) {
-    return value != null ? { value, asOf: now, period: null, source: 'yahoo' } : null;
+// Fetch the chart meta. Yahoo rate-limits (429) under load, so try query1 then (only on 429/5xx)
+// query2 — at most 2 hits per ticker. Returns null on failure (never throws to the caller).
+async function fetchYahooMeta(ticker) {
+  const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
+  for (let i = 0; i < hosts.length; i++) {
+    try {
+      const data = await get(`https://${hosts[i]}/v8/finance/chart/${ticker}?interval=1d&range=1d`, YAHOO_HEADERS);
+      const meta = data?.chart?.result?.[0]?.meta;
+      if (meta) return meta;
+      return null; // valid response, no meta → don't hammer the other host
+    } catch (e) {
+      if (i < hosts.length - 1 && /HTTP (429|5\d\d)/.test(e.message)) { await sleep(250); continue; }
+      return null;
+    }
   }
-
-  return {
-    price:      makeField(meta.regularMarketPrice),
-    week52High: makeField(meta.fiftyTwoWeekHigh),
-    week52Low:  makeField(meta.fiftyTwoWeekLow),
-  };
+  return null;
 }
 
-module.exports = { fetchFields };
+async function fetchFields(ticker) {
+  const key = ticker.toUpperCase();
+  const c = cache.get(key);
+  if (c && Date.now() - c.ts < TTL) return c.fields;
+  if (inflight.has(key)) return inflight.get(key); // concurrent caller → reuse the in-flight request
+
+  const p = (async () => {
+    const now = new Date().toISOString().substring(0, 10);
+    const meta = await fetchYahooMeta(key);
+    if (!meta) {
+      // Cache an empty result only briefly (30s) so a transient 429 doesn't pin "missing" for 5 min.
+      cache.set(key, { ts: Date.now() - (TTL - 30_000), fields: {} });
+      return {};
+    }
+    const makeField = (value) => (value != null ? { value, asOf: now, period: null, source: 'yahoo' } : null);
+    const fields = {
+      price:      makeField(meta.regularMarketPrice),
+      week52High: makeField(meta.fiftyTwoWeekHigh),
+      week52Low:  makeField(meta.fiftyTwoWeekLow),
+    };
+    cache.set(key, { ts: Date.now(), fields });
+    return fields;
+  })();
+
+  inflight.set(key, p);
+  try { return await p; } finally { inflight.delete(key); }
+}
+
+// Convenience for the price waterfall — returns just the live price (or null), via the shared cache.
+async function fetchPrice(ticker) {
+  const f = await fetchFields(ticker);
+  return f.price?.value != null ? parseFloat(f.price.value.toFixed(2)) : null;
+}
+
+module.exports = { fetchFields, fetchPrice };

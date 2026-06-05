@@ -33,12 +33,12 @@ export function acquirerStandaloneEPS(inputs) {
   return parseFloat(inputs.companyAEPS) || 0;
 }
 
-// Target market price for premium: prefer the REAL live price; P/E proxy only as a fallback.
+// Target market price for the PREMIUM. Use ONLY the real live price — a premium measured against an
+// EPS×15 proxy is meaningless (it produced the nonsensical "−34.5% premium" when the live price was
+// missing). Returns 0 when there is no live price, so the premium is reported as N/A rather than a
+// fabricated discount.
 export function targetMarketPrice(inputs) {
-  const live = parseFloat(inputs.currentSharePriceB) || 0;
-  if (live > 0) return live;
-  const eps = parseFloat(inputs.companyBEPS) || 0;
-  return eps > 0 ? eps * 15 : 0;
+  return parseFloat(inputs.currentSharePriceB) || 0;
 }
 
 // ── Core calculation ──────────────────────────────────────────────────────────

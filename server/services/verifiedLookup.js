@@ -3,6 +3,7 @@ const edgarClient   = require('./edgarClient');
 const fmpClient     = require('./fmpClient');
 const yahooClient   = require('./yahooClient');
 const finnhubClient = require('./finnhubClient');
+const cnbcClient    = require('./cnbcClient');
 const { reconcile } = require('../data/reconcile');
 const FIELDS = require('../data/fieldRegistry');
 
@@ -79,6 +80,19 @@ async function lookup(ticker, cik) {
     }
 
     fields[fieldSpec.key] = { ...rec, unit: fieldSpec.unit, sot: fieldSpec.sot, sourceMeta };
+  }
+
+  // Price backfill: Finnhub needs a key and Yahoo rate-limits (429), so the price field is often
+  // missing. Fall back to keyless CNBC so the Source Verification panel still shows a live price.
+  if (fields.price && fields.price.status === 'missing') {
+    const cnbcPrice = await cnbcClient.fetchPrice(ticker);
+    if (cnbcPrice != null) {
+      fields.price = {
+        ...fields.price, status: 'single', value: cnbcPrice, chosenSource: 'cnbc',
+        sources: { ...(fields.price.sources || {}), cnbc: cnbcPrice },
+        sourceMeta: { ...(fields.price.sourceMeta || {}), cnbc: { value: cnbcPrice, asOf, period: null } },
+      };
+    }
   }
 
   const result = { ticker, asOf, fields };

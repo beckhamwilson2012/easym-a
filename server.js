@@ -5,6 +5,8 @@ const zlib = require('zlib');
 const fs   = require('fs');
 const path = require('path');
 const { PEER_OVERRIDES } = require('./peerOverrides');
+const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
+const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
 const app = express();
@@ -15,7 +17,7 @@ const FINNHUB_KEY      = process.env.FINNHUB_KEY      || '';
 const ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_KEY || '';
 
 const priceCache   = new Map();
-const CACHE_TTL_MS = 60_000;
+const CACHE_TTL_MS = 300_000; // 5 min — longer TTL reduces Yahoo call frequency (avoids 429s)
 
 function get(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
@@ -407,15 +409,15 @@ async function fetchFromYahoo(symbol) {
 
 // ── Live price helpers (used by /api/price/:ticker waterfall) ─────────────────
 
-// Yahoo v8/chart works without auth — no API key needed, good free fallback.
+// CNBC's keyless quote service — reliable primary source that does not rate-limit like Yahoo.
+async function tryCnbcPrice(ticker) {
+  return cnbcClient.fetchPrice(ticker);
+}
+
+// Yahoo v8/chart, via the SHARED cached client so the deal model and the Source Verification panel
+// reuse one Yahoo call per ticker (the duplicate calls are what triggered Yahoo's HTTP 429).
 async function tryYahooPrice(ticker) {
-  const data = await get(
-    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`,
-    { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
-  );
-  const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
-  if (!price || price === 0) return null;
-  return parseFloat(price.toFixed(2));
+  return yahooClient.fetchPrice(ticker);
 }
 
 async function tryFmpPrice(ticker) {
@@ -575,8 +577,9 @@ app.get('/api/price/:ticker', async (req, res) => {
   }
 
   const sources = [
-    { name: 'finnhub',      fn: () => tryFinnhub(ticker) },      // free with key; real-time
-    { name: 'yahoo',        fn: () => tryYahooPrice(ticker) },   // free, no key needed
+    { name: 'finnhub',      fn: () => tryFinnhub(ticker) },      // free WITH key; real-time, no rate-limit
+    { name: 'cnbc',         fn: () => tryCnbcPrice(ticker) },    // free, no key; reliable, no rate-limit
+    { name: 'yahoo',        fn: () => tryYahooPrice(ticker) },   // free, no key; rate-limits (429) — backup
     { name: 'alphavantage', fn: () => tryAlphaVantage(ticker) }, // free with key
     { name: 'fmp',          fn: () => tryFmpPrice(ticker) },     // paid; 403 on free key
   ];
@@ -605,7 +608,8 @@ app.get('/api/price/:ticker', async (req, res) => {
     ? { price, source, attempts }
     : { error: 'Price unavailable from all sources', attempts };
 
-  priceCache.set(ticker, { ts: Date.now(), payload });
+  // Only cache SUCCESSFUL prices. Caching a failure would pin a transient 429 for the whole TTL.
+  if (price !== null) priceCache.set(ticker, { ts: Date.now(), payload });
   res.json(payload);
 });
 

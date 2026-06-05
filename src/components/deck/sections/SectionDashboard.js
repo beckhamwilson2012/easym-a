@@ -79,18 +79,17 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     ? inputs.synergiesY1
     : Math.max(1, Math.round(0.02 * ((inputs.companyARevenue || 0) + (inputs.companyBRevenue || 0))));
 
-  // Row anchoring: 5 rows centered on current premium (5% steps).
-  // If rawPremium is deeply negative (offer price = 0), default pivot to 25%.
-  const rawPremium = parseFloat(results.purchasePremium) || 0;
-  const roundedPremium = rawPremium > -50 ? Math.round(rawPremium / 5) * 5 : 25;
-  const rowPremiums = [
-    roundedPremium - 10,
-    roundedPremium - 5,
-    roundedPremium,
-    roundedPremium + 5,
-    roundedPremium + 10,
-  ].map(p => Math.max(0, p));
-  const sensitivityCurrentRow = 2; // center row is always "current"
+  // Build a 5-row premium ladder for the sensitivity grid. Center on the deal's ACTUAL premium when
+  // it is a sane positive number; otherwise fall back to a standard 10/15/20/25/30% acquisition
+  // ladder. Always produce 5 DISTINCT, escalating, non-negative premiums — never collapse to
+  // identical rows (the old `Math.max(0, p)` clamp turned a negative premium into five 0% rows).
+  const rawPremium = results.purchasePremium != null ? parseFloat(results.purchasePremium) : null;
+  const havePremium = rawPremium != null && isFinite(rawPremium) && rawPremium >= 5 && rawPremium <= 150;
+  const pivot = havePremium ? Math.round(rawPremium / 5) * 5 : 20;
+  let rowPremiums = [pivot - 10, pivot - 5, pivot, pivot + 5, pivot + 10];
+  const minRow = Math.min(...rowPremiums);
+  if (minRow < 5) rowPremiums = rowPremiums.map(p => p + (5 - minRow)); // floor at 5% so rows stay positive & distinct
+  const sensitivityCurrentRow = 2; // center row is the base case (the deal premium when available)
 
   // Target market price (basis for premium calculation — same real-price basis as dealCalc.js).
   // Falls back to deriving from the offer + premium only when no real price is available at all.
@@ -388,7 +387,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               </thead>
               <tbody>
                 {rowPremiums.map((prem, i) => {
-                  const isCurRow = i === sensitivityCurrentRow;
+                  const isCurRow = i === sensitivityCurrentRow && havePremium;
                   const offerPriceAtRow = rowOfferPrices[i];
                   return (
                   <tr key={i}>
@@ -400,7 +399,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                     </td>
                     {SYN_MULTS.map((_, j) => {
                       const eps = sensitivityData?.[i]?.[j];
-                      const isCurrent = i === sensitivityCurrentRow && j === 2;
+                      const isCurrent = i === sensitivityCurrentRow && j === 2 && havePremium;
                       const breakeven = breakevenEPS;
                       const delta = (eps !== null && breakeven > 0) ? (eps - breakeven) / breakeven : 0;
                       let bg, color;
