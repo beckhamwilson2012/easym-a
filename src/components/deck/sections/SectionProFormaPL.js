@@ -1,15 +1,17 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
-import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting } from '../shared/deckTokens';
+import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPerShare, fmtPctSigned } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
+import { calcProFormaEPS } from '../../../utils/dealCalc';
 
 // Cost synergies = 55% of total; revenue synergies = 45%
 const COST_SYN_PCT = 0.55;
 const REV_SYN_PCT  = 0.45;
 
-const USED_FIELDS = ['revenue', 'operatingIncome', 'netIncome', 'synergiesY1', 'synergiesY2', 'synergiesY3', 'transactionFees', 'cashPercent'];
+// Only `revenue`/`netIncome` are fetched (EDGAR); synergies, fees and cash% are assumptions.
+const USED_FIELDS = ['revenue', 'netIncome', 'synergiesY1', 'transactionFees', 'cashPercent'];
 
 
 export function SectionProFormaPL({ target, acquirer, deal, pageNum }) {
@@ -54,11 +56,25 @@ export function SectionProFormaPL({ target, acquirer, deal, pageNum }) {
     `Cost synergies (${fmtMoneyTable(costSyn)}) support gross margin expansion; revenue synergies (${fmtMoneyTable(revSyn)}) add incremental top-line.`,
   ];
 
+  // ── Accretion / dilution table — tied to the corrected model (Phase 1.A), reactive to inputs ──
+  const inputs = deal._inputs || {};
+  const standaloneEPS = parseFloat(deal._results?.companyAEPS) || parseFloat(inputs.companyAEPS) || 0;
+  const offer = parseFloat(deal.offerPrice) || parseFloat(inputs.offerPricePerShare) || 0;
+  const accretionRows = [
+    { year: 'Year 1', syn: parseFloat(deal.synergiesY1) || 0 },
+    { year: 'Year 2', syn: parseFloat(deal.synergiesY2) || 0 },
+    { year: 'Year 3', syn: parseFloat(deal.synergiesY3) || 0 },
+  ].map(r => {
+    const pf = calcProFormaEPS(offer, r.syn, inputs);
+    const pct = (pf != null && standaloneEPS > 0) ? (pf / standaloneEPS - 1) * 100 : null;
+    return { ...r, pfEPS: pf, pct, accretive: pf != null ? pf > standaloneEPS : null };
+  });
+
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit F">
       <PageHeader
         title="Pro Forma P&L — Combined Entity"
-        subtitle={`${acquirer.name || 'Acquirer'} + ${target.name || 'Target'} · Year 1 Pro Forma`}
+        subtitle={`${acquirer.name || 'Acquirer'} + ${target.name || 'Target'} · Year 1 Pro Forma + 3-Year Accretion/(Dilution)`}
       />
 
       <div style={{ display: 'flex', gap: 20, padding: '16px 20px 36px' }}>
@@ -186,7 +202,7 @@ export function SectionProFormaPL({ target, acquirer, deal, pageNum }) {
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 3 }}>
                   <span style={{ fontSize: 10, color: '#374151' }}>{item.label}</span>
                   <span style={{ fontSize: 10, fontWeight: 600, color: NAVY }}>
-                    {fmtMoneyTable(item.val)} ({item.pct}%)
+                    {fmtMoneyTable(item.val)} ({Math.round(item.pct)}%)
                   </span>
                 </div>
                 <div style={{ height: 8, background: '#E5E7EB', borderRadius: 4 }}>
@@ -197,6 +213,41 @@ export function SectionProFormaPL({ target, acquirer, deal, pageNum }) {
           </div>
         </div>
       </div>
+
+      {/* Accretion / Dilution table — recomputes live from the corrected model */}
+      <div style={{ padding: '0 20px 8px' }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+          Accretion / (Dilution) Analysis — Pro Forma EPS vs. {acquirer.ticker || acquirer.name || 'Acquirer'} Standalone
+        </div>
+        <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+          <div style={{ background: NAVY, display: 'flex', padding: '5px 10px' }}>
+            <span style={{ flex: 1.4, color: '#fff', fontSize: 10, fontWeight: 700 }}>Year (synergy run-rate)</span>
+            <span style={{ flex: 1, color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'right' }}>Acquirer EPS</span>
+            <span style={{ flex: 1, color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'right' }}>Pro Forma EPS</span>
+            <span style={{ flex: 1, color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'right' }}>Accretion/(Dilution)</span>
+            <span style={{ flex: 1, color: '#fff', fontSize: 10, fontWeight: 700, textAlign: 'right' }}>Verdict</span>
+          </div>
+          {accretionRows.map((r, i) => (
+            <div key={r.year} style={{ display: 'flex', padding: '6px 10px', background: i % 2 ? ALT_ROW : '#fff', borderBottom: `1px solid ${GRAY_BORDER}` }}>
+              <span style={{ flex: 1.4, fontSize: 11, color: '#374151' }}>{r.year} <span style={{ color: '#9CA3AF' }}>({fmtMoneyTable(r.syn)})</span></span>
+              <span style={{ flex: 1, fontSize: 11, textAlign: 'right', color: '#374151' }}>{fmtPerShare(standaloneEPS)}</span>
+              <span style={{ flex: 1, fontSize: 11, textAlign: 'right', fontWeight: 600, color: NAVY }}>{r.pfEPS == null ? 'N/A' : fmtPerShare(r.pfEPS)}</span>
+              <span style={{ flex: 1, fontSize: 11, textAlign: 'right', fontWeight: 600, color: r.accretive ? '#166534' : '#DC2626' }}>
+                {r.pct == null ? 'N/M' : fmtPctSigned(r.pct)}
+              </span>
+              <span style={{ flex: 1, fontSize: 11, textAlign: 'right', fontWeight: 700, color: r.accretive ? '#166534' : '#DC2626' }}>
+                {r.accretive == null ? '—' : r.accretive ? 'Accretive' : 'Dilutive'}
+              </span>
+            </div>
+          ))}
+        </div>
+        {standaloneEPS <= 0 && (
+          <div style={{ fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', marginTop: 4 }}>
+            Acquirer standalone EPS is ≤ 0 — percentage accretion is not meaningful (N/M); verdict shown by absolute EPS comparison.
+          </div>
+        )}
+      </div>
+
       {sourceLine && (
         <div style={{ padding: '0 20px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine}

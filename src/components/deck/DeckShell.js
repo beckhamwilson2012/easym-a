@@ -7,31 +7,38 @@ import { DeckTabBar }  from './DeckTabBar';
 import { SectionDashboard }        from './sections/SectionDashboard';
 import { SectionTitlePage }        from './sections/SectionTitlePage';
 import { SectionComparables }      from './sections/SectionComparables';
-import { SectionBriefingCover }    from './sections/SectionBriefingCover';
-import { SectionTargetOverview }   from './sections/SectionTargetOverview';
-import { SectionPricePerformance } from './sections/SectionPricePerformance';
-import { SectionFootballField }    from './sections/SectionFootballField';
-import { SectionStandalonePL }     from './sections/SectionStandalonePL';
-import { SectionAVP }              from './sections/SectionAVP';
-import { SectionSynergyOverview }  from './sections/SectionSynergyOverview';
+import { SectionCompanyProfiles }  from './sections/SectionCompanyProfiles';
+import { SectionStandalonePLAcquirer, SectionStandalonePLTarget } from './sections/SectionStandalonePL';
+import { SectionFinancialProfile } from './sections/SectionFinancialProfile';
 import { SectionProFormaPL }       from './sections/SectionProFormaPL';
-import { SectionStrategicRationale } from './sections/SectionStrategicRationale';
+import { SectionPricePerformance } from './sections/SectionPricePerformance';
+import { SectionTradingProfile }   from './sections/SectionTradingProfile';
+import { SectionRelativeContribution } from './sections/SectionRelativeContribution';
+import { SectionFootballField }    from './sections/SectionFootballField';
+import { SectionAnalystConsensus } from './sections/SectionAnalystConsensus';
+import { SectionAVP }              from './sections/SectionAVP';
+import { SectionSources }          from './sections/SectionSources';
 import { SectionDataVerification }   from './sections/SectionDataVerification';
 
+// Order matches the 14-section hand-built reference deck, with the Dashboard as an internal
+// (non-PDF) summary first and the Data Verification appendix last.
 const SECTIONS = [
-  { id: 'dashboard',   label: 'Dashboard',           Component: SectionDashboard,          showInPdf: false },
-  { id: 'title',       label: 'Title',               Component: SectionTitlePage,          showInPdf: true  },
-  { id: 'comparables', label: 'Comparables',         Component: SectionComparables,        showInPdf: true  },
-  { id: 'briefing',    label: 'Target Briefing',     Component: SectionBriefingCover,      showInPdf: true  },
-  { id: 'overview',    label: 'Target Overview',     Component: SectionTargetOverview,     showInPdf: true  },
-  { id: 'price',       label: 'Price Performance',   Component: SectionPricePerformance,   showInPdf: true  },
-  { id: 'football',    label: 'Football Field',       Component: SectionFootballField,      showInPdf: true  },
-  { id: 'pl',          label: 'Standalone P&L',      Component: SectionStandalonePL,       showInPdf: true  },
-  { id: 'avp',         label: 'Valuation (AVP)',     Component: SectionAVP,                showInPdf: true  },
-  { id: 'synergy',     label: 'Synergy Overview',    Component: SectionSynergyOverview,    showInPdf: true  },
-  { id: 'proforma',    label: 'Pro Forma P&L',       Component: SectionProFormaPL,         showInPdf: true  },
-  { id: 'rationale',   label: 'Strategic Rationale', Component: SectionStrategicRationale, showInPdf: true  },
-  { id: 'verification', label: 'Data Verification',  Component: SectionDataVerification,   showInPdf: true  },
+  { id: 'dashboard',    label: 'Dashboard',                   Component: SectionDashboard,            showInPdf: false },
+  { id: 'title',        label: 'Title',                       Component: SectionTitlePage,            showInPdf: true  }, // 1
+  { id: 'comparables',  label: 'Comparables',                 Component: SectionComparables,          showInPdf: true  }, // 2
+  { id: 'profiles',     label: 'Company Profiles',            Component: SectionCompanyProfiles,      showInPdf: true  }, // 3
+  { id: 'plAcquirer',   label: 'Standalone P&L — Acquirer',   Component: SectionStandalonePLAcquirer, showInPdf: true  }, // 4
+  { id: 'plTarget',     label: 'Standalone P&L — Target',     Component: SectionStandalonePLTarget,   showInPdf: true  }, // 5
+  { id: 'finprofile',   label: 'Financial Profile',           Component: SectionFinancialProfile,     showInPdf: true  }, // 6
+  { id: 'proforma',     label: 'Pro Forma P&L',               Component: SectionProFormaPL,           showInPdf: true  }, // 7
+  { id: 'equity',       label: 'Equity Performance',          Component: SectionPricePerformance,     showInPdf: true  }, // 8
+  { id: 'trading',      label: 'Trading Profile & Ownership', Component: SectionTradingProfile,       showInPdf: true  }, // 9
+  { id: 'contribution', label: 'Relative Contribution',       Component: SectionRelativeContribution, showInPdf: true  }, // 10
+  { id: 'distribution', label: 'Distribution of Stock Price', Component: SectionFootballField,        showInPdf: true  }, // 11
+  { id: 'analyst',      label: 'Analyst Consensus',           Component: SectionAnalystConsensus,     showInPdf: true  }, // 12
+  { id: 'valuation',    label: 'Valuation Matrix',            Component: SectionAVP,                  showInPdf: true  }, // 13
+  { id: 'sources',      label: 'Sources & Methodology',       Component: SectionSources,              showInPdf: true  }, // 14
+  { id: 'verification', label: 'Data Verification',           Component: SectionDataVerification,     showInPdf: true  }, // appendix
 ];
 
 // pageNum for each showInPdf section (1-indexed)

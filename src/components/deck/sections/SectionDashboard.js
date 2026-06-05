@@ -109,7 +109,6 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // Footer: find minimum synergy level for accretion on current row
   const breakevenEPS = inputs.companyAEPS;
   const currentRowData = sensitivityData[sensitivityCurrentRow] || [];
-  const currentScenarioEPS = currentRowData[2]; // Base column (100%)
   let sensitivityFooter = null;
   if (breakevenEPS > 0 && currentRowData.length > 0) {
     const firstAccretiveIdx = currentRowData.findIndex(eps => eps !== null && eps >= breakevenEPS);

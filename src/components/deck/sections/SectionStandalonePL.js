@@ -46,7 +46,22 @@ function PLRow({ label, value, alt, bold, indent }) {
   );
 }
 
+// Thin wrappers so the deck can show a standalone P&L for EITHER side (reference §4 Acquirer,
+// §5 Target). The acquirer instance hides deal-specific (premium / financing) commentary, which
+// only makes sense for the target being acquired.
+export function SectionStandalonePLTarget({ target, deal, pageNum }) {
+  return <StandalonePLBody company={target} deal={deal} pageNum={pageNum} role="Target" showDealCommentary exhibitLabel="Exhibit B" />;
+}
+export function SectionStandalonePLAcquirer({ acquirer, pageNum }) {
+  return <StandalonePLBody company={acquirer} deal={null} pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel="Exhibit B-2" />;
+}
+// Back-compat alias (original single-target usage).
 export function SectionStandalonePL({ target, deal, pageNum }) {
+  return <StandalonePLBody company={target} deal={deal} pageNum={pageNum} role="Target" showDealCommentary exhibitLabel="Exhibit B" />;
+}
+
+function StandalonePLBody({ company, deal, pageNum, role, showDealCommentary, exhibitLabel }) {
+  const target = company; // body was written against `target`; keep the name internally
   const { data: verifiedData } = useVerifiedData(target?.ticker ?? null);
   const sourceLine = composeSourceLine(USED_FIELDS, verifiedData?.fields, verifiedData?.asOf);
   const bankMode = isFinancial(target?.companyType);
@@ -80,7 +95,18 @@ export function SectionStandalonePL({ target, deal, pageNum }) {
   const fmtBankVal = (v) => v != null ? fmtMoneyTable(v) : 'N/A';
   const fmtBankNeg = (v) => v != null ? fmtMoneyAccounting(-v) : 'N/A';
 
-  const commentary = buildFinancialCommentary(target, deal);
+  // Deal-dependent commentary (premium / financing) only belongs on the target side. The acquirer
+  // standalone slide gets deal-free margin/scale commentary instead.
+  const standaloneCommentary = (() => {
+    const lines = [];
+    if (rev > 0 && ebitda > 0) lines.push(`EBITDA margin of ${fmtPct(ebitda / rev * 100)} on ${fmtMoneyTable(rev)} of revenue.`);
+    if (rev > 0 && ni > 0) lines.push(`Net income of ${fmtMoneyTable(ni)} — a ${fmtPct(ni / rev * 100)} net margin.`);
+    if (rev > 0 && ni < 0) lines.push(`Reported a net loss of ${fmtMoneyTable(Math.abs(ni))} in the latest fiscal year — growth-stage profitability profile.`);
+    if (shares > 0) lines.push(`${shares.toFixed(0)}M shares outstanding; GAAP EPS of ${fmtPerShare(eps)}.`);
+    lines.push(`Net ${(debt - cash) < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(debt - cash))}.`);
+    return lines;
+  })();
+  const commentary = (showDealCommentary && deal) ? buildFinancialCommentary(target, deal) : standaloneCommentary;
 
   // Build an honest fiscal-year label from the server-supplied metadata.
   // CRM FY ends Jan → "FY2026 (ended Jan 2026)"; TEAM FY ends Jun → "FY2025 (ended Jun 2025)".
@@ -95,9 +121,9 @@ export function SectionStandalonePL({ target, deal, pageNum }) {
   })();
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit B">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
-        title={`Standalone Financial Profile — ${target.name || 'N/A'}`}
+        title={`Standalone P&L — ${role || 'Target'}: ${target.name || 'N/A'}`}
         subtitle={fyLabel}
       />
 
@@ -178,7 +204,7 @@ export function SectionStandalonePL({ target, deal, pageNum }) {
               <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>Financial Highlights</span>
             </div>
             <div style={{ padding: '10px 12px' }}>
-              {(bankMode ? buildBankCommentary(target, deal, { nii, nonIntInc, nonIntExp, bankTotalRev, bankNiMargin }) : commentary).map((line, i) => (
+              {(bankMode && showDealCommentary && deal ? buildBankCommentary(target, deal, { nii, nonIntInc, nonIntExp, bankTotalRev, bankNiMargin }) : commentary).map((line, i) => (
                 <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                   <span style={{ color: '#0070D2', fontSize: 14, lineHeight: 1, marginTop: 1, flexShrink: 0 }}>•</span>
                   <span style={{ fontSize: 11, color: '#374151', lineHeight: 1.5 }}>{line}</span>

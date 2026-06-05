@@ -71,7 +71,7 @@ export function composeSourceLine(usedFieldKeys, fields, asOfISO) {
   if (labels.length) parts.push('Source: ' + joinList(labels) + '.');
   if (hasAssumption)  parts.push('Deal terms and projections per transaction assumptions.');
   const asOf = newestAsOf || (asOfISO ? asOfISO.substring(0, 10) : null);
-  if (asOf && citedSources.has('finnhub') || asOf && citedSources.has('yahoo')) {
+  if (asOf && (citedSources.has('finnhub') || citedSources.has('yahoo'))) {
     parts.push('Market data as of ' + formatDate(asOf) + '.');
   }
 
