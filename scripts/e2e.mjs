@@ -114,7 +114,7 @@ try {
   ok(v150.verdict === 'Dilutive', 'Verdict = Dilutive');
   ok(v150.newShares && Math.abs(parseFloat(v150.newShares.replace(/,/g,'')) - 84) < 3, `New Shares ≈84M (got ${v150.newShares})`);
   ok(v150.newShares !== '0', 'New Shares NOT 0M');
-  ok(v150.proFormaEPS && Math.abs(parseFloat(v150.proFormaEPS) - 6.92) < 0.12, `Pro Forma EPS ≈$6.92 (got $${v150.proFormaEPS})`);
+  ok(v150.proFormaEPS && Math.abs(parseFloat(v150.proFormaEPS) - 7.84) < 0.15, `Pro Forma EPS ≈$7.84 (got $${v150.proFormaEPS})`);
   ok(v150.proFormaEPS !== '0.00', 'Pro Forma EPS NOT $0.00');
   ok(v150.premium && Math.abs(parseFloat(v150.premium) - 51.9) < 2, `Premium ≈+51.9% (got ${v150.premium}%)`);
 

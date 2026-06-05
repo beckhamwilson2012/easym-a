@@ -5,9 +5,12 @@ export const SYN_MULTS    = [0.5, 0.75, 1.0, 1.25, 1.5];
 export const SYN_LABELS   = ['50%', '75%', '100%', '125%', '150%'];
 
 // ── Transaction assumptions (documented; not fetched data) ────────────────────
-// Applied consistently to synergies (taxed) and new acquisition debt interest (tax-shielded).
+// TAX_RATE applies to synergies (taxed) and, if used, to financing interest (tax-shielded).
 export const TAX_RATE           = 0.21;  // US federal statutory rate
-export const DEBT_INTEREST_RATE = 0.05;  // marginal cost of new acquisition debt
+// Incremental financing cost on the cash portion. The BASE accretion/dilution check assumes NO
+// incremental financing-cost drag (the standard quick convention) → default 0, so pro-forma EPS =
+// (A.NI + B.NI + after-tax synergies) ÷ combined shares. Raise this to model fully debt-funded cash.
+export const DEBT_INTEREST_RATE = 0;
 
 // Acquirer market price for share issuance: prefer the REAL live price; only fall back to a
 // P/E proxy (EPS×15) when no live price is available, and never produce a price from a loss.
@@ -16,6 +19,18 @@ export function acquirerSharePrice(inputs) {
   if (live > 0) return live;
   const eps = parseFloat(inputs.companyAEPS) || 0;
   return eps > 0 ? eps * 15 : 0;
+}
+
+// Acquirer standalone EPS for the accretion/dilution comparison. Computed as net income ÷ shares
+// outstanding so it is on the SAME basis as the pro-forma EPS (also net income ÷ shares) — an
+// apples-to-apples comparison. This can differ slightly from the reported (diluted) EPS shown on the
+// Standalone P&L slide because reported EPS uses diluted weighted-average shares. Falls back to the
+// reported EPS only when shares are missing.
+export function acquirerStandaloneEPS(inputs) {
+  const shares = parseFloat(inputs.companyAShares)    || 0;
+  const ni     = parseFloat(inputs.companyANetIncome) || 0;
+  if (shares > 0) return ni / shares;
+  return parseFloat(inputs.companyAEPS) || 0;
 }
 
 // Target market price for premium: prefer the REAL live price; P/E proxy only as a fallback.
@@ -30,7 +45,7 @@ export function targetMarketPrice(inputs) {
 
 export function calculate(inputs) {
   const {
-    companyAShares, companyAEPS, companyADebt,
+    companyAShares, companyADebt,
     companyBShares, companyBEPS, companyBCash, companyBDebt,
     companyARevenue, companyAEBITDA, companyANetIncome,
     companyBRevenue, companyBEBITDA, companyBNetIncome,
@@ -61,11 +76,13 @@ export function calculate(inputs) {
                               + afterTaxSynergies - newInterestAfterTax;
   const proFormaEPS         = totalShares > 0 ? proFormaNetIncome / totalShares : 0;
 
-  // Accretion / dilution. % change is only meaningful from a positive standalone base — a move
-  // from a negative EPS toward zero is NOT a clean "accretive" and -100% is not an "increase".
-  const standaloneEPS       = companyAEPS;
-  const isAccretive         = proFormaEPS > standaloneEPS;
-  const accretionMeaningful = standaloneEPS > 0;
+  // Accretion / dilution. A percent change is only meaningful when BOTH the standalone and the
+  // pro-forma EPS are positive — a move off a non-positive base (e.g. -$0.98 → $0.00) is neither a
+  // clean "accretive" nor a real "-100%". In any degenerate case we lean dilutive and show the
+  // absolute EPS values with no percentage.
+  const standaloneEPS       = acquirerStandaloneEPS(inputs); // net income ÷ shares (same basis as PF)
+  const accretionMeaningful = standaloneEPS > 0 && proFormaEPS > 0;
+  const isAccretive         = accretionMeaningful && proFormaEPS > standaloneEPS;
   const epsChangePct        = accretionMeaningful
     ? ((proFormaEPS - standaloneEPS) / standaloneEPS) * 100 : null;
 
@@ -103,7 +120,9 @@ export function calculate(inputs) {
     combinedNetIncome:  proFormaNetIncome.toFixed(0),
     synergiesY1, synergiesY2, synergiesY3,
     transactionFees,
-    companyAEPS:        companyAEPS.toFixed(2),
+    // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
+    // dashboard "Before → After" and the percent change are internally consistent).
+    companyAEPS:        standaloneEPS.toFixed(2),
   };
 }
 

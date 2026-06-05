@@ -6,7 +6,7 @@ import html2canvas from 'html2canvas';
 import {
   computeFlags, computeDealScore, buildNarrative,
   calcProFormaEPS, SYN_MULTS, SYN_LABELS,
-  acquirerSharePrice, targetMarketPrice,
+  acquirerSharePrice, targetMarketPrice, acquirerStandaloneEPS,
 } from '../../../utils/dealCalc';
 import { calcStockIssuancePct, triggers199Rule } from '../../../lib/dealMath';
 import {
@@ -107,7 +107,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   );
 
   // Footer: find minimum synergy level for accretion on current row
-  const breakevenEPS = inputs.companyAEPS;
+  const breakevenEPS = acquirerStandaloneEPS(inputs); // net income ÷ shares (matches calculate())
   const currentRowData = sensitivityData[sensitivityCurrentRow] || [];
   let sensitivityFooter = null;
   if (breakevenEPS > 0 && currentRowData.length > 0) {
@@ -307,7 +307,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Acquirer Net Income',           value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',             value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Cost Synergies (Y1)', value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true },
-              { label: 'After-Tax Financing Cost',      value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true },
+              ...(parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income',          value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',                 value: fmtPerShare(results.proFormaEPS), bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ] : [
@@ -316,7 +316,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Synergies (Y1)',  value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true, explain: () => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, combinedRevenue: results.combinedRevenue, isBank: false }) },
-              { label: 'After-Tax Financing Cost',  value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true },
+              ...(parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income', value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',       value: fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (
@@ -401,7 +401,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                     {SYN_MULTS.map((_, j) => {
                       const eps = sensitivityData?.[i]?.[j];
                       const isCurrent = i === sensitivityCurrentRow && j === 2;
-                      const breakeven = inputs.companyAEPS;
+                      const breakeven = breakevenEPS;
                       const delta = (eps !== null && breakeven > 0) ? (eps - breakeven) / breakeven : 0;
                       let bg, color;
                       if (eps === null) { bg = '#F9FAFB'; color = '#9CA3AF'; }
@@ -443,7 +443,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
             {cashSensitivity.map(({ cashPct, eps }) => {
               const isCurrent = cashPct === inputs.cashPercent;
-              const acc = eps !== null && eps > inputs.companyAEPS;
+              const acc = eps !== null && eps > breakevenEPS;
               const bg    = isCurrent ? '#0F2244' : eps === null ? '#F9FAFB' : acc ? '#F0FDF4' : '#FEF2F2';
               const color = isCurrent ? '#fff'    : eps === null ? '#9CA3AF' : acc ? '#166534' : '#991B1B';
               return (
