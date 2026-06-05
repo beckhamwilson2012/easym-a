@@ -398,6 +398,17 @@ async function fetchFromYahoo(symbol) {
 
 // ── Live price helpers (used by /api/price/:ticker waterfall) ─────────────────
 
+// Yahoo v8/chart works without auth — no API key needed, good free fallback.
+async function tryYahooPrice(ticker) {
+  const data = await get(
+    `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=1d`,
+    { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', 'Accept': 'application/json' }
+  );
+  const price = data?.chart?.result?.[0]?.meta?.regularMarketPrice;
+  if (!price || price === 0) return null;
+  return parseFloat(price.toFixed(2));
+}
+
 async function tryFmpPrice(ticker) {
   const data = await get(`https://financialmodelingprep.com/api/v3/quote-short/${ticker}?apikey=${FMP_KEY}`);
   const quote = Array.isArray(data) ? data[0] : null;
@@ -555,9 +566,10 @@ app.get('/api/price/:ticker', async (req, res) => {
   }
 
   const sources = [
-    { name: 'fmp',          fn: () => tryFmpPrice(ticker) },
-    { name: 'finnhub',      fn: () => tryFinnhub(ticker) },
-    { name: 'alphavantage', fn: () => tryAlphaVantage(ticker) },
+    { name: 'finnhub',      fn: () => tryFinnhub(ticker) },      // free with key; real-time
+    { name: 'yahoo',        fn: () => tryYahooPrice(ticker) },   // free, no key needed
+    { name: 'alphavantage', fn: () => tryAlphaVantage(ticker) }, // free with key
+    { name: 'fmp',          fn: () => tryFmpPrice(ticker) },     // paid; 403 on free key
   ];
 
   const attempts = [];
