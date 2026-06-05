@@ -385,12 +385,18 @@ function App() {
   const [companyTypeB, setCompanyTypeB] = useState('standard');
   const [dataSrcA, setDataSrcA] = useState('');
   const [dataSrcB, setDataSrcB] = useState('');
+  const [sicA, setSicA] = useState(null);
+  const [sicB, setSicB] = useState(null);
+  const [sicDescriptionA, setSicDescriptionA] = useState(null);
+  const [sicDescriptionB, setSicDescriptionB] = useState(null);
   const [savedAnalyses, setSavedAnalyses] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
   const [bankFactsA, setBankFactsA] = useState(null);
   const [bankFactsB, setBankFactsB] = useState(null);
   const [priceStatusB, setPriceStatusB] = useState({ loading: false, price: null, source: null, attempts: [] });
   const [offerPriceTouched, setOfferPriceTouched] = useState(false);
+  const [expandedA, setExpandedA] = useState(false);
+  const [expandedB, setExpandedB] = useState(false);
 
   const handleChange = (e) => setInputs(prev => ({ ...prev, [e.target.name]: parseFloat(e.target.value) || 0 }));
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
@@ -409,6 +415,7 @@ function App() {
     fetchCompanyData(symbol).then(data => {
       setNameA(data.name); setTickerA(symbol.toUpperCase());
       setCompanyTypeA(data.companyType || 'standard'); setDataSrcA(data.dataSource || '');
+      setSicA(data.sic || null); setSicDescriptionA(data.sicDescription || null);
       setInputs(prev => ({ ...prev, companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
         companyANetIncome: data.netIncome, companyAShares: data.shares, companyAEPS: data.eps,
         companyACash: data.cash, companyADebt: data.debt,
@@ -426,6 +433,7 @@ function App() {
     fetchCompanyData(symbol).then(data => {
       setNameB(data.name); setTickerB(symbol.toUpperCase());
       setCompanyTypeB(data.companyType || 'standard'); setDataSrcB(data.dataSource || '');
+      setSicB(data.sic || null); setSicDescriptionB(data.sicDescription || null);
       setInputs(prev => ({ ...prev, companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
         companyBNetIncome: data.netIncome, companyBShares: data.shares, companyBEPS: data.eps,
         companyBCash: data.cash, companyBDebt: data.debt,
@@ -448,7 +456,18 @@ function App() {
   };
 
   const handleSubmit = () => {
-    const r = calculate(inputs);
+    const updates = {};
+    if (inputs.offerPricePerShare === 0 && suggestedPrice != null && suggestedPrice > 0)
+      updates.offerPricePerShare = suggestedPrice;
+    if (inputs.synergiesY1 === 0 && synAuto1 != null && synAuto1 > 0) updates.synergiesY1 = synAuto1;
+    if (inputs.synergiesY2 === 0 && synAuto2 != null && synAuto2 > 0) updates.synergiesY2 = synAuto2;
+    if (inputs.synergiesY3 === 0 && synAuto3 != null && synAuto3 > 0) updates.synergiesY3 = synAuto3;
+    let effectiveInputs = inputs;
+    if (Object.keys(updates).length > 0) {
+      effectiveInputs = { ...inputs, ...updates };
+      setInputs(effectiveInputs);
+    }
+    const r = calculate(effectiveInputs);
     setResults(r);
     setAnalysisRun(true);
   };
@@ -462,9 +481,11 @@ function App() {
     setErrorA(''); setErrorB('');
     setCompanyTypeA('standard'); setCompanyTypeB('standard');
     setDataSrcA(''); setDataSrcB('');
+    setSicA(null); setSicB(null); setSicDescriptionA(null); setSicDescriptionB(null);
     setBankFactsA(null); setBankFactsB(null);
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
     setOfferPriceTouched(false);
+    setExpandedA(false); setExpandedB(false);
   };
 
   const handleSaveAnalysis = () => {
@@ -498,12 +519,16 @@ function App() {
 
   const buildTargetForDeck = () => ({
     name: nameB || 'Target Company', ticker: tickerB,
+    sic: sicB, sicDescription: sicDescriptionB,
     revenue: inputs.companyBRevenue, ebitda: inputs.companyBEBITDA,
     netIncome: inputs.companyBNetIncome, eps: inputs.companyBEPS,
     shares: inputs.companyBShares, cash: inputs.companyBCash,
     debt: inputs.companyBDebt, companyType: companyTypeB,
     // Acquisition price is the effective market cap being paid for TBV calc
-    marketCap: results ? parseFloat(results.totalPurchasePrice) : inputs.companyBEPS * 15 * inputs.companyBShares,
+    marketCap: (() => {
+      const tpp = results ? parseFloat(results.totalPurchasePrice) : 0;
+      return tpp > 0 ? tpp : inputs.companyBEPS * 15 * inputs.companyBShares;
+    })(),
     // Bank-specific fields (null for non-financial companies)
     tangibleBookValue: bankFactsB?.tangibleBookValue ?? null,
     netInterestIncome: bankFactsB?.netInterestIncome ?? null,
@@ -517,6 +542,7 @@ function App() {
 
   const buildAcquirerForDeck = () => ({
     name: nameA || 'Acquirer', ticker: tickerA,
+    sic: sicA, sicDescription: sicDescriptionA,
     revenue: inputs.companyARevenue, ebitda: inputs.companyAEBITDA,
     netIncome: inputs.companyANetIncome, eps: inputs.companyAEPS,
     shares: inputs.companyAShares, cash: inputs.companyACash,
@@ -588,11 +614,10 @@ function App() {
     return price > 0 && inputs.companyBShares > 0 ? price * inputs.companyBShares : 0;
   })();
 
-  // ── Synergy pre-computations for auto mode summary row
+  // ── Synergy pre-computations (used in handleSubmit auto-fill)
   const synAuto1 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 1) : null;
   const synAuto2 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 2) : null;
   const synAuto3 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 3) : null;
-  const hasSynSuggestions = synAuto1 != null && synAuto2 != null && synAuto3 != null;
   // ── Layout helpers ────────────────────────────────────────────────────────────
 
   const scrollToApp = () => document.getElementById('app-section').scrollIntoView({ behavior: 'smooth' });
@@ -673,73 +698,109 @@ function App() {
 
           {mode === 'auto' && (
             <div>
+              {/* ── Two company panels (collapsed by default) ─────────────── */}
               <div style={col2}>
+                {/* Panel A — Acquirer */}
                 <div style={cardStyle}>
                   <h2 style={sectionTitle}>Company A — Acquirer</h2>
-                  <TickerSelect onSelect={handleSelectA} error={errorA} fetched={fetchedA} companyName={nameA} loading={loadingA} dataSource={dataSrcA} />
+                  <TickerSelect onSelect={handleSelectA} error={errorA} fetched={fetchedA}
+                    companyName={nameA} loading={loadingA} dataSource={dataSrcA} />
                   {fetchedA && (
-                    <div style={{ marginTop: 12 }}>
-                      <LargeNumericField label="Revenue ($M)" name="companyARevenue" value={inputs.companyARevenue} onChange={handleChange} />
-                      {companyTypeA === 'financial' ? (
-                        <BankFactsDisplay bankFacts={bankFactsA} />
-                      ) : (
-                        <LargeNumericField label="EBITDA ($M)" name="companyAEBITDA" value={inputs.companyAEBITDA} onChange={handleChange} />
+                    <div style={{ marginTop: 10 }}>
+                      {/* Summary line */}
+                      <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, color: '#374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            Rev {fmtMoney(inputs.companyARevenue)} · {inputs.companyAShares > 0 ? `${Number(inputs.companyAShares).toFixed(0)}M sh` : '— sh'} · {fmtPerShare(inputs.companyAEPS)} EPS · {fmtMoney(inputs.companyACash)} cash
+                          </span>
+                          <button onClick={() => setExpandedA(v => !v)}
+                            style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 12, cursor: 'pointer', padding: 0, flexShrink: 0 }}>
+                            {expandedA ? 'Collapse ↑' : 'Edit financials ↓'}
+                          </button>
+                        </div>
+                      </div>
+                      {/* Editable fields */}
+                      {expandedA && (
+                        <div style={{ marginTop: 4 }}>
+                          <LargeNumericField label="Revenue ($M)" name="companyARevenue" value={inputs.companyARevenue} onChange={handleChange} />
+                          {companyTypeA === 'financial'
+                            ? <BankFactsDisplay bankFacts={bankFactsA} />
+                            : <LargeNumericField label="EBITDA ($M)" name="companyAEBITDA" value={inputs.companyAEBITDA} onChange={handleChange} />
+                          }
+                          <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={handleChange} />
+                          <InputField label="Shares Outstanding (M)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
+                          <InputField label="EPS ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
+                          <LargeNumericField label="Cash ($M)" name="companyACash" value={inputs.companyACash} onChange={handleChange} />
+                          <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={handleChange} />
+                        </div>
                       )}
-                      <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={handleChange} />
-                      <InputField label="Shares Outstanding (millions)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
-                      <InputField label="EPS ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
-                      <LargeNumericField label="Cash ($M)" name="companyACash" value={inputs.companyACash} onChange={handleChange} />
-                      <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={handleChange} />
                     </div>
                   )}
                 </div>
+
+                {/* Panel B — Target */}
                 <div style={cardStyle}>
                   <h2 style={sectionTitle}>Company B — Target</h2>
-                  <TickerSelect onSelect={handleSelectB} error={errorB} fetched={fetchedB} companyName={nameB} loading={loadingB} dataSource={dataSrcB} />
+                  <TickerSelect onSelect={handleSelectB} error={errorB} fetched={fetchedB}
+                    companyName={nameB} loading={loadingB} dataSource={dataSrcB} />
                   {fetchedB && (
-                    <div style={{ marginTop: 12 }}>
-                      <LargeNumericField label="Revenue ($M)" name="companyBRevenue" value={inputs.companyBRevenue} onChange={handleChange} />
-                      {companyTypeB === 'financial' ? (
-                        <BankFactsDisplay bankFacts={bankFactsB} />
-                      ) : (
-                        <LargeNumericField label="EBITDA ($M)" name="companyBEBITDA" value={inputs.companyBEBITDA} onChange={handleChange} />
+                    <div style={{ marginTop: 10 }}>
+                      {priceStatusB.loading && (
+                        <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6, fontStyle: 'italic' }}>⟳ Fetching live price…</div>
                       )}
-                      <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={handleChange} />
-                      <InputField label="Shares Outstanding (millions)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
-                      <InputField label="EPS ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />
-                      <LargeNumericField label="Cash ($M)" name="companyBCash" value={inputs.companyBCash} onChange={handleChange} />
-                      <LargeNumericField label="Total Debt ($M)" name="companyBDebt" value={inputs.companyBDebt} onChange={handleChange} />
+                      {/* Summary line */}
+                      <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+                        <div style={{ fontSize: 12, color: '#374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            Rev {fmtMoney(inputs.companyBRevenue)} · {inputs.companyBShares > 0 ? `${Number(inputs.companyBShares).toFixed(0)}M sh` : '— sh'} · {fmtPerShare(inputs.companyBEPS)} EPS · {fmtMoney(inputs.companyBCash)} cash
+                            {inputs.currentSharePriceB > 0 && (
+                              <span style={{ color: '#6B7280', marginLeft: 4 }}>· {fmtPerShare(inputs.currentSharePriceB)} mkt</span>
+                            )}
+                          </span>
+                          <button onClick={() => setExpandedB(v => !v)}
+                            style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 12, cursor: 'pointer', padding: 0, flexShrink: 0 }}>
+                            {expandedB ? 'Collapse ↑' : 'Edit financials ↓'}
+                          </button>
+                        </div>
+                      </div>
+                      {/* Editable fields */}
+                      {expandedB && (
+                        <div style={{ marginTop: 4 }}>
+                          <LargeNumericField label="Revenue ($M)" name="companyBRevenue" value={inputs.companyBRevenue} onChange={handleChange} />
+                          {companyTypeB === 'financial'
+                            ? <BankFactsDisplay bankFacts={bankFactsB} />
+                            : <LargeNumericField label="EBITDA ($M)" name="companyBEBITDA" value={inputs.companyBEBITDA} onChange={handleChange} />
+                          }
+                          <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={handleChange} />
+                          <InputField label="Shares Outstanding (M)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
+                          <InputField label="EPS ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />
+                          <LargeNumericField label="Cash ($M)" name="companyBCash" value={inputs.companyBCash} onChange={handleChange} />
+                          <LargeNumericField label="Total Debt ($M)" name="companyBDebt" value={inputs.companyBDebt} onChange={handleChange} />
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
               </div>
-              {fetchedA && fetchedB && (
-                <div>
-                  <div style={col2}>
 
-                    {/* ── Deal Terms ─────────────────────────────────────── */}
-                    <div style={cardStyle}>
+              {/* ── Deal terms + synergies (shown once both loaded) ────────── */}
+              {fetchedA && fetchedB && (
+                <>
+                  <div style={col2}>
+                    {/* ── Deal Terms Hero (2px navy border) ──────────────── */}
+                    <div style={{ ...cardStyle, border: '2px solid #0F2244' }}>
                       <h2 style={sectionTitle}>Deal Terms</h2>
 
-                      {/* Offer price suggestion + loading state */}
-                      {priceStatusB.loading && (
-                        <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 8, fontStyle: 'italic' }}>
-                          ⟳ Fetching live share price…
-                        </div>
-                      )}
+                      {/* Offer price suggestion */}
                       {suggestedPrice != null && suggestedPrice > 0 && (() => {
                         const sp = inputs.currentSharePriceB;
                         const prem = sp > 0 ? Math.round(((suggestedPrice - sp) / sp) * 100) : null;
-                        const primaryText = prem != null
-                          ? `${fmtPerShare(suggestedPrice)}/share (${prem}% premium)`
-                          : `${fmtPerShare(suggestedPrice)}/share`;
-                        const captionText = sp > 0
-                          ? `30% control premium over current ${fmtPerShare(sp)} share price`
-                          : null;
                         return (
                           <SuggestionBadge
-                            primary={primaryText}
-                            caption={captionText}
+                            primary={prem != null
+                              ? `${fmtPerShare(suggestedPrice)}/share (${prem}% premium)`
+                              : `${fmtPerShare(suggestedPrice)}/share`}
+                            caption={sp > 0 ? `30% control premium over ${fmtPerShare(sp)} market price` : null}
                             tooltip={buildOfferPriceTooltip(partialTarget)}
                             onUse={() => setInputs(prev => ({ ...prev, offerPricePerShare: suggestedPrice }))}
                           />
@@ -749,13 +810,17 @@ function App() {
                         <PriceDiagnostic attempts={priceStatusB.attempts} />
                       )}
 
-                      {/* Offer price input + conditional premium caption */}
-                      <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange} placeholder="e.g., 974.06" />
+                      {/* Offer price input */}
+                      <InputField label="Offer Price Per Share ($)" name="offerPricePerShare"
+                        value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
+                        placeholder={suggestedPrice > 0 ? `e.g., ${fmtPerShare(suggestedPrice)}` : 'e.g., 128.08'} />
                       {inputs.offerPricePerShare > 0 && (
-                        <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} />
+                        <PremiumCaption offerPrice={inputs.offerPricePerShare}
+                          sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null}
+                          showUnavailable={offerPriceTouched} />
                       )}
 
-                      {/* Cash/Stock Mix */}
+                      {/* Cash/Stock mix */}
                       <CashPercentageSlider
                         value={inputs.cashPercent}
                         onChange={(v) => setInputs(prev => ({ ...prev, cashPercent: v }))}
@@ -765,74 +830,111 @@ function App() {
                         acquirerSharesOutstanding={inputs.companyAShares}
                       />
 
-                      {/* Transaction Fees */}
+                      {/* Advisory fee */}
+                      <div style={{ margin: '16px 0', borderTop: '1px solid #E5E7EB' }} />
                       {(() => {
-                        const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare
-                          : suggestedPrice > 0 ? suggestedPrice : 0;
+                        const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare : (suggestedPrice ?? 0);
                         const dealSizeM = price > 0 && inputs.companyBShares > 0 ? price * inputs.companyBShares : 0;
-                        const totalFee = calcSuggestedTransactionFees(dealSizeM);
-                        if (!totalFee) {
-                          return (
-                            <SuggestionBadge
-                              label="Typical M&A fees: advisor (Lehman Formula) + legal"
-                              tooltip={buildTransactionFeesTooltip(0, bankDeal)}
-                            />
-                          );
-                        }
+                        const fee = calcSuggestedTransactionFees(dealSizeM);
+                        if (!fee) return (
+                          <SuggestionBadge label="Enter offer price to estimate base advisory fee"
+                            tooltip={buildTransactionFeesTooltip(0, bankDeal)} />
+                        );
                         return (
                           <SuggestionBadge
-                            primary={fmtMoneyDual(totalFee)}
+                            primary={fmtMoneyDual(fee)}
+                            caption="Base advisory fee only — legal &amp; regulatory are additional"
                             tooltip={buildTransactionFeesTooltip(dealSizeM, bankDeal)}
-                            onUse={() => setInputs(prev => ({ ...prev, transactionFees: totalFee }))}
+                            onUse={() => setInputs(prev => ({ ...prev, transactionFees: fee }))}
                           />
                         );
                       })()}
-                      <LargeNumericField label="Transaction Fees ($M)" name="transactionFees" value={inputs.transactionFees} onChange={handleChange} placeholder="e.g., 2,187" />
+                      <LargeNumericField label="Transaction Fees — Base Advisory ($M)"
+                        name="transactionFees" value={inputs.transactionFees} onChange={handleChange}
+                        placeholder="Base advisory fee only" />
                     </div>
 
-                    {/* ── Synergies ───────────────────────────────────────── */}
+                    {/* ── Synergies with preset buttons ───────────────────── */}
                     <div style={cardStyle}>
-                      <h2 style={sectionTitle}>{bankDeal ? 'Synergies (Cost Takeouts)' : 'Synergies (Year 1 → Year 3)'}</h2>
+                      <h2 style={sectionTitle}>{bankDeal ? 'Cost Takeouts (Year 1 → Year 3)' : 'Synergies (Year 1 → Year 3)'}</h2>
 
-                      {hasSynSuggestions ? (
-                        <>
-                          {[1, 2, 3].map(yr => {
-                            const suggested = yr === 1 ? synAuto1 : yr === 2 ? synAuto2 : synAuto3;
-                            const name = `synergiesY${yr}`;
-                            const fieldLabel = bankDeal ? `Year ${yr} Cost Savings ($M)` : `Year ${yr} Synergies ($M)`;
-                            const pcts = bankDeal ? ['5%', '8%', '11%'] : ['2%', '3.5%', '5%'];
-                            const base = bankDeal ? 'combined non-interest expense' : 'combined revenue';
-                            const caption = `Year ${yr}: ${pcts[yr - 1]} of ${base}`;
-                            return (
-                              <div key={yr}>
-                                {suggested != null && (
-                                  <SuggestionBadge
-                                    primary={fmtMoneyDual(suggested)}
-                                    caption={caption}
-                                    tooltip={buildSynergyTooltip(partialTarget, partialAcquirer, yr)}
-                                    onUse={() => setInputs(prev => ({ ...prev, [name]: suggested }))}
-                                  />
-                                )}
-                                <InputField label={fieldLabel} name={name} value={inputs[name]} onChange={handleChange} placeholder={bankDeal ? 'Enter cost savings' : 'Enter synergies'} />
+                      {/* Preset buttons */}
+                      {(() => {
+                        const combinedBase = bankDeal
+                          ? ((bankFactsA?.nonInterestExpense || 0) + (bankFactsB?.nonInterestExpense || 0))
+                          : (inputs.companyARevenue + inputs.companyBRevenue);
+                        if (!(combinedBase > 0)) return null;
+                        const rates = bankDeal ? [0.05, 0.08, 0.11] : [0.02, 0.035, 0.05];
+                        const labels = ['Conservative', 'Base', 'Aggressive'];
+                        return (
+                          <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
+                              Quick presets — fills all three years with a 57%/79%/100% ramp:
+                            </div>
+                            <div style={{ display: 'flex', gap: 8 }}>
+                              {labels.map((label, idx) => {
+                                const rate = rates[idx];
+                                const y3 = Math.round(combinedBase * rate);
+                                const y2 = Math.round(y3 * 0.785);
+                                const y1 = Math.round(y3 * 0.57);
+                                return (
+                                  <button key={label}
+                                    onClick={() => setInputs(prev => ({ ...prev, synergiesY1: y1, synergiesY2: y2, synergiesY3: y3 }))}
+                                    style={{
+                                      flex: 1, padding: '8px 4px', borderRadius: 6,
+                                      border: '1px solid #D1D5DB', background: '#F9FAFB',
+                                      color: '#374151', fontSize: 12, cursor: 'pointer',
+                                      fontWeight: 500, textAlign: 'center', lineHeight: 1.4,
+                                    }}>
+                                    {label}
+                                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>
+                                      {(rate * 100).toFixed(1)}% · Y3={fmtMoney(y3)}
+                                    </div>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Year 1/2/3 inputs with live % caption */}
+                      {[1, 2, 3].map(yr => {
+                        const name = `synergiesY${yr}`;
+                        const val = inputs[name] || 0;
+                        const combinedRev = inputs.companyARevenue + inputs.companyBRevenue;
+                        const pct = combinedRev > 0 && val > 0 ? ((val / combinedRev) * 100).toFixed(1) : null;
+                        const label = bankDeal ? `Year ${yr} Cost Savings ($M)` : `Year ${yr} Synergies ($M)`;
+                        return (
+                          <div key={yr}>
+                            <LargeNumericField label={label} name={name} value={inputs[name]} onChange={handleChange} placeholder="e.g., 935" />
+                            {pct && (
+                              <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 8, fontStyle: 'italic' }}>
+                                = {pct}% of combined revenue
                               </div>
-                            );
-                          })}
-                        </>
-                      ) : (
-                        /* No suggestions — show inputs directly */
-                        [1, 2, 3].map(yr => {
-                          const fieldLabel = bankDeal ? `Year ${yr} Cost Savings ($M)` : `Year ${yr} Synergies ($M)`;
-                          return (
-                            <InputField key={yr} label={fieldLabel} name={`synergiesY${yr}`} value={inputs[`synergiesY${yr}`]} onChange={handleChange} placeholder={bankDeal ? 'Enter cost savings' : 'Enter synergies'} />
-                          );
-                        })
-                      )}
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
-                  <button onClick={handleSubmit} style={{ width: '100%', padding: 16, background: '#0F2244', color: '#fff', border: 'none', borderRadius: 10, fontSize: 16, fontWeight: 'bold', cursor: 'pointer' }}>
-                    Run Analysis →
+
+                  {/* ── Build button — disabled until offer > 0 ─────────── */}
+                  <button
+                    onClick={handleSubmit}
+                    disabled={inputs.offerPricePerShare === 0}
+                    style={{
+                      width: '100%', padding: 16, borderRadius: 10, fontSize: 16,
+                      fontWeight: 'bold', border: 'none',
+                      cursor: inputs.offerPricePerShare > 0 ? 'pointer' : 'not-allowed',
+                      background: inputs.offerPricePerShare > 0 ? '#0F2244' : '#E5E7EB',
+                      color: inputs.offerPricePerShare > 0 ? '#fff' : '#9CA3AF',
+                      transition: 'background 0.15s',
+                    }}
+                  >
+                    {inputs.offerPricePerShare > 0 ? 'Build merger model →' : 'Enter an offer price to build →'}
                   </button>
-                </div>
+                </>
               )}
             </div>
           )}
@@ -879,6 +981,9 @@ function App() {
                     acquirerSharePrice={inputs.companyAEPS > 0 ? inputs.companyAEPS * 15 : 0}
                     acquirerSharesOutstanding={inputs.companyAShares}
                   />
+                  {/* Divider before Transaction Fees */}
+                  <div style={{ margin: '16px 0', borderTop: '1px solid #E5E7EB' }} />
+
                   {(() => {
                     const dealSizeM = inputs.offerPricePerShare > 0 && inputs.companyBShares > 0
                       ? inputs.offerPricePerShare * inputs.companyBShares : 0;
