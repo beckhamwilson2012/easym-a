@@ -114,6 +114,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     if (firstAccretiveIdx === -1) {
       // Find minimum synergy mult needed (extrapolate beyond 150%)
       sensitivityFooter = `Deal is dilutive across all synergy scenarios at the current offer price. Synergy realization beyond 150% would be required to break even.`;
+      // Reconcile with the §7 multi-year ramp (Fix 9): this grid is a Year-1 SNAPSHOT — it varies the
+      // Year-1 synergy run-rate only up to 150%. The Year-2/3 synergies ramp far higher, so the deal
+      // can be dilutive across this grid yet turn accretive by Year 3 (no contradiction).
+      const y3EPS = calcProFormaEPS(inputs.offerPricePerShare, inputs.synergiesY3, inputs);
+      if (y3EPS != null && y3EPS > breakevenEPS) {
+        sensitivityFooter += ` Note: the grid reflects Year-1 synergies only; as synergies ramp to their full run-rate the deal turns accretive by Year 3 (see Pro Forma P&L accretion table).`;
+      }
     } else if (firstAccretiveIdx === 0) {
       sensitivityFooter = `Deal remains accretive across all synergy scenarios at the current offer price.`;
     } else {
