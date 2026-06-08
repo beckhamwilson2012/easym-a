@@ -1,10 +1,11 @@
 // sourceCatalog maps internal source name → human label
 const SOURCE_LABELS = {
-  edgar:   'SEC EDGAR (10-K/10-Q filings)',
-  cnbc:    'CNBC market data',
-  yahoo:   'Yahoo Finance',
-  nasdaq:  'Nasdaq',
-  finnhub: 'Finnhub market data',
+  edgar:        'SEC EDGAR (10-K/10-Q filings)',
+  cnbc:         'CNBC market data',
+  yahoo:        'Yahoo Finance',
+  nasdaq:       'Nasdaq',
+  stockanalysis:'StockAnalysis.com',
+  finnhub:      'Finnhub market data',
 };
 
 // Fields the deck treats as always-assumption regardless of fetch status.
@@ -66,8 +67,8 @@ export function composeSourceLine(usedFieldKeys, fields, asOfISO) {
   }
 
   // Stable citation order: EDGAR first (fundamental), then market-data sources.
-  const ORDER = ['edgar', 'cnbc', 'yahoo', 'nasdaq', 'finnhub'];
-  const MARKET_SOURCES = ['cnbc', 'yahoo', 'nasdaq', 'finnhub'];
+  const ORDER = ['edgar', 'cnbc', 'yahoo', 'nasdaq', 'stockanalysis', 'finnhub'];
+  const MARKET_SOURCES = ['cnbc', 'yahoo', 'nasdaq', 'stockanalysis', 'finnhub'];
   const labels = ORDER.filter(s => citedSources.has(s)).map(s => SOURCE_LABELS[s]);
 
   const parts = [];

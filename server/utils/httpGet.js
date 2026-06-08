@@ -2,10 +2,10 @@
 const https = require('https');
 const zlib  = require('zlib');
 
-function get(url, extraHeaders = {}) {
+function get(url, extraHeaders = {}, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
-    https.get(
+    const req = https.get(
       {
         hostname: parsed.hostname,
         path: parsed.pathname + parsed.search,
@@ -31,7 +31,10 @@ function get(url, extraHeaders = {}) {
         });
         stream.on('error', reject);
       }
-    ).on('error', reject);
+    );
+    req.on('error', reject);
+    // Never let a stuck external source hang /api/verified — bound every request.
+    req.setTimeout(timeoutMs, () => req.destroy(new Error(`timeout after ${timeoutMs}ms from ${parsed.hostname}`)));
   });
 }
 

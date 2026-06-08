@@ -46,6 +46,17 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum }) {
   const high  = readField(fields.analystTargetHigh);
   const low   = readField(fields.analystTargetLow);
   const count = readField(fields.analystCount);
+  const ratingBuy  = readField(fields.analystRatingBuy);
+  const ratingHold = readField(fields.analystRatingHold);
+  const ratingSell = readField(fields.analystRatingSell);
+  const hasRatings = ratingBuy != null || ratingHold != null || ratingSell != null;
+
+  // Verification provenance of the cross-checked mean target.
+  const meanField  = fields.analystTargetMean || {};
+  const meanStatus = meanField.status; // 'verified' | 'flagged' | 'single' | 'missing'
+  const SRC_LABEL  = { nasdaq: 'Nasdaq', stockanalysis: 'StockAnalysis.com', yahoo: 'Yahoo Finance', cnbc: 'CNBC', finnhub: 'Finnhub' };
+  const citedSrcs  = meanField.sourceMeta ? Object.keys(meanField.sourceMeta).map(s => SRC_LABEL[s] || s) : [];
+  const meanAsOf   = meanField.sourceMeta?.[meanField.chosenSource]?.asOf || null;
 
   const sharePrice = parseFloat(target?.sharePrice);
   const currentPrice = isNaN(sharePrice) ? null : sharePrice;
@@ -81,10 +92,20 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum }) {
   const scaleSpan = scaleMax - scaleMin || 1;
   const pctOf = (v) => ((v - scaleMin) / scaleSpan) * 100;
 
-  // ── Source line (honest about analyst data provenance) ──────────────────────
-  const sourceLine = hasAnalystData
-    ? `Analyst consensus targets sourced from the verified data stack for ${tTicker}${count != null ? ` (n = ${Math.round(count)} estimates)` : ''}; figures reflect sell-side mean/high/low price targets and are point-in-time estimates, not guarantees. Current price and offer per share per the deal model.`
-    : `Analyst consensus price targets are an assumption input and are not available on the free data stack for ${tTicker}; no broker estimates are shown. Comparison limited to current price vs. offer price per the deal model.`;
+  // ── Source line (honest about analyst data provenance + verification status) ─
+  let sourceLine;
+  if (!hasAnalystData) {
+    sourceLine = `Analyst consensus price targets are an assumption input and are not available on the free data stack for ${tTicker}; no broker estimates are shown. Comparison limited to current price vs. offer price per the deal model.`;
+  } else if (meanStatus === 'flagged') {
+    const both = Object.entries(meanField.sources || {})
+      .filter(([, v]) => v != null)
+      .map(([s, v]) => `${SRC_LABEL[s] || s} ${fmtPerShare(v)}`).join(' vs. ');
+    sourceLine = `Analyst mean target shows a cross-source spread (${both}${meanField.maxDev != null ? `, ${(meanField.maxDev * 100).toFixed(1)}% apart` : ''}) — different aggregators poll different broker panels; the ${SRC_LABEL[meanField.chosenSource] || meanField.chosenSource} value is used. High/low/coverage from Nasdaq. Point-in-time estimates${meanAsOf ? `, as of ${meanAsOf}` : ''}, not guarantees.`;
+  } else if (meanStatus === 'single') {
+    sourceLine = `Analyst mean target from a single source (${citedSrcs.join('')}), unconfirmed by a second aggregator. High/low/coverage from Nasdaq. Point-in-time estimates${meanAsOf ? `, as of ${meanAsOf}` : ''}, not guarantees.`;
+  } else {
+    sourceLine = `Analyst mean target verified across ${citedSrcs.join(' and ')}${count != null ? ` (Nasdaq coverage n = ${Math.round(count)})` : ''}; high/low from Nasdaq. Point-in-time sell-side estimates${meanAsOf ? `, as of ${meanAsOf}` : ''}, not guarantees. Current price and offer per the deal model.`;
+  }
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit J">
@@ -120,6 +141,20 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum }) {
                 accent="#166534"
               />
             </div>
+
+            {/* ── Analyst rating split ──────────────────────────────────── */}
+            {hasRatings && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
+                  Analyst Ratings <span style={{ fontWeight: 400, color: '#9CA3AF', textTransform: 'none' }}>(Nasdaq panel{count != null ? `, n = ${Math.round(count)}` : ''})</span>
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Stat label="Buy"  value={ratingBuy  != null ? String(Math.round(ratingBuy))  : '—'} accent="#166534" bg="#F0FDF4" />
+                  <Stat label="Hold" value={ratingHold != null ? String(Math.round(ratingHold)) : '—'} accent="#B45309" bg="#FFFBEB" />
+                  <Stat label="Sell" value={ratingSell != null ? String(Math.round(ratingSell)) : '—'} accent="#DC2626" bg="#FEF2F2" />
+                </div>
+              </div>
+            )}
 
             {/* ── Horizontal comparison bar ─────────────────────────────── */}
             <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 10 }}>

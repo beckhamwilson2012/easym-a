@@ -3,7 +3,7 @@
 'use strict';
 const assert = require('assert');
 const { reconcile } = require('../reconcile');
-const { periodsMatch, periodGuardExcludes } = require('../../services/verifiedLookup');
+const { periodsMatch, periodGuardExcludes, sanePriceTarget } = require('../../services/verifiedLookup');
 
 let passed = 0;
 function test(name, fn) {
@@ -118,4 +118,24 @@ test('guard allows SAME-period comparison through to reconcile', () => {
   assert.strictEqual(r.status, 'verified', 'same-period agreeing sources → verified');
 });
 
-console.log(`\n${passed}/14 tests passed\n`);
+// ── Analyst-target sanity band (parse-error guard) ───────────────────────────
+test('sanePriceTarget — accepts a plausible target within [0.2x, 5x] of price', () => {
+  assert.strictEqual(sanePriceTarget(557.64, 411.74), true);  // MSFT mean vs price = 1.35x
+  assert.strictEqual(sanePriceTarget(130.45, 97.89), true);   // TEAM
+});
+
+test('sanePriceTarget — rejects parse errors (10x misread, decimal slip, non-positive)', () => {
+  assert.strictEqual(sanePriceTarget(4117.40, 411.74), false); // 10x misread
+  assert.strictEqual(sanePriceTarget(41.17, 411.74), false);   // 0.1x (decimal slip / wrong field)
+  assert.strictEqual(sanePriceTarget(0, 411.74), false);
+  assert.strictEqual(sanePriceTarget(-50, 411.74), false);
+  assert.strictEqual(sanePriceTarget(null, 411.74), false);
+});
+
+test('sanePriceTarget — no price to band-check → accept any positive value', () => {
+  assert.strictEqual(sanePriceTarget(557.64, null), true);
+  assert.strictEqual(sanePriceTarget(557.64, 0), true);
+  assert.strictEqual(sanePriceTarget(-1, null), false); // still must be positive
+});
+
+console.log(`\n${passed}/17 tests passed\n`);

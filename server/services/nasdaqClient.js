@@ -42,4 +42,41 @@ async function fetchFields(ticker) {
   return { price: price != null ? { value: price, asOf: now, period: null, source: 'nasdaq' } : null };
 }
 
-module.exports = { fetchPrice, fetchFields };
+// Analyst price-target consensus — Nasdaq is the richest free source (mean + high + low + the
+// buy/hold/sell split). Returns field-shaped objects so it slots into the verified-data reconcile.
+const aCache = new Map();
+const aInflight = new Map();
+
+async function fetchAnalyst(ticker) {
+  const key = ticker.toUpperCase();
+  const c = aCache.get(key);
+  if (c && Date.now() - c.ts < TTL) return c.fields;
+  if (aInflight.has(key)) return aInflight.get(key);
+
+  const p = (async () => {
+    let fields = {};
+    try {
+      const data = await get(`https://api.nasdaq.com/api/analyst/${key}/targetprice`, HEADERS);
+      const o = data?.data?.consensusOverview;
+      if (o) {
+        const now = new Date().toISOString().substring(0, 10);
+        const mk = (v) => (v != null && !isNaN(parseFloat(v)) ? { value: parseFloat(v), asOf: now, period: null, source: 'nasdaq' } : null);
+        const buy = parseInt(o.buy, 10) || 0, hold = parseInt(o.hold, 10) || 0, sell = parseInt(o.sell, 10) || 0;
+        fields = {
+          analystTargetMean: mk(o.priceTarget),
+          analystTargetHigh: mk(o.highPriceTarget),
+          analystTargetLow:  mk(o.lowPriceTarget),
+          analystCount:      (buy + hold + sell) > 0 ? mk(buy + hold + sell) : null,
+          analystRatingBuy:  mk(buy), analystRatingHold: mk(hold), analystRatingSell: mk(sell),
+        };
+      }
+    } catch { /* → {} */ }
+    aCache.set(key, { ts: Object.keys(fields).length ? Date.now() : Date.now() - (TTL - 30_000), fields });
+    return fields;
+  })();
+
+  aInflight.set(key, p);
+  try { return await p; } finally { aInflight.delete(key); }
+}
+
+module.exports = { fetchPrice, fetchFields, fetchAnalyst };

@@ -26,9 +26,19 @@ module.exports = [
   { key: 'cash',             sources: ['edgar','fmp'],         sot: 'edgar', tol: 0.02,  unit: '$',    period: true },
   { key: 'freeCashFlow',     sources: ['edgar','fmp'],         sot: 'edgar', tol: 0.02,  unit: '$',    period: true },
 
-  // --- consensus: single-source (FMP only). Resolves to missing on free key — source-line composer
-  // routes missing analyst targets to "per transaction assumptions", not a fake citation.
-  { key: 'analystTargetMean',sources: ['fmp'],                 sot: 'fmp',   tol: 0,     unit: '$/sh', single: true },
-  { key: 'analystTargetHigh',sources: ['fmp'],                 sot: 'fmp',   tol: 0,     unit: '$/sh', single: true },
-  { key: 'analystTargetLow', sources: ['fmp'],                 sot: 'fmp',   tol: 0,     unit: '$/sh', single: true },
+  // --- analyst consensus: NO single authoritative free source. Nasdaq (SOT — richest: mean/high/low
+  // + buy/hold/sell) is cross-checked against StockAnalysis for the MEAN only. Tolerance is 5%, much
+  // wider than price (0.8%): aggregators poll different broker panels on different days, so a few-%
+  // mean difference is LEGITIMATE — the cross-check exists to catch a PARSE error (10x misread, wrong
+  // field, stale-by-months), not panel drift. `priceBand` adds a sanity guard: a target outside
+  // [0.2×, 5×] the current price is rejected as a likely parse error rather than displayed.
+  // mean is the cross-checked field (Nasdaq vs StockAnalysis). high/low/count/ratings come from
+  // Nasdaq only → they resolve to `single` (shown, but honestly marked unconfirmed — no `single:true`).
+  { key: 'analystTargetMean', sources: ['nasdaq','stockanalysis'], sot: 'nasdaq', tol: 0.05, unit: '$/sh', priceBand: true },
+  { key: 'analystTargetHigh', sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: '$/sh', priceBand: true },
+  { key: 'analystTargetLow',  sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: '$/sh', priceBand: true },
+  { key: 'analystCount',      sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: 'n' },
+  { key: 'analystRatingBuy',  sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: 'n' },
+  { key: 'analystRatingHold', sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: 'n' },
+  { key: 'analystRatingSell', sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: 'n' },
 ];

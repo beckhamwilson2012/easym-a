@@ -5,6 +5,7 @@ const yahooClient   = require('./yahooClient');
 const finnhubClient = require('./finnhubClient');
 const cnbcClient    = require('./cnbcClient');
 const nasdaqClient  = require('./nasdaqClient');
+const stockAnalysisClient = require('./stockAnalysisClient');
 const { reconcile } = require('../data/reconcile');
 const FIELDS = require('../data/fieldRegistry');
 
@@ -38,27 +39,46 @@ function periodGuardExcludes(fieldSpec, srcName, edgarPeriod, srcPeriod) {
   return !periodsMatch(edgarPeriod, srcPeriod);
 }
 
+// Sanity band for analyst price targets: a target must be positive and within [0.2×, 5×] the current
+// price. Anything outside that is almost certainly a parse error (a 10× misread, grabbing the wrong
+// field, a stale-by-months figure) — reject it rather than display a fabricated-looking number.
+// When no current price is available we can't band-check, so accept any positive value.
+function sanePriceTarget(value, price) {
+  const v = parseFloat(value);
+  if (!(v > 0)) return false;
+  const p = parseFloat(price);
+  if (!(p > 0)) return true;
+  return v >= p * 0.2 && v <= p * 5;
+}
+
 async function lookup(ticker, cik) {
   const cached = getCached(ticker);
   if (cached) return cached;
 
-  const [edgarRes, fmpRes, yahooRes, finnhubRes, cnbcRes, nasdaqRes] = await Promise.allSettled([
-    cik ? edgarClient.fetchFields(cik) : Promise.resolve({}),
-    fmpClient.fetchFields(ticker),
-    yahooClient.fetchFields(ticker),
-    finnhubClient.fetchFields(ticker),
-    cnbcClient.fetchFields(ticker),
-    nasdaqClient.fetchFields(ticker),
-  ]);
+  const [edgarRes, fmpRes, yahooRes, finnhubRes, cnbcRes, nasdaqRes, nasdaqAnalystRes, stockAnalystRes] =
+    await Promise.allSettled([
+      cik ? edgarClient.fetchFields(cik) : Promise.resolve({}),
+      fmpClient.fetchFields(ticker),
+      yahooClient.fetchFields(ticker),
+      finnhubClient.fetchFields(ticker),
+      cnbcClient.fetchFields(ticker),
+      nasdaqClient.fetchFields(ticker),
+      nasdaqClient.fetchAnalyst(ticker),
+      stockAnalysisClient.fetchAnalyst(ticker),
+    ]);
 
   const edgar   = edgarRes.status   === 'fulfilled' ? edgarRes.value   : {};
   const fmp     = fmpRes.status     === 'fulfilled' ? fmpRes.value     : {};
   const yahoo   = yahooRes.status   === 'fulfilled' ? yahooRes.value   : {};
   const finnhub = finnhubRes.status === 'fulfilled' ? finnhubRes.value : {};
   const cnbc    = cnbcRes.status    === 'fulfilled' ? cnbcRes.value    : {};
-  const nasdaq  = nasdaqRes.status  === 'fulfilled' ? nasdaqRes.value  : {};
-  // Source name → its field map. CNBC (SOT) + Yahoo + Nasdaq are cross-check sources for `price`.
-  const srcMaps = { edgar, fmp, yahoo, finnhub, cnbc, nasdaq };
+  // Nasdaq provides BOTH the price (fetchFields) and the analyst consensus (fetchAnalyst) — merge.
+  const nasdaqPrice   = nasdaqRes.status        === 'fulfilled' ? nasdaqRes.value        : {};
+  const nasdaqAnalyst = nasdaqAnalystRes.status === 'fulfilled' ? nasdaqAnalystRes.value : {};
+  const nasdaq        = { ...nasdaqPrice, ...nasdaqAnalyst };
+  const stockanalysis = stockAnalystRes.status  === 'fulfilled' ? stockAnalystRes.value  : {};
+  // Source name → its field map. price: CNBC(SOT)+Yahoo+Nasdaq; analyst mean: Nasdaq(SOT)+StockAnalysis.
+  const srcMaps = { edgar, fmp, yahoo, finnhub, cnbc, nasdaq, stockanalysis };
 
   const asOf = new Date().toISOString();
   const fields = {};
@@ -76,6 +96,14 @@ async function lookup(ticker, cik) {
       // Period-match guard: never compare financials from a different fiscal period.
       if (periodGuardExcludes(fieldSpec, srcName, edgar[fieldSpec.key]?.period, fd.period)) {
         values[srcName] = null; // period mismatch → exclude from comparison
+        continue;
+      }
+
+      // Sanity-band guard for analyst price targets: reject an implausible value (likely a parse
+      // error) so it is treated as not-found rather than displayed. `fields.price` is already
+      // resolved here because the price field precedes the analyst fields in the registry.
+      if (fieldSpec.priceBand && !sanePriceTarget(fd.value, fields.price?.value)) {
+        values[srcName] = null;
         continue;
       }
 
@@ -101,4 +129,4 @@ async function lookup(ticker, cik) {
   return result;
 }
 
-module.exports = { lookup, periodsMatch, periodGuardExcludes };
+module.exports = { lookup, periodsMatch, periodGuardExcludes, sanePriceTarget };
