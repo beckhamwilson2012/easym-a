@@ -512,6 +512,15 @@ function App() {
     if (inputs.synergiesY1 === 0 && synAuto1 != null && synAuto1 > 0) updates.synergiesY1 = synAuto1;
     if (inputs.synergiesY2 === 0 && synAuto2 != null && synAuto2 > 0) updates.synergiesY2 = synAuto2;
     if (inputs.synergiesY3 === 0 && synAuto3 != null && synAuto3 > 0) updates.synergiesY3 = synAuto3;
+    // Fix 8 (default A): auto-apply the size-tiered suggested advisory fee on build when the user has
+    // not entered one, so the model never silently reports "$0M transaction costs". Uses the effective
+    // (possibly just auto-filled) offer to size the deal.
+    if ((parseFloat(inputs.transactionFees) || 0) === 0) {
+      const offerForFee = updates.offerPricePerShare ?? inputs.offerPricePerShare;
+      const dealSizeM = offerForFee > 0 && inputs.companyBShares > 0 ? offerForFee * inputs.companyBShares : 0;
+      const suggestedFee = calcSuggestedTransactionFees(dealSizeM);
+      if (suggestedFee && suggestedFee > 0) updates.transactionFees = suggestedFee;
+    }
     let effectiveInputs = inputs;
     if (Object.keys(updates).length > 0) {
       effectiveInputs = { ...inputs, ...updates };
