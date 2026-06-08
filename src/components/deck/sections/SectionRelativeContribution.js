@@ -2,6 +2,7 @@ import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtPct } from '../shared/deckTokens';
+import { useVerifiedData } from '../../../hooks/useVerifiedData';
 
 // Lighter shade of SF_BLUE used for the target segment of each stacked bar.
 const TARGET_BLUE = '#A8C4DC';
@@ -34,6 +35,16 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
   const bOI = parseFloat(target.ebitda) || 0;   // est.
   const aFCF = parseFloat(acquirer.netIncome) || 0; // est. FCF ≈ net income
   const bFCF = parseFloat(target.netIncome) || 0;   // est.
+
+  // ── DIAGNOSTIC (Fix 3): fetched FCF is available but §10 consumes the net-income proxy above ──
+  const { data: aVerified } = useVerifiedData(acquirer?.ticker ?? null);
+  const { data: bVerified } = useVerifiedData(target?.ticker ?? null);
+  const aFetchedFCF = aVerified?.fields?.freeCashFlow?.value ?? null;
+  const bFetchedFCF = bVerified?.fields?.freeCashFlow?.value ?? null;
+  console.log(
+    `[§10 FCF] acq=${acquirer.ticker} NIproxy=${aFCF} fetchedFCF=${aFetchedFCF ?? 'null'} | ` +
+    `tgt=${target.ticker} NIproxy=${bFCF} fetchedFCF=${bFetchedFCF ?? 'null'} | CONSUMED=NIproxy`
+  );
 
   // ── Pro-forma ownership split (shared convention) ───────────────────────────
   const acqShares = parseFloat(acquirer.shares) || 0;
