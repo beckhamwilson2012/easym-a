@@ -787,11 +787,13 @@ app.get('/api/prices/:ticker', async (req, res) => {
     // Try FMP first
     const fmpUrl = `https://financialmodelingprep.com/api/v3/historical-price-full/${ticker}?serietype=line&apikey=${FMP_KEY}`;
     let daily = null;
+    let provider = null; // track which feed actually returned data — never claim FMP when it 403s
 
     try {
       const fmpData = await get(fmpUrl);
       if (fmpData?.historical?.length) {
         daily = fmpData.historical.map(d => ({ date: d.date, close: d.close }));
+        provider = 'fmp';
       }
     } catch (e) {
       console.log(`[${ticker}] FMP price failed:`, e.message);
@@ -812,6 +814,7 @@ app.get('/api/prices/:ticker', async (req, res) => {
             date: new Date(ts * 1000).toISOString().slice(0, 10),
             close: closes[i],
           })).filter(d => d.close != null);
+          if (daily.length) provider = 'yahoo';
         }
       } catch (e) {
         console.log(`[${ticker}] Yahoo price failed:`, e.message);
@@ -846,7 +849,7 @@ app.get('/api/prices/:ticker', async (req, res) => {
       value: parseFloat(((monthMap[mo] / base) * 100).toFixed(2)),
     }));
 
-    res.json({ source: 'fmp', series });
+    res.json({ source: provider || 'illustrative', series });
   } catch (err) {
     console.error(`Prices [${ticker}]:`, err.message);
     res.json({ source: 'illustrative', series: [] });

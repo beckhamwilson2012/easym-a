@@ -37,7 +37,7 @@ function buildStandardMethodologies(target, deal, priceRange) {
       name: '52-Week Range',
       low: priceRange.low, high: priceRange.high,
       color: COLOR_TRADING, isDcf: false,
-      note: 'Source: FMP price history',
+      note: priceRange.note || '52-week trading range',
     });
   }
 
@@ -101,7 +101,7 @@ function buildBankMethodologies(target, deal, priceRange) {
       name: '52-Week Range',
       low: priceRange.low, high: priceRange.high,
       color: COLOR_TRADING, isDcf: false,
-      note: 'Source: FMP price history',
+      note: priceRange.note || '52-week trading range',
     });
   }
 
@@ -232,33 +232,48 @@ export function SectionFootballField({ target, deal, pageNum }) {
   const offerPrice = parseFloat(deal?.offerPrice) || 0;
   const shares     = parseFloat(target?.shares)   || 0;
 
+  // Real trailing 52-week range from the verified-data layer (CNBC yrhiprice/yrloprice). Live price
+  // anchors the monthly-history fallback below.
+  const livePrice  = verifiedData?.fields?.price?.value      != null ? parseFloat(verifiedData.fields.price.value)      : null;
+  const week52High = verifiedData?.fields?.week52High?.value != null ? parseFloat(verifiedData.fields.week52High.value) : null;
+  const week52Low  = verifiedData?.fields?.week52Low?.value  != null ? parseFloat(verifiedData.fields.week52Low.value)  : null;
+  const week52Src  = verifiedData?.fields?.week52High?.chosenSource;
+
   const [showTotal, setShowTotal]     = useState(false);
-  const [priceRange, setPriceRange]   = useState(null);
+  const [histRange, setHistRange]     = useState(null);
   const [priceLoading, setPriceLoading] = useState(!!target?.ticker);
 
-  // Fetch 52-week price range
+  // Fallback ONLY: when the verified layer has no real 52-week range, derive an illustrative range
+  // from the relative monthly-close history, anchored so the MOST RECENT month equals the live price
+  // (the prior code anchored the series START to current price, which made the high == current price).
   useEffect(() => {
-    if (!target?.ticker) { setPriceLoading(false); return; }
+    if (!target?.ticker || (week52High != null && week52Low != null)) { setPriceLoading(false); return; }
+    const anchor = livePrice != null && livePrice > 0
+      ? livePrice
+      : (offerPrice > 0 && (parseFloat(deal?.purchasePremium) || 0) > -90
+          ? offerPrice / (1 + (parseFloat(deal?.purchasePremium) || 0) / 100) : null);
+    if (anchor == null) { setPriceLoading(false); return; }
     setPriceLoading(true);
     getMonthlyPrices(target.ticker).then(result => {
       const series = result.series || [];
-      if (series.length >= 2) {
-        // series values are indexed (100 = start), we need actual prices
-        // The priceHistory service returns relative index values — we need the offer price
-        // as an anchor. Use actual share prices from priceHistory if available.
-        // priceHistory series are relative (100-based), not raw prices.
-        // We use offerPrice + purchasePremium to back into current price.
-        const premium = parseFloat(deal?.purchasePremium) || 0;
-        const currentPrice = offerPrice > 0 && premium > -90
-          ? offerPrice / (1 + premium / 100) : null;
-        if (currentPrice && currentPrice > 0) {
-          const vals = series.map(s => (s.value / 100) * currentPrice);
-          setPriceRange({ low: Math.min(...vals), high: Math.max(...vals) });
-        }
+      const lastVal = series.length ? series[series.length - 1].value : 0;
+      if (series.length >= 2 && lastVal > 0) {
+        const scale = anchor / lastVal; // pin the current month to the live price
+        const vals  = series.map(s => s.value * scale);
+        setHistRange({ low: Math.min(...vals), high: Math.max(...vals), source: result.source });
       }
       setPriceLoading(false);
     }).catch(() => setPriceLoading(false));
-  }, [target?.ticker, offerPrice, deal?.purchasePremium]);
+  }, [target?.ticker, week52High, week52Low, livePrice, offerPrice, deal?.purchasePremium]);
+
+  // Compose the 52-week range row: prefer the real CNBC range, else the anchored monthly fallback.
+  const SRC_LABEL = { cnbc: 'CNBC', yahoo: 'Yahoo Finance', finnhub: 'Finnhub', fmp: 'FMP' };
+  const priceRange = (week52High != null && week52Low != null)
+    ? { low: week52Low, high: week52High, note: `${SRC_LABEL[week52Src] || 'Market'} 52-week range` }
+    : (histRange
+        ? { low: histRange.low, high: histRange.high,
+            note: `Illustrative — ${SRC_LABEL[histRange.source] || '12-mo'} monthly closes (intraday extremes not captured)` }
+        : null);
 
   // Build methodology rows
   const rows = bankMode

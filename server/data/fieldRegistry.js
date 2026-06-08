@@ -7,10 +7,11 @@ module.exports = [
   // only → single. Tolerance is 0.8%, not 0.5%: CNBC and Yahoo are real-time and match to the cent,
   // but Nasdaq's public feed lags slightly, so a same-instant comparison drifts ~0.4–0.6% — well
   // under any genuine error (mislabel, stale-by-days, wrong ticker), which is what we need to catch.
-  // CNBC's quote has no 52-week range, so 52wk relies on Yahoo (single). ---
+  // CNBC's quote carries the trailing 52-week range (yrhiprice/yrloprice), so CNBC is SOT for 52wk
+  // too — cross-checked vs Yahoo/Finnhub when those are reachable; CNBC alone resolves to single. ---
   { key: 'price',            sources: ['cnbc','yahoo','nasdaq','finnhub'], sot: 'cnbc', tol: 0.008, unit: '$/sh' },
-  { key: 'week52High',       sources: ['yahoo','finnhub'],        sot: 'yahoo',  tol: 0.005, unit: '$/sh' },
-  { key: 'week52Low',        sources: ['yahoo','finnhub'],        sot: 'yahoo',  tol: 0.005, unit: '$/sh' },
+  { key: 'week52High',       sources: ['cnbc','yahoo','finnhub'], sot: 'cnbc',   tol: 0.005, unit: '$/sh' },
+  { key: 'week52Low',        sources: ['cnbc','yahoo','finnhub'], sot: 'cnbc',   tol: 0.005, unit: '$/sh' },
   // marketCap: no free source with cross-check; stays single FMP entry (resolves missing until key upgraded)
   { key: 'marketCap',        sources: ['fmp'],                 sot: 'fmp',     tol: 0.01,  unit: '$',    single: true },
 

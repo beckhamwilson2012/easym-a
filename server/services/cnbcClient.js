@@ -12,14 +12,21 @@ const cache = new Map();
 const inflight = new Map();
 const TTL = 300_000; // 5 min
 
-async function fetchPrice(ticker) {
+const num = (v) => {
+  const n = parseFloat(String(v).replace(/,/g, ''));
+  return isNaN(n) ? null : n;
+};
+
+// Fetch the full quote ONCE and cache { price, week52High, week52Low }. CNBC's FormattedQuote carries
+// the regular-session last AND the trailing 52-week range (yrhiprice / yrloprice).
+async function fetchQuote(ticker) {
   const key = ticker.toUpperCase();
   const c = cache.get(key);
-  if (c && Date.now() - c.ts < TTL) return c.price;
+  if (c && Date.now() - c.ts < TTL) return c.quote;
   if (inflight.has(key)) return inflight.get(key);
 
   const p = (async () => {
-    let price = null;
+    let quote = { price: null, week52High: null, week52Low: null };
     try {
       // exthrs=0 → regular-session last (matches Yahoo's regularMarketPrice exactly, so the
       // cross-check is clean; exthrs=1 would return an extended-hours price that drifts from Yahoo).
@@ -27,24 +34,40 @@ async function fetchPrice(ticker) {
         `&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=0&output=json`;
       const data = await get(url, HEADERS);
       const q = data?.FormattedQuoteResult?.FormattedQuote?.[0];
-      const last = q ? parseFloat(String(q.last).replace(/,/g, '')) : NaN;
-      if (last && !isNaN(last)) price = parseFloat(last.toFixed(2));
-    } catch { /* fall through → null */ }
+      if (q) {
+        const last = num(q.last);
+        quote = {
+          price:      last != null ? parseFloat(last.toFixed(2)) : null,
+          week52High: num(q.yrhiprice),
+          week52Low:  num(q.yrloprice),
+        };
+      }
+    } catch { /* fall through → nulls */ }
     // Cache successes for the full TTL; cache a miss only briefly (30s) so it self-heals.
-    cache.set(key, { ts: price != null ? Date.now() : Date.now() - (TTL - 30_000), price });
-    return price;
+    const ok = quote.price != null;
+    cache.set(key, { ts: ok ? Date.now() : Date.now() - (TTL - 30_000), quote });
+    return quote;
   })();
 
   inflight.set(key, p);
   try { return await p; } finally { inflight.delete(key); }
 }
 
-// Field-shaped result so CNBC can be a first-class source in the verified-data reconcile
-// (server/data/reconcile.js). CNBC's quote response carries the live price but no 52-week range.
-async function fetchFields(ticker) {
-  const price = await fetchPrice(ticker);
-  const now = new Date().toISOString().substring(0, 10);
-  return { price: price != null ? { value: price, asOf: now, period: null, source: 'cnbc' } : null };
+async function fetchPrice(ticker) {
+  return (await fetchQuote(ticker)).price;
 }
 
-module.exports = { fetchPrice, fetchFields };
+// Field-shaped result so CNBC can be a first-class source in the verified-data reconcile
+// (server/data/reconcile.js). CNBC carries the live price AND the trailing 52-week high/low.
+async function fetchFields(ticker) {
+  const { price, week52High, week52Low } = await fetchQuote(ticker);
+  const now = new Date().toISOString().substring(0, 10);
+  const meta = (value) => value != null ? { value, asOf: now, period: null, source: 'cnbc' } : null;
+  return {
+    price:      meta(price),
+    week52High: meta(week52High),
+    week52Low:  meta(week52Low),
+  };
+}
+
+module.exports = { fetchPrice, fetchQuote, fetchFields };
