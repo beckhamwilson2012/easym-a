@@ -33,17 +33,22 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
   const bGP = bRev * 0.65; // est.
   const aOI = parseFloat(acquirer.ebitda) || 0; // est. operating income ≈ EBITDA
   const bOI = parseFloat(target.ebitda) || 0;   // est.
-  const aFCF = parseFloat(acquirer.netIncome) || 0; // est. FCF ≈ net income
-  const bFCF = parseFloat(target.netIncome) || 0;   // est.
-
-  // ── DIAGNOSTIC (Fix 3): fetched FCF is available but §10 consumes the net-income proxy above ──
+  // ── Free Cash Flow (Fix 3): prefer the fetched EDGAR FCF from the verified-data layer; fall
+  //    back to the net-income proxy ONLY when a side's fetched FCF is genuinely missing. The proxy
+  //    is misleading for growth-stage targets (e.g. TEAM net income is negative but FCF is +$1.5B,
+  //    which previously forced the split to n/m). ───────────────────────────────────────────────
   const { data: aVerified } = useVerifiedData(acquirer?.ticker ?? null);
   const { data: bVerified } = useVerifiedData(target?.ticker ?? null);
   const aFetchedFCF = aVerified?.fields?.freeCashFlow?.value ?? null;
   const bFetchedFCF = bVerified?.fields?.freeCashFlow?.value ?? null;
+  const aFCF = aFetchedFCF != null ? parseFloat(aFetchedFCF) : (parseFloat(acquirer.netIncome) || 0);
+  const bFCF = bFetchedFCF != null ? parseFloat(bFetchedFCF) : (parseFloat(target.netIncome) || 0);
+  const fcfFromProxy = aFetchedFCF == null || bFetchedFCF == null; // label honestly if either side fell back
+  const fcfLabel = fcfFromProxy ? 'Free Cash Flow (est. ≈ Net Income)' : 'Free Cash Flow';
   console.log(
-    `[§10 FCF] acq=${acquirer.ticker} NIproxy=${aFCF} fetchedFCF=${aFetchedFCF ?? 'null'} | ` +
-    `tgt=${target.ticker} NIproxy=${bFCF} fetchedFCF=${bFetchedFCF ?? 'null'} | CONSUMED=NIproxy`
+    `[§10 FCF] acq=${acquirer.ticker} NIproxy=${parseFloat(acquirer.netIncome) || 0} fetchedFCF=${aFetchedFCF ?? 'null'} -> use=${aFCF} | ` +
+    `tgt=${target.ticker} NIproxy=${parseFloat(target.netIncome) || 0} fetchedFCF=${bFetchedFCF ?? 'null'} -> use=${bFCF} | ` +
+    `CONSUMED=${fcfFromProxy ? 'NIproxy(fallback)' : 'fetchedFCF'}`
   );
 
   // ── Pro-forma ownership split (shared convention) ───────────────────────────
@@ -59,7 +64,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
     { label: 'Revenue', isMoney: true, ...splitContribution(aRev, bRev) },
     { label: 'Gross Profit (est.)', isMoney: true, ...splitContribution(aGP, bGP) },
     { label: 'Operating Income (est. ≈ EBITDA)', isMoney: true, ...splitContribution(aOI, bOI) },
-    { label: 'Free Cash Flow (est. ≈ Net Income)', isMoney: true, ...splitContribution(aFCF, bFCF) },
+    { label: fcfLabel, isMoney: true, ...splitContribution(aFCF, bFCF) },
     {
       label: 'Pro-Forma Ownership',
       isMoney: false,
@@ -71,7 +76,9 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
     },
   ];
 
-  const sourceLine = 'Revenue from SEC EDGAR; gross profit, operating income and free cash flow are estimates (per transaction assumptions). Ownership per deal structure.';
+  const sourceLine = fcfFromProxy
+    ? 'Revenue from SEC EDGAR; gross profit, operating income and free cash flow are estimates (per transaction assumptions). Ownership per deal structure.'
+    : 'Revenue and free cash flow from SEC EDGAR (cash-flow statements); gross profit and operating income are estimates (per transaction assumptions). Ownership per deal structure.';
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit H">
