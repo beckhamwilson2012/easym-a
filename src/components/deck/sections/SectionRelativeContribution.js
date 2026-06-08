@@ -127,40 +127,39 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
                 }}>
                   <span style={{ fontSize: 10, color: '#9CA3AF', fontStyle: 'italic' }}>n/m</span>
                 </div>
-              ) : (
-                <div style={{ display: 'flex', height: 26, borderRadius: 4, overflow: 'hidden', border: `1px solid ${GRAY_BORDER}` }}>
-                  <div style={{
-                    width: `${m.aPct}%`,
-                    background: SF_BLUE,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: m.aPct >= 12 ? 'center' : 'flex-start',
-                    paddingLeft: m.aPct >= 12 ? 0 : 6,
-                    minWidth: 0,
-                  }}>
-                    {m.aPct >= 8 && (
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>
-                        {fmtPct(m.aPct, 0)}
-                      </span>
-                    )}
+              ) : (() => {
+                // Both slices are ALWAYS labeled (Fix 10c): wide slices (≥12%) get a label inside;
+                // thin slices (e.g. a 7.3% target stake) get a label just OUTSIDE the bar edge in the
+                // slice's color, so no slice is left unlabeled by the inside-only 8% threshold.
+                const aWide = m.aPct >= 12;
+                const bWide = m.bPct >= 12;
+                return (
+                <div style={{ position: 'relative', height: 26 }}>
+                  <div style={{ display: 'flex', height: 26, borderRadius: 4, overflow: 'hidden', border: `1px solid ${GRAY_BORDER}` }}>
+                    <div style={{ width: `${m.aPct}%`, background: SF_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
+                      {aWide && (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{fmtPct(m.aPct, 0)}</span>
+                      )}
+                    </div>
+                    <div style={{ width: `${m.bPct}%`, background: TARGET_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
+                      {bWide && (
+                        <span style={{ fontSize: 11, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>{fmtPct(m.bPct, 0)}</span>
+                      )}
+                    </div>
                   </div>
-                  <div style={{
-                    width: `${m.bPct}%`,
-                    background: TARGET_BLUE,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: m.bPct >= 12 ? 'center' : 'flex-end',
-                    paddingRight: m.bPct >= 12 ? 0 : 6,
-                    minWidth: 0,
-                  }}>
-                    {m.bPct >= 8 && (
-                      <span style={{ fontSize: 11, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>
-                        {fmtPct(m.bPct, 0)}
-                      </span>
-                    )}
-                  </div>
+                  {!aWide && (
+                    <span style={{ position: 'absolute', right: '100%', top: '50%', transform: 'translateY(-50%)', marginRight: 4, fontSize: 10, fontWeight: 700, color: SF_BLUE, whiteSpace: 'nowrap' }}>
+                      {fmtPct(m.aPct, 0)}
+                    </span>
+                  )}
+                  {!bWide && (
+                    <span style={{ position: 'absolute', left: '100%', top: '50%', transform: 'translateY(-50%)', marginLeft: 4, fontSize: 10, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>
+                      {fmtPct(m.bPct, 0)}
+                    </span>
+                  )}
                 </div>
-              )}
+                );
+              })()}
             </div>
           ))}
         </div>
