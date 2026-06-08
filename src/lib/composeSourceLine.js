@@ -1,8 +1,10 @@
 // sourceCatalog maps internal source name → human label
 const SOURCE_LABELS = {
   edgar:   'SEC EDGAR (10-K/10-Q filings)',
-  finnhub: 'Finnhub market data',
+  cnbc:    'CNBC market data',
   yahoo:   'Yahoo Finance',
+  nasdaq:  'Nasdaq',
+  finnhub: 'Finnhub market data',
 };
 
 // Fields the deck treats as always-assumption regardless of fetch status.
@@ -63,15 +65,16 @@ export function composeSourceLine(usedFieldKeys, fields, asOfISO) {
     if (meta?.asOf && (!newestAsOf || meta.asOf > newestAsOf)) newestAsOf = meta.asOf;
   }
 
-  // Stable citation order: EDGAR first (fundamental), then market data sources
-  const ORDER = ['edgar', 'finnhub', 'yahoo'];
+  // Stable citation order: EDGAR first (fundamental), then market-data sources.
+  const ORDER = ['edgar', 'cnbc', 'yahoo', 'nasdaq', 'finnhub'];
+  const MARKET_SOURCES = ['cnbc', 'yahoo', 'nasdaq', 'finnhub'];
   const labels = ORDER.filter(s => citedSources.has(s)).map(s => SOURCE_LABELS[s]);
 
   const parts = [];
   if (labels.length) parts.push('Source: ' + joinList(labels) + '.');
   if (hasAssumption)  parts.push('Deal terms and projections per transaction assumptions.');
   const asOf = newestAsOf || (asOfISO ? asOfISO.substring(0, 10) : null);
-  if (asOf && (citedSources.has('finnhub') || citedSources.has('yahoo'))) {
+  if (asOf && MARKET_SOURCES.some(s => citedSources.has(s))) {
     parts.push('Market data as of ' + formatDate(asOf) + '.');
   }
 

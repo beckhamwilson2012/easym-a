@@ -93,20 +93,21 @@ describe('composeSourceLine()', () => {
     expect(result).toContain('SEC EDGAR');
   });
 
-  test('citation order: EDGAR before Finnhub before Yahoo', () => {
+  test('citation order: EDGAR (fundamental) before market-data sources (CNBC before Yahoo)', () => {
     const fields = {
       revenue: makeSingle('edgar', 5215),
-      price:   makeVerified('finnhub', { finnhub: 189.30, yahoo: 189.28 }),
+      // price now verifies via CNBC (SOT) cross-checked against Yahoo
+      price:   makeVerified('cnbc', { cnbc: 189.30, yahoo: 189.28 }),
     };
     const result = composeSourceLine(['revenue', 'price'], fields, '2026-06-03');
     const ei = result.indexOf('SEC EDGAR');
-    const fi = result.indexOf('Finnhub');
+    const ci = result.indexOf('CNBC');
     const yi = result.indexOf('Yahoo');
     expect(ei).toBeGreaterThan(-1);
-    expect(fi).toBeGreaterThan(-1);
+    expect(ci).toBeGreaterThan(-1);
     expect(yi).toBeGreaterThan(-1);
-    expect(ei).toBeLessThan(fi);
-    expect(fi).toBeLessThan(yi);
+    expect(ei).toBeLessThan(ci);   // EDGAR (fundamental) cited first
+    expect(ci).toBeLessThan(yi);   // CNBC (SOT) before its Yahoo cross-check
   });
 
   test('null fields object → assumption only', () => {

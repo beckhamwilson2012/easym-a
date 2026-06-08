@@ -21,8 +21,10 @@ async function fetchPrice(ticker) {
   const p = (async () => {
     let price = null;
     try {
+      // exthrs=0 → regular-session last (matches Yahoo's regularMarketPrice exactly, so the
+      // cross-check is clean; exthrs=1 would return an extended-hours price that drifts from Yahoo).
       const url = `https://quote.cnbc.com/quote-html-webservice/restQuote/symbolType/symbol?symbols=${key}` +
-        `&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=1&output=json`;
+        `&requestMethod=itv&noform=1&partnerId=2&fund=1&exthrs=0&output=json`;
       const data = await get(url, HEADERS);
       const q = data?.FormattedQuoteResult?.FormattedQuote?.[0];
       const last = q ? parseFloat(String(q.last).replace(/,/g, '')) : NaN;
@@ -37,4 +39,12 @@ async function fetchPrice(ticker) {
   try { return await p; } finally { inflight.delete(key); }
 }
 
-module.exports = { fetchPrice };
+// Field-shaped result so CNBC can be a first-class source in the verified-data reconcile
+// (server/data/reconcile.js). CNBC's quote response carries the live price but no 52-week range.
+async function fetchFields(ticker) {
+  const price = await fetchPrice(ticker);
+  const now = new Date().toISOString().substring(0, 10);
+  return { price: price != null ? { value: price, asOf: now, period: null, source: 'cnbc' } : null };
+}
+
+module.exports = { fetchPrice, fetchFields };

@@ -3,6 +3,7 @@
 'use strict';
 const assert = require('assert');
 const { reconcile } = require('../reconcile');
+const { periodsMatch, periodGuardExcludes } = require('../../services/verifiedLookup');
 
 let passed = 0;
 function test(name, fn) {
@@ -74,4 +75,47 @@ test('NaN values treated as absent', () => {
   assert.strictEqual(r.chosenSource, 'yahoo');
 });
 
-console.log(`\n${passed}/9 tests passed\n`);
+// ── Period-match guard (the FY25-vs-FY26 class of error) ──────────────────────
+const EDGAR_FY26 = { fy: 2026, fp: 'FY', form: '10-K' };
+
+test('periodsMatch — same fiscal year', () => {
+  assert.strictEqual(periodsMatch(EDGAR_FY26, { calendarYear: '2026', period: 'FY' }), true);
+  assert.strictEqual(periodsMatch(EDGAR_FY26, { calendarYear: '2025', period: 'FY' }), false);
+});
+
+test('periodGuardExcludes — excludes a non-EDGAR source from a DIFFERENT fiscal year', () => {
+  // revenueField has period:true. FMP FY2025 vs EDGAR FY2026 → excluded.
+  assert.strictEqual(periodGuardExcludes(revenueField, 'fmp', EDGAR_FY26, { calendarYear: '2025' }), true);
+  // Same year → not excluded (allowed to compare).
+  assert.strictEqual(periodGuardExcludes(revenueField, 'fmp', EDGAR_FY26, { calendarYear: '2026' }), false);
+  // EDGAR itself is never excluded; non-period fields never excluded.
+  assert.strictEqual(periodGuardExcludes(revenueField, 'edgar', EDGAR_FY26, { calendarYear: '2025' }), false);
+  assert.strictEqual(periodGuardExcludes(priceField, 'yahoo', EDGAR_FY26, { calendarYear: '2025' }), false);
+});
+
+test('guard prevents FALSE agreement — different period, same value → single (not verified)', () => {
+  // EDGAR FY2026 = 41525; FMP FY2025 happens to also = 41525. Comparing them would falsely "verify".
+  const fmpExcluded = periodGuardExcludes(revenueField, 'fmp', EDGAR_FY26, { calendarYear: '2025' });
+  const values = { edgar: 41525, fmp: fmpExcluded ? null : 41525 };
+  const r = reconcile(revenueField, values);
+  assert.strictEqual(r.status, 'single', 'cross-period match must NOT be reported as verified');
+  assert.strictEqual(r.value, 41525);
+});
+
+test('guard prevents FALSE disagreement — different period, different value → single (not flagged)', () => {
+  // EDGAR FY2026 = 41525; FMP FY2025 = 35000. Comparing them would falsely "flag" a disagreement.
+  const fmpExcluded = periodGuardExcludes(revenueField, 'fmp', EDGAR_FY26, { calendarYear: '2025' });
+  const values = { edgar: 41525, fmp: fmpExcluded ? null : 35000 };
+  const r = reconcile(revenueField, values);
+  assert.strictEqual(r.status, 'single', 'cross-period mismatch must NOT be reported as flagged');
+  assert.strictEqual(r.value, 41525);
+});
+
+test('guard allows SAME-period comparison through to reconcile', () => {
+  const fmpExcluded = periodGuardExcludes(revenueField, 'fmp', EDGAR_FY26, { calendarYear: '2026' });
+  const values = { edgar: 41525, fmp: fmpExcluded ? null : 41520 };
+  const r = reconcile(revenueField, values);
+  assert.strictEqual(r.status, 'verified', 'same-period agreeing sources → verified');
+});
+
+console.log(`\n${passed}/14 tests passed\n`);

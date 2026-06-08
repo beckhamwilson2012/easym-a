@@ -2,11 +2,15 @@
 
 // tolerance is fractional unless noted. Choose by how exact the field SHOULD be.
 module.exports = [
-  // --- live market data: Finnhub (free) + Yahoo cross-check ---
-  // FMP removed — 403 on current free key.
-  { key: 'price',            sources: ['finnhub','yahoo'],     sot: 'finnhub', tol: 0.005, unit: '$/sh' },
-  { key: 'week52High',       sources: ['finnhub','yahoo'],     sot: 'finnhub', tol: 0.005, unit: '$/sh' },
-  { key: 'week52Low',        sources: ['finnhub','yahoo'],     sot: 'finnhub', tol: 0.005, unit: '$/sh' },
+  // --- live market data: CNBC (keyless, reliable) is SOT; cross-checked vs Yahoo + Nasdaq (+ Finnhub
+  // if a key is set). Agree within tol → verified; disagree → flagged (CNBC value still used); one
+  // only → single. Tolerance is 0.8%, not 0.5%: CNBC and Yahoo are real-time and match to the cent,
+  // but Nasdaq's public feed lags slightly, so a same-instant comparison drifts ~0.4–0.6% — well
+  // under any genuine error (mislabel, stale-by-days, wrong ticker), which is what we need to catch.
+  // CNBC's quote has no 52-week range, so 52wk relies on Yahoo (single). ---
+  { key: 'price',            sources: ['cnbc','yahoo','nasdaq','finnhub'], sot: 'cnbc', tol: 0.008, unit: '$/sh' },
+  { key: 'week52High',       sources: ['yahoo','finnhub'],        sot: 'yahoo',  tol: 0.005, unit: '$/sh' },
+  { key: 'week52Low',        sources: ['yahoo','finnhub'],        sot: 'yahoo',  tol: 0.005, unit: '$/sh' },
   // marketCap: no free source with cross-check; stays single FMP entry (resolves missing until key upgraded)
   { key: 'marketCap',        sources: ['fmp'],                 sot: 'fmp',     tol: 0.01,  unit: '$',    single: true },
 
