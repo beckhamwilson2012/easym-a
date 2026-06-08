@@ -11,6 +11,24 @@ const GLYPH = {
   missing:  { symbol: '?', color: '#DC2626' },
 };
 
+// Column header label + footnote description per source. We render a column ONLY for sources that
+// actually returned data at runtime (Fix 4) — so the keyless stack shows EDGAR / CNBC / Nasdaq /
+// StockAnalysis, not the dead FMP / Yahoo columns that never populate.
+const SOURCE_COL_ORDER = ['edgar', 'cnbc', 'nasdaq', 'stockanalysis', 'yahoo', 'fmp', 'finnhub'];
+const SOURCE_COL_LABELS = {
+  edgar: 'EDGAR', cnbc: 'CNBC', nasdaq: 'Nasdaq', stockanalysis: 'StockAnalysis',
+  yahoo: 'Yahoo', fmp: 'FMP', finnhub: 'Finnhub',
+};
+const SOURCE_DESC = {
+  edgar:        'SEC EDGAR (data.sec.gov) — audited XBRL filings, free.',
+  cnbc:         'CNBC — live market quotes (keyless feed).',
+  nasdaq:       'Nasdaq (api.nasdaq.com) — live quotes and analyst targets.',
+  stockanalysis:'StockAnalysis.com — analyst-estimate cross-check.',
+  yahoo:        'Yahoo Finance — unofficial cross-check.',
+  fmp:          'Financial Modeling Prep — market data (paid API).',
+  finnhub:      'Finnhub — market data.',
+};
+
 const FIELD_LABELS = {
   price:             'Current Price',
   marketCap:         'Market Cap',
@@ -72,6 +90,13 @@ export function SectionDataVerification({ target, pageNum }) {
     key, label, fd: fields[key] ?? null,
   }));
 
+  // Render a column only for sources that actually returned data for at least one field (Fix 4).
+  const presentSources = (() => {
+    const seen = new Set();
+    rows.forEach(({ fd }) => { if (fd?.sourceMeta) Object.keys(fd.sourceMeta).forEach(s => seen.add(s)); });
+    return SOURCE_COL_ORDER.filter(s => seen.has(s));
+  })();
+
   const counts = rows.reduce((acc, { fd }) => {
     if (!fd) return acc;
     acc[fd.status] = (acc[fd.status] || 0) + 1;
@@ -115,7 +140,7 @@ export function SectionDataVerification({ target, pageNum }) {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
             <thead>
               <tr>
-                {['Field', 'Status', 'Value Used', 'EDGAR', 'FMP', 'Yahoo'].map((h, i) => (
+                {['Field', 'Status', 'Value Used', ...presentSources.map(s => SOURCE_COL_LABELS[s])].map((h, i) => (
                   <th key={h} style={{
                     padding: '6px 10px', background: NAVY, color: '#fff', fontSize: 10,
                     textAlign: i <= 1 ? 'left' : 'right', fontWeight: 700,
@@ -142,9 +167,9 @@ export function SectionDataVerification({ target, pageNum }) {
                     <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, textAlign: 'right', fontWeight: 600, color: NAVY }}>
                       {fd ? fmtVal(fd.value, fd.unit) : '—'}
                     </td>
-                    <SourceCell meta={fd?.sourceMeta?.edgar} unit={fd?.unit} isSot={fd?.sot === 'edgar'} bg={bg} />
-                    <SourceCell meta={fd?.sourceMeta?.fmp}   unit={fd?.unit} isSot={fd?.sot === 'fmp'}   bg={bg} />
-                    <SourceCell meta={fd?.sourceMeta?.yahoo} unit={fd?.unit} isSot={fd?.sot === 'yahoo'} bg={bg} />
+                    {presentSources.map(src => (
+                      <SourceCell key={src} meta={fd?.sourceMeta?.[src]} unit={fd?.unit} isSot={fd?.sot === src} bg={bg} />
+                    ))}
                   </tr>
                 );
               })}
@@ -161,10 +186,9 @@ export function SectionDataVerification({ target, pageNum }) {
           ))}
         </div>
         <p style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, lineHeight: 1.5 }}>
-          Sources: SEC EDGAR (data.sec.gov) — audited XBRL filings, free.
-          FMP (financialmodelingprep.com) — live market data, paid API.
-          Yahoo Finance — unofficial cross-check, no guarantee of availability.
-          FMP data display requires a separate Data Display and Licensing Agreement.
+          Sources consulted (only those that returned data are shown above):{' '}
+          {presentSources.map(s => SOURCE_DESC[s]).join(' ')}{' '}
+          A field is marked verified (✓) when two or more sources agree within tolerance.
         </p>
       </div>
     </PageFrame>
