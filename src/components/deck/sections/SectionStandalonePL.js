@@ -82,7 +82,12 @@ function StandalonePLBody({ company, deal, pageNum, role, showDealCommentary, ex
   // Standard-mode estimates
   const estGrossProfit = rev * 0.65;
   const estOpex = ebitda > 0 ? (estGrossProfit - ebitda) : rev * 0.40;
-  const estDA   = ebitda > 0 && ni > 0 && ni < ebitda ? (ebitda - ni) * 0.5 : ebitda * 0.15;
+  // D&A is a POSITIVE expense (subtracted in the P&L). The prior estimate (ebitda × 0.15) went
+  // negative for loss-making firms with EBITDA ≤ 0, so -estDA rendered as a positive addition rather
+  // than a subtraction (Fix 10d). Fall back to a revenue-based proxy when EBITDA ≤ 0 so it stays ≥ 0.
+  const estDA   = ebitda > 0 && ni > 0 && ni < ebitda
+    ? (ebitda - ni) * 0.5
+    : ebitda > 0 ? ebitda * 0.15 : rev * 0.04;
   const netDebt = debt - cash;
 
   // Bank-mode income statement values
