@@ -11,9 +11,10 @@ All $ figures in millions ($M) unless noted. Share counts in millions. Per-share
   `synergiesY1/Y2/Y3` ($M, pre-tax annual run-rate).
 
 ## Documented assumptions (transaction assumptions, not fetched data)
-- `TAX_RATE = 0.21` — US federal statutory rate; applied to synergies (and interest if used).
-- `DEBT_INTEREST_RATE = 0` — the BASE accretion/dilution check assumes NO incremental financing-cost
-  drag (the standard quick convention). Raise it to model fully debt-funded cash.
+- `TAX_RATE = 0.21` — US federal statutory rate; applied to synergies and to financing interest.
+- `DEBT_INTEREST_RATE = 0.05` — incremental acquisition-financing cost, ON by default. A cash deal
+  carries a real interest drag: the cash portion is funded by new debt at the marginal IG rate. We
+  charge it on the FULL cash portion, after tax. Set to 0 for the simpler quick-accretion convention.
 - Standalone EPS for the accretion comparison = acquirer net income ÷ shares (same basis as the
   pro-forma EPS), not the reported diluted EPS — so the comparison is apples-to-apples.
 
@@ -32,7 +33,7 @@ totalShares         = companyAShares + newSharesIssued
 
 // Recurring pro-forma net income (one-time transaction fees do NOT belong here)
 afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE)
-newInterestAfterTax = cashPortion * DEBT_INTEREST_RATE * (1 - TAX_RATE)   // 0 by default
+newInterestAfterTax = cashPortion * DEBT_INTEREST_RATE * (1 - TAX_RATE)   // financing ON (5%)
 proFormaNetIncome   = companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax
 proFormaEPS         = totalShares > 0 ? proFormaNetIncome / totalShares : 0
 
@@ -65,19 +66,20 @@ Data: A=CRM shares 929, NI 7457, price 188.  B=TEAM shares 262, NI -257, price 1
 - cashPortion = 23,580 ; stockPortion = 15,720
 - newSharesIssued = 15,720 / 188 = **≈83.6M** ✓ (non-zero!)
 - totalShares = 929 + 83.6 = **1,012.6**
-- afterTaxSynergies = 935 × 0.79 = 738.7 ; newInterestAfterTax = 0 (no financing drag)
-- proFormaNetIncome = 7457 − 257 + 738.7 = **7,938.7**
-- proFormaEPS = 7,938.7 / 1,012.6 = **$7.84**
-- standaloneEPS = 7457/929 = **$8.03** → proForma 7.84 < 8.03 → **DILUTIVE**, epsChangePct = (7.84/8.03−1) = **−2.4%**
-- evEBITDA: TEAM EBITDA −38 ≤ 0 → **N/A** (guarded) ; peRatio: TEAM EPS −0.98 ≤ 0 → **N/A** (guarded)
+- afterTaxSynergies = 935 × 0.79 = 738.7
+- newInterestAfterTax = 23,580 × 0.05 × 0.79 = **931.4** (after-tax interest on the cash portion)
+- proFormaNetIncome = 7457 − 257 + 738.7 − 931.4 = **7,007.3**
+- proFormaEPS = 7,007.3 / 1,012.6 = **$6.92**
+- standaloneEPS = 7457/929 = **$8.03** → proForma 6.92 < 8.03 → **DILUTIVE**, epsChangePct = (6.92/8.03−1) = **−13.8%**
+- evEBITDA: TEAM EBITDA −38 ≤ 0 → **n/m** (negative EBITDA) ; peRatio: TEAM EPS −0.98 ≤ 0 → **n/m** (negative earnings)
 
-(With live prices ≈$186/$99 the headline shifts slightly — newShares ≈84.5M, proFormaEPS ≈$7.83,
-premium ≈+51% — because the live TEAM price is below the $116 assumed here. Still DILUTIVE.)
+(With live prices ≈$186/$99 the headline shifts slightly — newShares ≈84.5M, proFormaEPS ≈$6.91 —
+because the live acquirer price differs from the $188 assumed here. Still DILUTIVE.)
 
-## Reactivity spot-checks (A.price 188)
-- offer $150→$180: premium +29.3%→+55.2%, newShares 83.6→100.3, proFormaEPS 7.84→7.71. ✓
-- cash 60%→20%: more stock → newShares 83.6→167.2, proFormaEPS 7.84→7.23 (no financing offset now). ✓
-- synergy Y1 935→2000: proFormaEPS rises. ✓
+## Reactivity spot-checks (A.price 188, financing ON)
+- offer $150→$180: premium +29.3%→+55.2%, newShares 83.6→100, financing 931→1118, proFormaEPS 6.92→6.63. ✓
+- cash 60%→20%: less cash → less financing (931→310) but more shares (84→167); net proFormaEPS 6.92→6.96. ✓
+- synergy Y1 935→2000: proFormaEPS 6.92→7.75. ✓
 
 Negative-EPS rule: if standaloneEPS ≤ 0 OR proFormaEPS ≤ 0 → `accretionMeaningful = false`,
 `epsChangePct = null` (shown "N/M"), and `isAccretive = false` (leans dilutive). No more

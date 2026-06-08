@@ -207,7 +207,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             },
             {
               label: 'P / E Ratio',
-              value: results.peRatio === 'N/A' ? 'N/A' : `${results.peRatio}x`,
+              value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
+              note:  results.peRatio === 'N/A' ? (inputs.companyBEPS <= 0 ? 'Target earnings are negative' : 'not available') : null,
               explain: () => explainPeRatio({ offerPrice: inputs.offerPricePerShare, eps: inputs.companyBEPS, multiple: results.peRatio }),
             },
             {
@@ -228,17 +229,21 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           ] : [
             {
               label: 'EV / EBITDA',
-              value: results.evEBITDA === 'N/A' ? 'N/A' : `${results.evEBITDA}x`,
+              // "n/m" (not meaningful): a multiple off a negative EBITDA has no economic meaning.
+              value: results.evEBITDA === 'N/A' ? 'n/m' : `${results.evEBITDA}x`,
+              note:  results.evEBITDA === 'N/A' ? (inputs.companyBEBITDA <= 0 ? 'Target EBITDA is negative' : 'not available') : null,
               explain: () => explainEvEbitda({ ev, ebitda: inputs.companyBEBITDA, multiple: results.evEBITDA }),
             },
             {
               label: 'P / E Ratio',
-              value: results.peRatio === 'N/A' ? 'N/A' : `${results.peRatio}x`,
+              value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
+              note:  results.peRatio === 'N/A' ? (inputs.companyBEPS <= 0 ? 'Target earnings are negative' : 'not available') : null,
               explain: () => explainPeRatio({ offerPrice: inputs.offerPricePerShare, eps: inputs.companyBEPS, multiple: results.peRatio }),
             },
             {
               label: 'Debt / EBITDA',
-              value: results.debtEBITDA === 'N/A' ? 'N/A' : `${results.debtEBITDA}x`,
+              value: results.debtEBITDA === 'N/A' ? 'n/m' : `${results.debtEBITDA}x`,
+              note:  results.debtEBITDA === 'N/A' ? 'Combined EBITDA is non-positive' : null,
               explain: () => explainDebtEbitda({ combinedDebt: combinedDebtForExplain, combinedEbitda: results.combinedEBITDA, multiple: results.debtEBITDA }),
             },
           ]).map(m => (
@@ -247,7 +252,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 {m.label}
                 <ExplainButton explain={m.explain} />
               </div>
-              <div style={{ fontSize: 28, fontWeight: 'bold', color: '#0F2244' }}>{m.value}</div>
+              <div style={{ fontSize: m.value === 'n/m' ? 22 : 28, fontWeight: 'bold', color: m.value === 'n/m' ? '#9CA3AF' : '#0F2244' }}>{m.value}</div>
+              {m.note && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3, fontStyle: 'italic' }}>{m.note}</div>}
             </div>
           ))}
         </div>
