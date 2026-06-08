@@ -1,7 +1,7 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
-import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial } from '../shared/deckTokens';
+import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, standaloneEPS } from '../shared/deckTokens';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
@@ -72,7 +72,9 @@ function StandalonePLBody({ company, deal, pageNum, role, showDealCommentary, ex
   const cash   = parseFloat(target.cash)      || 0;
   const debt   = parseFloat(target.debt)      || 0;
   const shares = parseFloat(target.shares)    || 0;
-  const eps    = parseFloat(target.eps)       || 0;
+  // Single deck-wide EPS basis: net income ÷ shares (matches dashboard/§7 and the accretion math),
+  // so this slide no longer diverges from the dashboard for profitable filers (Fix 6).
+  const eps    = standaloneEPS(target) ?? 0;
 
   const ebitdaMargin = rev > 0 && ebitda > 0 ? (ebitda / rev * 100) : 0;
   const niMargin     = rev > 0 && ni     > 0 ? (ni     / rev * 100) : 0;
@@ -102,7 +104,7 @@ function StandalonePLBody({ company, deal, pageNum, role, showDealCommentary, ex
     if (rev > 0 && ebitda > 0) lines.push(`EBITDA margin of ${fmtPct(ebitda / rev * 100)} on ${fmtMoneyTable(rev)} of revenue.`);
     if (rev > 0 && ni > 0) lines.push(`Net income of ${fmtMoneyTable(ni)} — a ${fmtPct(ni / rev * 100)} net margin.`);
     if (rev > 0 && ni < 0) lines.push(`Reported a net loss of ${fmtMoneyTable(Math.abs(ni))} in the latest fiscal year — growth-stage profitability profile.`);
-    if (shares > 0) lines.push(`${shares.toFixed(0)}M shares outstanding; GAAP EPS of ${fmtPerShare(eps)}.`);
+    if (shares > 0) lines.push(`${shares.toFixed(0)}M shares outstanding; EPS (net income ÷ shares) of ${fmtPerShare(eps)}.`);
     lines.push(`Net ${(debt - cash) < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(debt - cash))}.`);
     return lines;
   })();
@@ -148,7 +150,7 @@ function StandalonePLBody({ company, deal, pageNum, role, showDealCommentary, ex
                 <PLRow label="Provision for Credit Losses" value={fmtBankNeg(provision)} alt />
                 <PLRow label="Net Income"                  value={fmtMoneyTable(ni)} bold />
                 <PLRow label="Net Margin"                  value={fmtPct(bankNiMargin)} indent alt />
-                <PLRow label="EPS (Basic)"                 value={fmtPerShare(eps)} />
+                <PLRow label="EPS (NI ÷ shares)"                 value={fmtPerShare(eps)} />
               </>
             ) : (
               <>
@@ -161,7 +163,7 @@ function StandalonePLBody({ company, deal, pageNum, role, showDealCommentary, ex
                 <PLRow label="D&A (est.)"                 value={fmtMoneyAccounting(-estDA)}    indent />
                 <PLRow label="Net Income"                 value={fmtMoneyTable(ni)}             bold />
                 <PLRow label="Net Margin"                 value={fmtPct(niMargin)}              indent alt />
-                <PLRow label="EPS (Basic)"                value={fmtPerShare(eps)}     />
+                <PLRow label="EPS (NI ÷ shares)"                value={fmtPerShare(eps)}     />
               </>
             )}
           </div>

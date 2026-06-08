@@ -92,6 +92,19 @@ export function fmtPerShare(v) {
   return `$${n.toFixed(2)}`;
 }
 
+// Single standalone-EPS basis for the WHOLE deck: net income ÷ shares outstanding. This is the same
+// basis dealCalc.acquirerStandaloneEPS uses for the accretion math, so a company shows ONE EPS on
+// every slide (the dashboard/§7 already use this; §3/§4/§5/§6/FinancialProfile previously printed the
+// reported `eps` field, which differs for profitable filers because reported EPS uses diluted
+// weighted-average shares). Falls back to the reported `eps` field only when NI or shares is missing.
+export function standaloneEPS(company) {
+  const ni = parseFloat(company?.netIncome);
+  const sh = parseFloat(company?.shares);
+  if (!isNaN(ni) && sh > 0) return ni / sh;
+  const rep = parseFloat(company?.eps);
+  return isNaN(rep) ? null : rep;
+}
+
 // Share count formatter — input in millions (e.g., 47.3 = 47.3M shares).
 export function fmtShares(v) {
   const n = parseFloat(v);

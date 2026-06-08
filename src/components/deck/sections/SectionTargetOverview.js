@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import {
   NAVY, GRAY_BORDER, ALT_ROW, DONUT_COLORS,
-  fmtMoney, fmtPerShare,
+  fmtMoney, fmtPerShare, standaloneEPS,
   estimateSegmentMix, estimateGeographyMix, estimateEmployeeMix,
 } from '../shared/deckTokens';
 import { getSegmentRevenue } from '../../../services/edgarSegments';
@@ -110,7 +110,7 @@ export function SectionTargetOverview({ target, deal, pageNum }) {
             <MetricRow label="EBITDA"              value={fmtMoney(target.ebitda)}     alt />
             <MetricRow label="EBITDA Margin"       value={ebitdaMargin !== null ? `${ebitdaMargin}%` : 'N/A'} />
             <MetricRow label="Net Income"          value={fmtMoney(target.netIncome)}  alt />
-            <MetricRow label="EPS (Basic)"         value={fmtPerShare(target.eps)}     />
+            <MetricRow label="EPS (NI ÷ shares)"   value={fmtPerShare(standaloneEPS(target))} />
             <div style={{ background: NAVY, padding: '5px 10px', marginTop: 0 }}>
               <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>Balance Sheet</span>
             </div>

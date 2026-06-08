@@ -30,8 +30,10 @@ function deriveColumn(c) {
   const revenue   = parseFloat(c?.revenue)   || 0;
   const ebitda    = parseFloat(c?.ebitda)    || 0;
   const netIncome = parseFloat(c?.netIncome) || 0;
-  const eps       = parseFloat(c?.eps);
   const shares    = parseFloat(c?.shares)    || 0;
+  // Single deck-wide EPS basis: net income ÷ shares (matches dashboard/§7); fall back to reported
+  // eps only when shares are missing (Fix 6).
+  const eps       = shares > 0 ? netIncome / shares : parseFloat(c?.eps);
   const cash      = parseFloat(c?.cash)      || 0;
   const debt      = parseFloat(c?.debt)      || 0;
 

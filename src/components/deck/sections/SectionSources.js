@@ -83,7 +83,7 @@ export function SectionSources({ target, acquirer, deal, pageNum }) {
     {
       label: 'Primary Filings',
       bullets: [
-        'Company fundamentals — revenue, net income, shares outstanding, cash, total debt, and EPS — are drawn from SEC EDGAR XBRL company facts (data.sec.gov).',
+        'Company fundamentals — revenue, net income, shares outstanding, cash, and total debt — are drawn from SEC EDGAR XBRL company facts (data.sec.gov). EPS is computed as net income ÷ shares outstanding on a single consistent basis across the deck.',
         'Figures reflect each company’s most recent annual report (Form 10-K for domestic filers, Form 20-F for foreign private issuers).',
         'EDGAR XBRL data is audited and free; reported values are used as-is without restatement adjustments.',
       ],
