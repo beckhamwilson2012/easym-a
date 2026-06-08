@@ -85,8 +85,9 @@ export function calculate(inputs) {
   const standaloneEPS       = acquirerStandaloneEPS(inputs); // net income ÷ shares (same basis as PF)
   const accretionMeaningful = standaloneEPS > 0 && proFormaEPS > 0;
   const isAccretive         = accretionMeaningful && proFormaEPS > standaloneEPS;
+  // Single shared helper (also used by §7) so the headline % and the accretion table never diverge.
   const epsChangePct        = accretionMeaningful
-    ? ((proFormaEPS - standaloneEPS) / standaloneEPS) * 100 : null;
+    ? epsAccretionPct(offerPricePerShare, synergiesY1, inputs) : null;
 
   // Premium against the REAL current target price (not an EPS×15 proxy).
   const tgtPrice         = targetMarketPrice(inputs);
@@ -147,6 +148,19 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const newInterestAfterTax = cashPortion * DEBT_INTEREST_RATE * (1 - TAX_RATE);
   const netIncome = companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax;
   return netIncome / totalShares;
+}
+
+// Single source of truth for the EPS accretion/(dilution) PERCENTAGE. Both the dashboard headline
+// (via calculate) and the §7 multi-year accretion table call THIS, so they never diverge by a
+// rounding step — the table previously divided by the 2-dp-rounded standalone EPS (8.03) and reported
+// -11.2% where the dashboard, using the full-precision standalone EPS (8.0269), showed -11.1%.
+// Returns a full-precision percentage, or null when a % is not meaningful (standalone or pro-forma
+// EPS ≤ 0). Callers round for display.
+export function epsAccretionPct(offerPrice, synergiesY1, inputs) {
+  const pf   = calcProFormaEPS(offerPrice, synergiesY1, inputs);
+  const base = acquirerStandaloneEPS(inputs);
+  if (pf == null || !(base > 0) || !(pf > 0)) return null;
+  return ((pf - base) / base) * 100;
 }
 
 // ── Risk flags ────────────────────────────────────────────────────────────────

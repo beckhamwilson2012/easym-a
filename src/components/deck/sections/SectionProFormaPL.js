@@ -4,7 +4,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPerShare, fmtPctSigned } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
-import { calcProFormaEPS, acquirerStandaloneEPS } from '../../../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct } from '../../../utils/dealCalc';
 
 // Cost synergies = 55% of total; revenue synergies = 45%
 const COST_SYN_PCT = 0.55;
@@ -66,19 +66,11 @@ export function SectionProFormaPL({ target, acquirer, deal, pageNum }) {
     { year: 'Year 3', syn: parseFloat(deal.synergiesY3) || 0 },
   ].map(r => {
     const pf = calcProFormaEPS(offer, r.syn, inputs);
-    const pct = (pf != null && standaloneEPS > 0) ? (pf / standaloneEPS - 1) * 100 : null;
+    // Use the SAME shared helper as the dashboard (full-precision standalone-EPS denominator) so the
+    // Year-1 row equals the dashboard's epsChangePct exactly — no rounded-denominator drift (Fix 7).
+    const pct = epsAccretionPct(offer, r.syn, inputs);
     return { ...r, pfEPS: pf, pct, accretive: pf != null ? pf > standaloneEPS : null };
   });
-
-  // ── DIAGNOSTIC (Fix 7): the §7 table divides by the 2-dp-rounded standalone EPS, so its Year-1 %
-  //    diverges from the dashboard's epsChangePct (computed from the full-precision standalone EPS) ──
-  {
-    const exactBase = acquirerStandaloneEPS(inputs);
-    const y1pf = calcProFormaEPS(offer, parseFloat(deal.synergiesY1) || 0, inputs);
-    const roundedPct = (y1pf != null && standaloneEPS > 0) ? ((y1pf / standaloneEPS - 1) * 100).toFixed(1) : 'n/a';
-    const exactPct   = (y1pf != null && exactBase > 0)     ? ((y1pf / exactBase - 1) * 100).toFixed(1)     : 'n/a';
-    console.log(`[§7 EPS%] dashboard=${deal._results?.epsChangePct}% | §7 rounded-denom=${roundedPct}% (denom=${standaloneEPS}) | exact-denom=${exactPct}% (denom=${exactBase.toFixed(4)})`);
-  }
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit F">
