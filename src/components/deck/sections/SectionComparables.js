@@ -9,7 +9,7 @@ import { computeDealScore } from '../../../utils/dealCalc';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
 
-const USED_FIELDS = ['revenue', 'sharesOutstanding'];
+const USED_FIELDS = ['revenue', 'sharesOutstanding', 'price'];
 
 // ── Row builders ───────────────────────────────────────────────────────────────
 
@@ -43,26 +43,42 @@ function buildSavedRow(saved) {
 }
 
 function buildAutoRow(ticker, data) {
-  console.log(`[buildAutoRow] ${ticker} — fields: rev=${data.revenue} nii=${data.netInterestIncome} nonIntInc=${data.nonInterestIncome} nie=${data.nonInterestExpense} tbv=${data.tangibleBookValue} totalAssets=${data.totalAssets} cet1=${data.cet1Ratio} eps=${data.eps} shares=${data.shares}`);
   const rev    = data.revenue || 0;
   const ebitda = data.ebitda  || 0;
   const margin = rev > 0 && ebitda > 0 ? (ebitda / rev * 100).toFixed(1) : null;
-  const impliedMktCap = data.eps > 0 && data.shares > 0 ? data.eps * 15 * data.shares : null;
-  const ev    = impliedMktCap ? impliedMktCap + (data.debt || 0) - (data.cash || 0) : null;
-  const evRev = ev && rev > 0 ? ev / rev : null;
+
+  // Market cap on the SAME basis as §6/§9: live price × shares. EPS×15 is only a last-resort
+  // fallback when no live price is available (and the row is flagged, never shown as a clean number).
+  const live = data.livePrice != null && data.livePrice > 0 ? data.livePrice : null;
+  const liveMktCap = live != null && data.shares > 0 ? live * data.shares : null;
+  const epsMktCap  = data.eps > 0 && data.shares > 0 ? data.eps * 15 * data.shares : null;
+  const mktCap     = liveMktCap != null ? liveMktCap : epsMktCap;
+  const mktCapSource = liveMktCap != null ? 'live' : (epsMktCap != null ? 'eps15-fallback' : 'none');
+  const ev    = mktCap != null ? mktCap + (data.debt || 0) - (data.cash || 0) : null;
+  const evRev = ev != null && rev > 0 ? ev / rev : null;
+
+  // Sanity guard: a profitable SaaS name with EV/Rev < 1x is almost certainly a bad market cap
+  // (e.g. the old EPS×15 proxy understating a high-multiple name). Don't print it — flag it.
+  const evSane = !(mktCapSource === 'eps15-fallback'
+    || (evRev != null && margin != null && parseFloat(margin) > 10 && evRev < 1));
+
+  console.log(`[buildAutoRow] ${ticker} — eps=${data.eps} shares=${data.shares} livePx=${data.livePrice} | source=${mktCapSource} mktCap=${mktCap && Math.round(mktCap)} ev=${ev && Math.round(ev)} evRev=${evRev && evRev.toFixed(1)} sane=${evSane}`);
 
   // Bank fields — present when bank-facts were fetched and merged into data
   const nii      = (data.netInterestIncome || 0) + (data.nonInterestIncome || 0);
   const nie      = data.nonInterestExpense != null ? data.nonInterestExpense : null;
   const effRatio = nie != null && nii > 0 ? (nie / nii * 100).toFixed(1) : null;
   const tbv      = data.tangibleBookValue  != null ? data.tangibleBookValue  : null;
-  const ptbv     = impliedMktCap && tbv ? impliedMktCap / tbv : null;
+  const ptbv     = mktCap && tbv ? mktCap / tbv : null;
 
   return {
     type: 'auto',
     company: data.name || ticker,
     ticker,
-    revenue: rev, margin, ev, evRev,
+    revenue: rev, margin,
+    ev:    evSane ? ev : null,
+    evRev: evSane ? evRev : null,
+    evFlagged: !evSane && ev != null,
     score: null, isAccretive: null,
     effRatio,
     totalAssets: data.totalAssets != null ? data.totalAssets : null,
@@ -236,12 +252,19 @@ export function SectionComparables({ target, acquirer, comparables, pageNum }) {
       .then(async (quoteData) => {
         console.log(`[fetchOnePeer] ${ticker} — /quote response keys:`, Object.keys(quoteData || {}), 'companyType:', quoteData?.companyType);
         let merged = quoteData;
+        // Fetch the live price so the comps EV uses the SAME basis (live price × shares) as §6/§9,
+        // instead of the old EPS×15 proxy. EDGAR /quote carries no price, so this is required.
+        try {
+          const prRes = await fetch(`http://localhost:3001/api/price/${ticker}`);
+          const pr = await prRes.json();
+          merged = { ...merged, livePrice: pr && pr.price != null ? pr.price : null };
+        } catch (e) { merged = { ...merged, livePrice: null }; }
         if (quoteData?.companyType === 'financial') {
           try {
             const bfRes = await fetch(`http://localhost:3001/api/bank-facts/${ticker}`);
             const bf = await bfRes.json();
             console.log(`[fetchOnePeer] ${ticker} — bank-facts keys:`, Object.keys(bf || {}));
-            if (bf) merged = { ...quoteData, ...bf, revenue: quoteData.revenue };
+            if (bf) merged = { ...merged, ...bf, revenue: quoteData.revenue };
           } catch (e) { console.warn(`[fetchOnePeer] ${ticker} — bank-facts error:`, e.message); }
         }
         setPeerData(prev => ({ ...prev, [ticker]: merged }));
@@ -406,8 +429,8 @@ export function SectionComparables({ target, acquirer, comparables, pageNum }) {
                     <>
                       {cell(fmtMoney(row.revenue))}
                       {cell(row.margin !== null ? fmtPct(row.margin) : 'N/A')}
-                      {cell(row.ev !== null ? fmtMoney(row.ev) : 'N/A')}
-                      {cell(row.evRev !== null ? fmtMult(row.evRev) : 'N/A')}
+                      {cell(row.ev !== null ? fmtMoney(row.ev) : (row.evFlagged ? '⚠ review' : 'N/A'))}
+                      {cell(row.evRev !== null ? fmtMult(row.evRev) : (row.evFlagged ? '⚠' : 'N/A'))}
                     </>
                   )}
                   <td style={{ padding: '8px 12px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, textAlign: 'right' }}>
