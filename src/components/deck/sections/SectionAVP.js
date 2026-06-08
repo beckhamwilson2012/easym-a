@@ -15,9 +15,30 @@ export function SectionAVP({ target, deal, pageNum }) {
   const offerPrice  = parseFloat(deal.offerPrice) || 0;
   const priceSeries = generatePriceSeries(target, deal);
 
+  // When the target's EBITDA is <= 0, an EV/EBITDA matrix is degenerate (EV→0, every multiple shows
+  // the same nonsense price). Fall back to an EV/Revenue matrix (valid for unprofitable targets, as
+  // the reference deck does for Atlassian). Same root cause as the FCF guard — negative denominator.
+  const targetEbitda = parseFloat(target.ebitda) || 0;
+  const useEvRev = targetEbitda <= 0;
+  const evRevMults = [2, 3, 4, 5, 6];
+  const evRevSeries = (() => {
+    const revenue = parseFloat(target.revenue) || 0;
+    const debt = parseFloat(target.debt) || 0;
+    const cash = parseFloat(target.cash) || 0;
+    const shares = parseFloat(target.shares) || 0;
+    return evRevMults.map(mult => {
+      const ev = revenue * mult;
+      const price = shares > 0 ? (ev - debt + cash) / shares : 0;
+      const diff = offerPrice > 0 && price > 0 ? ((offerPrice - price) / price) * 100 : null;
+      return { multiple: mult, ev, price: Math.max(price, 0), diffPct: diff };
+    });
+  })();
+  const matrixSeries = useEvRev ? evRevSeries : priceSeries;
+  const matrixLabel  = useEvRev ? 'EV / Revenue' : 'EV / EBITDA';
+
   // Find closest row to actual offer
-  const closestIdx = priceSeries.reduce((bestI, row, i) => {
-    const bestDiff = Math.abs(priceSeries[bestI].price - offerPrice);
+  const closestIdx = matrixSeries.reduce((bestI, row, i) => {
+    const bestDiff = Math.abs(matrixSeries[bestI].price - offerPrice);
     return Math.abs(row.price - offerPrice) < bestDiff ? i : bestI;
   }, 0);
 
@@ -41,7 +62,7 @@ export function SectionAVP({ target, deal, pageNum }) {
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit C">
       <PageHeader
         title={`Valuation Analysis — ${target.name || 'N/A'}`}
-        subtitle="Analysis at Various Prices (AVP) — EV/EBITDA and P/E Implied Values vs. Offer"
+        subtitle={`Analysis at Various Prices (AVP) — ${matrixLabel}${useEvRev ? '' : ' and P/E'} Implied Values vs. Offer`}
       />
 
       <div style={{ display: 'flex', gap: 20, padding: '16px 20px 36px' }}>
@@ -49,18 +70,19 @@ export function SectionAVP({ target, deal, pageNum }) {
         <div style={{ flex: 1 }}>
           {/* EV/EBITDA table */}
           <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: 5 }}>
-            EV / EBITDA — Implied Price Per Share
-            <ExplainButton explain={() => explainEvEbitda({ ev: deal.totalPrice + (target.debt || 0) - (target.cash || 0), ebitda: target.ebitda, multiple: deal.evEBITDA })} />
+            {matrixLabel} — Implied Price Per Share
+            {!useEvRev && <ExplainButton explain={() => explainEvEbitda({ ev: deal.totalPrice + (target.debt || 0) - (target.cash || 0), ebitda: target.ebitda, multiple: deal.evEBITDA })} />}
+            {useEvRev && <span style={{ fontSize: 9, fontWeight: 400, color: '#9CA3AF', textTransform: 'none' }}>(EV/EBITDA not meaningful — target EBITDA ≤ 0)</span>}
           </div>
           <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden', marginBottom: 14 }}>
             <div style={{ background: NAVY, display: 'flex', padding: '5px 10px' }}>
-              {['EV/EBITDA', 'Implied EV', 'Impl. Price/Sh', 'vs. Offer'].map(h => (
-                <span key={h} style={{ color: '#fff', fontSize: 10, fontWeight: 700, flex: 1, textAlign: h === 'EV/EBITDA' ? 'left' : 'right' }}>
+              {[matrixLabel, 'Implied EV', 'Impl. Price/Sh', 'vs. Offer'].map(h => (
+                <span key={h} style={{ color: '#fff', fontSize: 10, fontWeight: 700, flex: 1, textAlign: h === matrixLabel ? 'left' : 'right' }}>
                   {h}
                 </span>
               ))}
             </div>
-            {priceSeries.map((row, i) => {
+            {matrixSeries.map((row, i) => {
               const isHighlighted = i === closestIdx;
               const bg = isHighlighted ? '#FEF3C7' : i % 2 === 0 ? '#fff' : ALT_ROW;
               const vs = offerPrice > 0 && row.price > 0
@@ -151,7 +173,9 @@ export function SectionAVP({ target, deal, pageNum }) {
                   ? `P/E of ${fmtMult(peRatio)} reflects ${peRatio > 25 ? 'a premium' : 'a reasonable'} earnings multiple.`
                   : 'P/E not applicable (negative EPS).',
                 `Offer price of ${fmtPerShare(offerPrice)} represents a ${fmtPct(deal.purchasePremium)} premium to estimated intrinsic value.`,
-                `Amber-highlighted row shows the EV/EBITDA multiple closest to the implied offer price.`,
+                useEvRev
+                  ? `EBITDA is negative, so valuation is shown on an EV/Revenue basis; the amber row is the multiple closest to the offer.`
+                  : `Amber-highlighted row shows the EV/EBITDA multiple closest to the implied offer price.`,
               ].map((line, i) => (
                 <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
                   <span style={{ color: '#0070D2', fontSize: 14, lineHeight: 1, marginTop: 1, flexShrink: 0 }}>•</span>
