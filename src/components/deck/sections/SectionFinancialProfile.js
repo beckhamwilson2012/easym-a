@@ -143,7 +143,7 @@ export function SectionFinancialProfile({ target, acquirer, deal, pageNum }) {
   const hasRevenue = a.revenue > 0 || t.revenue > 0;
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit C">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit E">
       <PageHeader title="Comparative Financial Profile" subtitle={subtitle} />
 
       <div style={{ padding: '16px 20px 36px' }}>

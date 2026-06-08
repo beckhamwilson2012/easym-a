@@ -140,7 +140,7 @@ export function SectionSources({ target, acquirer, deal, pageNum }) {
     'Estimated and assumption-based figures are labeled throughout. Educational use only — not investment advice.';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit K">
+    <PageFrame pageNum={pageNum} exhibitLabel="Appendix I">
       <PageHeader
         title="Sources & Methodology"
         subtitle={`Data provenance and basis of presentation — ${acqName} / ${tgtName}`}

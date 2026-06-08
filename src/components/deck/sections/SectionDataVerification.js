@@ -111,7 +111,7 @@ export function SectionDataVerification({ target, pageNum }) {
   ];
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Appendix">
+    <PageFrame pageNum={pageNum} exhibitLabel="Appendix II">
       <PageHeader
         title={`Data Verification — ${ticker}`}
         subtitle={`Source reconciliation as of ${asOf} · ★ = source of truth`}

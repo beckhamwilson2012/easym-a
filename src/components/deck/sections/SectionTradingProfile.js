@@ -95,7 +95,7 @@ export function SectionTradingProfile({ target, acquirer, deal, pageNum }) {
     'Ownership per transaction assumptions.';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit G">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit H">
       <PageHeader
         title="Pro Forma Trading Profile & Ownership"
         subtitle={`${aName} + ${bName} · Combined Capitalization`}

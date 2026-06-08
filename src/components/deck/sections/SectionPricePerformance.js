@@ -126,7 +126,7 @@ export function SectionPricePerformance({ target, acquirer, pageNum }) {
   };
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit E">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit G">
       <PageHeader
         title="Last Twelve Months Stock Performance"
         subtitle={`${target.ticker || target.name} · Indexed to 100 at start of period`}

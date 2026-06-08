@@ -38,7 +38,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
   ]);
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit A">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit B">
       <PageHeader title="Company Profiles" subtitle={subtitle} />
 
       <div style={{ padding: '16px 20px 36px' }}>

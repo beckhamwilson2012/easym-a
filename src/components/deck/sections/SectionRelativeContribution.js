@@ -81,7 +81,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
     : 'Revenue and free cash flow from SEC EDGAR (cash-flow statements); gross profit and operating income are estimates (per transaction assumptions). Ownership per deal structure.';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit H">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit I">
       <PageHeader
         title="Relative Contribution Analysis"
         subtitle={`${aName} and ${bName} — share of combined entity by metric`}

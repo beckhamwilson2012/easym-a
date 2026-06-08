@@ -342,7 +342,7 @@ export function SectionComparables({ target, acquirer, comparables, pageNum }) {
   const subtitle = `${bankMode ? 'Sorted by total assets' : 'Sorted by revenue'} · ${methodLabel}`;
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit B">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit A">
       <PageHeader title="Peer Comparison" subtitle={subtitle} />
 
       <div style={{ padding: '8px 24px 4px', display: 'flex', justifyContent: 'flex-end' }}>

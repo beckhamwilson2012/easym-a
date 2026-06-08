@@ -295,7 +295,7 @@ export function SectionFootballField({ target, deal, pageNum }) {
   const insufficient = rows.length < 2;
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit F">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit J">
       <PageHeader
         title={`Valuation Football Field — ${target?.name || 'Target'}`}
         subtitle="Multiple Valuation Methodologies vs. Offer Price"

@@ -59,7 +59,7 @@ export function SectionAVP({ target, deal, pageNum }) {
   const peRatio    = deal.peRatio  !== 'N/A' ? parseFloat(deal.peRatio)  : null;
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit C">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit L">
       <PageHeader
         title={`Valuation Analysis — ${target.name || 'N/A'}`}
         subtitle={`Analysis at Various Prices (AVP) — ${matrixLabel}${useEvRev ? '' : ' and P/E'} Implied Values vs. Offer`}

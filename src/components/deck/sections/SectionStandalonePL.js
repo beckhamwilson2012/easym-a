@@ -50,14 +50,14 @@ function PLRow({ label, value, alt, bold, indent }) {
 // §5 Target). The acquirer instance hides deal-specific (premium / financing) commentary, which
 // only makes sense for the target being acquired.
 export function SectionStandalonePLTarget({ target, deal, pageNum }) {
-  return <StandalonePLBody company={target} deal={deal} pageNum={pageNum} role="Target" showDealCommentary exhibitLabel="Exhibit B" />;
+  return <StandalonePLBody company={target} deal={deal} pageNum={pageNum} role="Target" showDealCommentary exhibitLabel="Exhibit D" />;
 }
 export function SectionStandalonePLAcquirer({ acquirer, pageNum }) {
-  return <StandalonePLBody company={acquirer} deal={null} pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel="Exhibit B-2" />;
+  return <StandalonePLBody company={acquirer} deal={null} pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel="Exhibit C" />;
 }
 // Back-compat alias (original single-target usage).
 export function SectionStandalonePL({ target, deal, pageNum }) {
-  return <StandalonePLBody company={target} deal={deal} pageNum={pageNum} role="Target" showDealCommentary exhibitLabel="Exhibit B" />;
+  return <StandalonePLBody company={target} deal={deal} pageNum={pageNum} role="Target" showDealCommentary exhibitLabel="Exhibit D" />;
 }
 
 function StandalonePLBody({ company, deal, pageNum, role, showDealCommentary, exhibitLabel }) {
