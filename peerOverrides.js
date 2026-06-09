@@ -31,10 +31,14 @@ const PEER_OVERRIDES = {
   AVGO: ['QCOM', 'TXN', 'NVDA', 'AMD', 'MRVL'],
   QCOM: ['AVGO', 'TXN', 'NVDA', 'AMD', 'MRVL'],
 
-  // SaaS / enterprise software (SIC 7372)
-  CRM:  ['NOW', 'WDAY', 'SAP', 'ORCL', 'ADBE'],
-  NOW:  ['CRM', 'WDAY', 'SAP', 'ORCL', 'ADBE'],
-  WDAY: ['CRM', 'NOW', 'SAP', 'ORCL', 'ADBE'],
+  // SaaS / enterprise software (SIC 7372). ~7 peers (target + 7 ≈ 8 screening columns). WDAY is
+  // intentionally NOT used as a peer: its EDGAR shares-outstanding is badly under-reported
+  // (~36M vs ~265M) → implausible market cap / EV-Revenue (see diag(comps)); SNOW takes the slot.
+  CRM:  ['NOW', 'ADBE', 'SAP', 'ORCL', 'INTU', 'SNOW', 'TEAM'],
+  NOW:  ['CRM', 'ADBE', 'SAP', 'ORCL', 'INTU', 'SNOW', 'TEAM'],
+  WDAY: ['CRM', 'NOW', 'ADBE', 'SAP', 'ORCL', 'INTU', 'SNOW'],
+  TEAM: ['CRM', 'NOW', 'ADBE', 'SAP', 'ORCL', 'INTU', 'SNOW'],
+  ADBE: ['CRM', 'NOW', 'TEAM', 'SAP', 'ORCL', 'INTU', 'SNOW'],
 
   // Retail / big box (SIC 5331 / 5411)
   WMT:  ['TGT', 'COST', 'AMZN', 'KR', 'DG'],

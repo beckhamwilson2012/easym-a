@@ -257,6 +257,13 @@ async function fetchFromEDGAR(symbol, cik) {
 
   const ebitda = operatingIncome === 0 ? 0 : operatingIncome + da;
 
+  // Free cash flow = OCF + CapEx (CapEx stored as a negative outflow). Always from us-gaap — IFRS 20-F
+  // filers that don't tag us-gaap cash-flow concepts resolve to null (not fabricated), matching the
+  // verified-data edgarClient exactly so the comps screening table stays consistent with §10.
+  const ocf   = pick(gaap, ['NetCashProvidedByUsedInOperatingActivities']);
+  const capex = pick(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment']);
+  const freeCashFlow = (ocf !== 0 && capex !== 0) ? inM(ocf + capex) : null;
+
   const companyType = ['RevenuesNetOfInterestExpense', 'InterestAndFeeIncomeLoansAndLeases']
     .includes(revenueConcept) ? 'financial' : 'standard';
 
@@ -297,6 +304,8 @@ async function fetchFromEDGAR(symbol, cik) {
     companyType,
     revenue:        revenueM,
     ebitda:         inM(ebitda),
+    operatingIncome: inM(operatingIncome), // screening table (matches verified edgarClient)
+    freeCashFlow,                          // null for IFRS filers with no us-gaap cash-flow tags
     netIncome:      inM(netIncome),
     shares:         sharesM,
     eps:            parseFloat(eps.toFixed(2)),
@@ -886,7 +895,7 @@ async function resolvePeers(targetTicker) {
     if (entry.sic !== targetSic || peerCik === cik) continue;
     const found = tickerCache?.find((e) => e.cik === peerCik);
     if (found) peers.push(found.symbol);
-    if (peers.length >= 5) break;
+    if (peers.length >= 7) break; // widen screening set to ~8 columns (target + 7)
   }
   console.log(`[resolvePeers] ${upper} → SIC fallback, sic=${targetSic}, peers:`, peers);
   console.log('[peerResolver] returning:', JSON.stringify(peers));
