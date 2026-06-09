@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ResponsiveContainer,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ReferenceDot, ResponsiveContainer,
 } from 'recharts';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -8,6 +8,57 @@ import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { getMonthlyPrices } from '../../../services/priceHistory';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
+
+const EVENT_RED = '#D62B2B';
+
+// Curated, web-researched stock-moving events per ticker (from company filings & press coverage),
+// keyed to the indexed monthly series. Tickers without a curated list fall back to data-driven
+// markers (the largest month-over-month moves), so the chart is always annotated and never fabricates
+// a named catalyst it can't source.
+const CURATED_EVENTS = {
+  TEAM: [
+    { month: '2025-10', label: 'Q1 FY26 earnings (Oct 30): revenue $1.43B, +21% YoY; AI MAU 3.5M (+50% QoQ)' },
+    { month: '2025-12', label: 'High-multiple SaaS names begin de-rating on AI-displacement concerns' },
+    { month: '2026-01', label: 'Broad software repricing; TEAM falls ~27% on the month' },
+    { month: '2026-02', label: 'Q2 FY26 earnings (Feb 5): EPS $1.22 vs $0.73 beat, but stock −36% in February' },
+    { month: '2026-04', label: '52-week low; capitulation in growth software' },
+    { month: '2026-05', label: 'Q3 FY26 earnings (Apr 30): EPS $1.75 vs $1.32 beat; shares +29%' },
+  ],
+};
+
+// "2026-02" → "Feb 2026"
+function labelMonth(mo) {
+  const d = new Date(mo + '-15');
+  return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+}
+
+// Up to 6 numbered events for the target line. Prefer the curated, sourced list; otherwise derive the
+// 6 largest month-over-month moves from the real series (honest, generalizes to any ticker).
+function deriveEvents(ticker, series) {
+  if (!series || series.length < 2) return [];
+  const valAt = (mo) => { const f = series.find(s => s.month === mo); return f ? f.value : null; };
+  const curated = CURATED_EVENTS[(ticker || '').toUpperCase()];
+  if (curated) {
+    return curated
+      .map(e => ({ ...e, value: valAt(e.month) }))
+      .filter(e => e.value != null)
+      .slice(0, 6)
+      .map((e, i) => ({ ...e, n: i + 1, sourced: true }));
+  }
+  const moves = [];
+  for (let i = 1; i < series.length; i++) {
+    const prev = series[i - 1].value, cur = series[i].value;
+    if (prev > 0) moves.push({ month: series[i].month, value: cur, pct: (cur / prev - 1) * 100 });
+  }
+  return moves
+    .sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
+    .slice(0, 6)
+    .sort((a, b) => a.month.localeCompare(b.month))
+    .map((m, i) => ({
+      month: m.month, value: m.value, n: i + 1, sourced: false,
+      label: `${m.pct >= 0 ? '▲ Rallied' : '▼ Declined'} ${Math.abs(m.pct).toFixed(0)}% month-over-month`,
+    }));
+}
 
 // Price history uses market sources (Finnhub/Yahoo via priceHistory service)
 const USED_FIELDS = ['price'];
@@ -111,6 +162,12 @@ export function SectionPricePerformance({ target, acquirer, pageNum }) {
     return () => { cancelled = true; };
   }, [target.ticker, acquirer]);
 
+  // Numbered events annotated on the target line (curated where sourced, else largest moves).
+  const events = deriveEvents(
+    target.ticker,
+    data.filter(d => d.target != null).map(d => ({ month: d.month, value: d.target }))
+  );
+
   const CustomTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
     return (
@@ -193,8 +250,52 @@ export function SectionPricePerformance({ target, acquirer, pageNum }) {
                 dot={false}
                 connectNulls
               />
+              {/* Numbered red event markers on the target line */}
+              {events.map(ev => (
+                <ReferenceDot
+                  key={ev.n}
+                  x={ev.month}
+                  y={ev.value}
+                  r={9}
+                  fill={EVENT_RED}
+                  stroke="#fff"
+                  strokeWidth={1.5}
+                  isFront
+                  label={{ value: String(ev.n), position: 'center', fill: '#fff', fontSize: 9, fontWeight: 700 }}
+                />
+              ))}
             </LineChart>
           </ResponsiveContainer>
+        )}
+
+        {/* Dated event log — keyed to the numbered markers above */}
+        {!loading && events.length > 0 && (
+          <div style={{ marginTop: 10 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+              Key Events
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 18, rowGap: 4 }}>
+              {events.map(ev => (
+                <div key={ev.n} style={{ display: 'flex', gap: 7, alignItems: 'flex-start' }}>
+                  <span style={{
+                    flexShrink: 0, width: 15, height: 15, borderRadius: '50%', background: EVENT_RED,
+                    color: '#fff', fontSize: 9, fontWeight: 700, display: 'inline-flex',
+                    alignItems: 'center', justifyContent: 'center', marginTop: 1,
+                  }}>
+                    {ev.n}
+                  </span>
+                  <span style={{ fontSize: 10, color: '#374151', lineHeight: 1.4 }}>
+                    <b style={{ color: NAVY }}>{labelMonth(ev.month)}</b> — {ev.label}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div style={{ fontSize: 8.5, color: '#9CA3AF', fontStyle: 'italic', marginTop: 6 }}>
+              {events[0]?.sourced
+                ? 'Events from company filings (Form 8-K earnings releases) and press coverage; positioned on the indexed monthly series.'
+                : 'Events are the largest month-over-month moves in the indexed price series (illustrative — not individually attributed to a named catalyst).'}
+            </div>
+          </div>
         )}
 
         <div style={{
