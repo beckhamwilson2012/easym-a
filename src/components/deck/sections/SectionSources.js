@@ -3,6 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
+import { HEADLINE_SOURCES } from '../../../lib/composeSourceLine';
 
 // ── Sources & Methodology — the closing page (§14) ─────────────────────────────
 // Methodology bullets are static, but the named data providers (pricing, analyst targets) are
@@ -60,9 +61,12 @@ export function SectionSources({ target, acquirer, deal, pageNum }) {
   // ── Runtime source provenance (Fix 4): name only the feeds actually consulted ──────────────
   const { data: tv } = useVerifiedData(target?.ticker ?? null);
   const { data: av } = useVerifiedData(acquirer?.ticker ?? null);
+  // Only name the reliable headline feeds (CNBC/Nasdaq/EDGAR/StockAnalysis). Yahoo/Finnhub/FMP
+  // rate-limit or 403, so naming them surfaces a feed non-deterministically (it appeared in the
+  // MSFT/ADBE build but not CRM/TEAM). They still feed the verified/flagged status, just unnamed.
   const collectSources = (fieldKey) => {
     const s = new Set();
-    [tv, av].forEach(v => { const f = v?.fields?.[fieldKey]; if (f?.sourceMeta) Object.keys(f.sourceMeta).forEach(x => s.add(x)); });
+    [tv, av].forEach(v => { const f = v?.fields?.[fieldKey]; if (f?.sourceMeta) Object.keys(f.sourceMeta).forEach(x => { if (HEADLINE_SOURCES.has(x)) s.add(x); }); });
     return s;
   };
   const priceSrcSet   = collectSources('price');

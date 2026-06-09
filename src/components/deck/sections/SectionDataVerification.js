@@ -3,6 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, GRAY_BORDER, ALT_ROW } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
+import { HEADLINE_SOURCES } from '../../../lib/composeSourceLine';
 
 const GLYPH = {
   verified: { symbol: '✓', color: '#16A34A' },
@@ -90,11 +91,13 @@ export function SectionDataVerification({ target, pageNum }) {
     key, label, fd: fields[key] ?? null,
   }));
 
-  // Render a column only for sources that actually returned data for at least one field (Fix 4).
+  // Render a column only for HEADLINE sources that actually returned data (Fix 4). Restricting to the
+  // headline allowlist keeps the columns deterministic — a transient Yahoo/FMP response can't add a
+  // column in one build and vanish in the next; those feeds still drive verified/flagged status.
   const presentSources = (() => {
     const seen = new Set();
     rows.forEach(({ fd }) => { if (fd?.sourceMeta) Object.keys(fd.sourceMeta).forEach(s => seen.add(s)); });
-    return SOURCE_COL_ORDER.filter(s => seen.has(s));
+    return SOURCE_COL_ORDER.filter(s => seen.has(s) && HEADLINE_SOURCES.has(s));
   })();
 
   const counts = rows.reduce((acc, { fd }) => {

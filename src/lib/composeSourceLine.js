@@ -8,6 +8,14 @@ const SOURCE_LABELS = {
   finnhub:      'Finnhub market data',
 };
 
+// Sources we NAME in prose/citations. CNBC (price SOT), Nasdaq (price + analyst), SEC EDGAR
+// (fundamentals), and StockAnalysis (analyst cross-check) are the reliable keyless stack and are
+// always either the chosen source or a deterministic cross-check. Yahoo / Finnhub / FMP rate-limit or
+// 403, so they appear only opportunistically — naming them makes the same deck cite different sources
+// run-to-run. They still participate in reconcile (verified/flagged status) but are not surfaced by
+// name. Exported so SectionSources and the verification appendix apply the same allowlist.
+export const HEADLINE_SOURCES = new Set(['edgar', 'cnbc', 'nasdaq', 'stockanalysis']);
+
 // Fields the deck treats as always-assumption regardless of fetch status.
 // These are user-entered deal inputs, never fetched from an external source.
 export const ASSUMPTION_FIELDS = new Set([
@@ -53,12 +61,14 @@ export function composeSourceLine(usedFieldKeys, fields, asOfISO) {
     // Missing on the free stack (e.g. analyst targets, marketCap) → counts as assumption
     if (!f || f.status === 'missing') { hasAssumption = true; continue; }
 
-    // verified: cite every source that agreed
+    // verified: cite every HEADLINE source that agreed (non-headline feeds like Yahoo/Finnhub still
+    // count toward the verified status in reconcile, but are not named here — see HEADLINE_SOURCES).
     if (f.status === 'verified') {
-      Object.keys(f.sourceMeta || {}).forEach(s => citedSources.add(s));
+      Object.keys(f.sourceMeta || {}).forEach(s => { if (HEADLINE_SOURCES.has(s)) citedSources.add(s); });
+      if (f.chosenSource && HEADLINE_SOURCES.has(f.chosenSource)) citedSources.add(f.chosenSource);
     } else {
-      // single or flagged: cite the chosen source of truth
-      if (f.chosenSource) citedSources.add(f.chosenSource);
+      // single or flagged: cite the chosen source of truth (always a headline source on this stack)
+      if (f.chosenSource && HEADLINE_SOURCES.has(f.chosenSource)) citedSources.add(f.chosenSource);
     }
 
     // Track newest as-of among market-data fields for the "as of" date clause
