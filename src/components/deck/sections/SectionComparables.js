@@ -295,13 +295,27 @@ export function SectionComparables({ target, acquirer, comparables, pageNum }) {
   const currentNII   = (target?.netInterestIncome || 0) + (target?.nonInterestIncome || 0);
   const currentEffRatio = currentNIE && currentNII > 0 ? (currentNIE / currentNII * 100).toFixed(1) : null;
 
+  // Target EV on the SAME live-price basis as the peer rows (Fix 1): EV = live market cap + debt −
+  // cash. Previously hardcoded null, so a profitable target (e.g. ADBE) showed N/A while appearing as
+  // a peer with a real EV. EV is valid even when EBITDA ≤ 0 (only EV/EBITDA isn't).
+  const tRev     = target?.revenue || 0;
+  const tMargin  = (tRev > 0 && target?.ebitda > 0) ? (target.ebitda / tRev * 100).toFixed(1) : null;
+  const tMktCap  = target?.currentMarketCap != null && parseFloat(target.currentMarketCap) > 0
+    ? parseFloat(target.currentMarketCap) : null;
+  const tEv      = tMktCap != null ? tMktCap + (parseFloat(target?.debt) || 0) - (parseFloat(target?.cash) || 0) : null;
+  const tEvRev   = tEv != null && tRev > 0 ? tEv / tRev : null;
+  const tEvSane  = !(tEvRev != null && tMargin != null && parseFloat(tMargin) > 10 && tEvRev < 1);
+
   const targetRow = {
     type: 'target',
     company: target?.name || 'Current Target',
     ticker:  targetTicker || '—',
-    revenue: target?.revenue || 0,
-    margin:  (target?.revenue > 0 && target?.ebitda > 0) ? (target.ebitda / target.revenue * 100).toFixed(1) : null,
-    ev: null, evRev: null, score: null, isAccretive: null,
+    revenue: tRev,
+    margin:  tMargin,
+    ev:    tEvSane ? tEv : null,
+    evRev: tEvSane ? tEvRev : null,
+    evFlagged: !tEvSane && tEv != null,
+    score: null, isAccretive: null,
     effRatio:   currentEffRatio,
     totalAssets: target?.totalAssets || null,
     ptbv:  null,
