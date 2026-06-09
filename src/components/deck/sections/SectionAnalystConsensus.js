@@ -10,6 +10,7 @@ import {
   fmtPctSigned,
 } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
+import { formatDeckDate } from '../../../lib/composeSourceLine';
 
 // Read a verified field's numeric value; tolerate {value,status} object or missing.
 function readField(f) {
@@ -56,7 +57,8 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum }) {
   const meanStatus = meanField.status; // 'verified' | 'flagged' | 'single' | 'missing'
   const SRC_LABEL  = { nasdaq: 'Nasdaq', stockanalysis: 'StockAnalysis.com', yahoo: 'Yahoo Finance', cnbc: 'CNBC', finnhub: 'Finnhub' };
   const citedSrcs  = meanField.sourceMeta ? Object.keys(meanField.sourceMeta).map(s => SRC_LABEL[s] || s) : [];
-  const meanAsOf   = meanField.sourceMeta?.[meanField.chosenSource]?.asOf || null;
+  // Use the single deck-wide build date (bundle asOf, tz-safe) so §12 matches every other slide (Fix B).
+  const meanAsOf   = formatDeckDate(data?.asOf);
 
   const sharePrice = parseFloat(target?.sharePrice);
   const currentPrice = isNaN(sharePrice) ? null : sharePrice;

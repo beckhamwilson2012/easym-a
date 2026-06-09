@@ -33,11 +33,17 @@ function joinList(arr) {
   return arr.slice(0, -1).join(', ') + ' and ' + arr[arr.length - 1];
 }
 
-function formatDate(isoDate) {
-  // "2026-06-03" → "June 3, 2026"
-  const d = new Date(isoDate + 'T12:00:00Z'); // noon UTC to avoid tz-flip
+// Single tz-safe date formatter for the WHOLE deck. Accepts a full ISO timestamp or a date string;
+// anchors to noon UTC on the DATE portion so the rendered day never flips with the viewer's timezone.
+// Exported so §15 (verification appendix) and §12 (analyst) format the build date identically — one
+// formatter, no day-level skew between slides (Fix B). "2026-06-03..." → "June 3, 2026".
+export function formatDeckDate(iso) {
+  if (!iso) return null;
+  const d = new Date(String(iso).substring(0, 10) + 'T12:00:00Z'); // date portion, noon UTC → no tz-flip
+  if (isNaN(d.getTime())) return null;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 }
+const formatDate = formatDeckDate;
 
 /**
  * Compose a slide source line from the list of fields that slide uses.
@@ -84,7 +90,10 @@ export function composeSourceLine(usedFieldKeys, fields, asOfISO) {
   const parts = [];
   if (labels.length) parts.push('Source: ' + joinList(labels) + '.');
   if (hasAssumption)  parts.push('Deal terms and projections per transaction assumptions.');
-  const asOf = newestAsOf || (asOfISO ? asOfISO.substring(0, 10) : null);
+  // Use the build/bundle timestamp (asOfISO) as the canonical "as of" date so every slide — and §15 /
+  // §12, which also key off the bundle asOf — render the SAME date. Fall back to the newest field asOf
+  // only when no bundle timestamp was passed (Fix B).
+  const asOf = (asOfISO ? asOfISO.substring(0, 10) : null) || newestAsOf;
   if (asOf && MARKET_SOURCES.some(s => citedSources.has(s))) {
     parts.push('Market data as of ' + formatDate(asOf) + '.');
   }

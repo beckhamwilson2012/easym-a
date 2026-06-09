@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, GRAY_BORDER, ALT_ROW } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
-import { HEADLINE_SOURCES } from '../../../lib/composeSourceLine';
+import { HEADLINE_SOURCES, formatDeckDate } from '../../../lib/composeSourceLine';
 
 const GLYPH = {
   verified: { symbol: '✓', color: '#16A34A' },
@@ -30,9 +30,11 @@ const SOURCE_DESC = {
   finnhub:      'Finnhub — market data.',
 };
 
+// NOTE: marketCap is intentionally NOT listed here. It is a DERIVED value (live price × shares,
+// shown on §9 Trading Profile), not a vendor-fetched field, so a vendor-source reconciliation table
+// can never verify it — it would always render "missing/—" and contradict §9 (Fix A).
 const FIELD_LABELS = {
   price:             'Current Price',
-  marketCap:         'Market Cap',
   week52High:        '52-Week High',
   week52Low:         '52-Week Low',
   sharesOutstanding: 'Shares Outstanding',
@@ -85,7 +87,7 @@ export function SectionDataVerification({ target, pageNum }) {
 
   const ticker = target?.ticker ?? '—';
   const fields = data?.fields ?? {};
-  const asOf   = data?.asOf ? new Date(data.asOf).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+  const asOf   = formatDeckDate(data?.asOf) || '—'; // one tz-safe formatter for the whole deck (Fix B)
 
   const rows = Object.entries(FIELD_LABELS).map(([key, label]) => ({
     key, label, fd: fields[key] ?? null,
