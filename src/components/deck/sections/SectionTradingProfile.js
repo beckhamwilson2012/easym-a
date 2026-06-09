@@ -12,11 +12,20 @@ import {
   fmtPct,
 } from '../shared/deckTokens';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
+import { useVerifiedData } from '../../../hooks/useVerifiedData';
 
 // Reference §9 — Pro Forma Trading Profile & Ownership
 export function SectionTradingProfile({ target, acquirer, deal, pageNum }) {
   const aName = acquirer.name || 'Acquirer';
   const bName = target.name || 'Target';
+
+  // Real trailing 52-week range from the verified-data layer (CNBC). Replaces the old hardcoded "—".
+  const { data: av } = useVerifiedData(acquirer?.ticker ?? null);
+  const { data: tv } = useVerifiedData(target?.ticker ?? null);
+  const week52 = (v, key) => { const f = v?.fields?.[key]; return f?.value != null ? fmtPerShare(parseFloat(f.value)) : '—'; };
+  const aHi = week52(av, 'week52High'), aLo = week52(av, 'week52Low');
+  const bHi = week52(tv, 'week52High'), bLo = week52(tv, 'week52Low');
+  const have52 = [aHi, aLo, bHi, bLo].some(x => x !== '—');
 
   // ── Share counts (millions) ──────────────────────────────────────────────
   const aShares  = parseFloat(acquirer.shares)        || 0;
@@ -78,21 +87,21 @@ export function SectionTradingProfile({ target, acquirer, deal, pageNum }) {
     },
     {
       label: '52-Week High',
-      a: '—',
-      b: '—',
+      a: aHi,
+      b: bHi,
       pf: '—',
     },
     {
       label: '52-Week Low',
-      a: '—',
-      b: '—',
+      a: aLo,
+      b: bLo,
       pf: '—',
     },
   ];
 
-  const sourceLine =
-    'Prices via market data feed; shares from SEC EDGAR. 52-week range unavailable on free data stack. ' +
-    'Ownership per transaction assumptions.';
+  const sourceLine = have52
+    ? 'Prices and 52-week range via CNBC; shares from SEC EDGAR. Ownership per transaction assumptions.'
+    : 'Prices via market data feed; shares from SEC EDGAR. 52-week range unavailable on free data stack. Ownership per transaction assumptions.';
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit H">
@@ -312,7 +321,9 @@ export function SectionTradingProfile({ target, acquirer, deal, pageNum }) {
               lineHeight: 1.5,
             }}
           >
-            52-week high/low range is unavailable on the free data stack and is shown as "—".
+            {have52
+              ? '52-week high/low is the trailing-12-month intraday range from CNBC. Pro forma column is not applicable.'
+              : '52-week high/low range is unavailable on the free data stack and is shown as "—".'}
           </div>
         </div>
       </div>

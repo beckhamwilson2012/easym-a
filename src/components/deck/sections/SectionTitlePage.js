@@ -65,7 +65,7 @@ export function SectionTitlePage({ target, acquirer }) {
 
         <div style={{ marginTop: 'auto', paddingTop: 48 }}>
           <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 10, marginBottom: 10, maxWidth: 520, lineHeight: 1.5 }}>
-            Prepared with EasyM&amp;A. Fundamentals sourced from SEC EDGAR filings; market prices from Yahoo Finance / Finnhub.
+            Prepared with EasyM&amp;A. Fundamentals sourced from SEC EDGAR filings; live market prices and 52-week ranges from CNBC and Nasdaq; analyst targets from Nasdaq and StockAnalysis.com.
             Deal terms, synergies and projections are illustrative transaction assumptions. Not investment advice.
           </div>
           <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, marginBottom: 6 }}>
