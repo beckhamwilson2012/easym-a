@@ -185,6 +185,23 @@ function inM(val) {
   return Math.round((val || 0) / 1e6);
 }
 
+// Last `n` distinct annual values for a concept, oldest→newest (for multi-year trajectory charts).
+// Dedupes by fiscal-year-end (keeps the largest val per end — handles restatements/amendments).
+function annualSeries(concept, unit, n = 4) {
+  const entries = concept?.units?.[unit];
+  if (!entries?.length) return [];
+  const annuals = entries.filter((e) => e.form === '10-K' || e.form === '20-F');
+  const byEnd = {};
+  for (const e of annuals) { if (!byEnd[e.end] || e.val > byEnd[e.end].val) byEnd[e.end] = e; }
+  return Object.values(byEnd)
+    .sort((a, b) => a.end.localeCompare(b.end))
+    .slice(-n)
+    // EDGAR's `fy` tag is unreliable (off-by-one for Jan-FYE filers, duplicated across amendments), so
+    // derive the fiscal-year label from the period-END calendar year — the convention used elsewhere
+    // in the deck (CRM FYE Jan-2026 → FY2026; TEAM FYE Jun-2025 → FY2025).
+    .map((e) => ({ end: e.end, fy: parseInt(e.end.slice(0, 4), 10), revenue: inM(e.val) }));
+}
+
 // ── Data sources ──────────────────────────────────────────────────────────────
 
 async function fetchFromEDGAR(symbol, cik) {
@@ -306,6 +323,8 @@ async function fetchFromEDGAR(symbol, cik) {
     ebitda:         inM(ebitda),
     operatingIncome: inM(operatingIncome), // screening table (matches verified edgarClient)
     freeCashFlow,                          // null for IFRS filers with no us-gaap cash-flow tags
+    // Last 4 annual revenues (oldest→newest) for the §6 multi-year revenue-trajectory line chart.
+    revenueHistory: annualSeries((useIfrs ? ifrs : gaap)[revenueConcept], 'USD', 4),
     netIncome:      inM(netIncome),
     shares:         sharesM,
     eps:            parseFloat(eps.toFixed(2)),
