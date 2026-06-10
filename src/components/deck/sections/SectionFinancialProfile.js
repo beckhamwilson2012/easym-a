@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import {
@@ -6,12 +6,59 @@ import {
   fmtMoneyTable, fmtPerShare, fmtMult,
 } from '../shared/deckTokens';
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell,
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, CartesianGrid,
 } from 'recharts';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
 
 const USED_FIELDS = ['revenue', 'netIncome', 'sharesOutstanding', 'cash', 'totalDebt', 'price'];
+
+// Forward-project revenue from the trailing annual growth (clamped + faded). Estimates are clearly
+// marked dashed/"E" on the chart — model assumptions, not fetched (per the reference's "& estimates").
+function projectRevenue(history, forwardYears = 3) {
+  if (!history || history.length < 1) return [];
+  const last = history[history.length - 1];
+  const prev = history[history.length - 2];
+  let gr = prev && prev.revenue > 0 ? last.revenue / prev.revenue - 1 : 0.10;
+  gr = Math.max(0, Math.min(0.35, gr));
+  const out = []; let v = last.revenue;
+  for (let k = 1; k <= forwardYears; k++) { v = v * (1 + gr * Math.pow(0.85, k - 1)); out.push({ fy: last.fy + k, revenue: Math.round(v), est: true }); }
+  return out;
+}
+
+// Build a shared calendar-year axis with actuals + estimates for both companies (recharts row-per-year).
+// The estimate line repeats each company's last ACTUAL year so the dashed segment connects to the solid.
+function buildTrajectory(acqHist, tgtHist) {
+  const acqEst = projectRevenue(acqHist), tgtEst = projectRevenue(tgtHist);
+  const acqActualYears = acqHist.map(e => e.fy);
+  const tgtActualYears = tgtHist.map(e => e.fy);
+  const allYears = [...new Set([...acqActualYears, ...acqEst.map(e => e.fy), ...tgtActualYears, ...tgtEst.map(e => e.fy)])].sort((a, b) => a - b);
+  if (!allYears.length) return { rows: [], hasData: false };
+  const acqLastActual = acqActualYears.length ? Math.max(...acqActualYears) : null;
+  const tgtLastActual = tgtActualYears.length ? Math.max(...tgtActualYears) : null;
+  const valAt = (hist, est, fy) => {
+    const a = hist.find(e => e.fy === fy); if (a) return a.revenue / 1000;
+    const e = est.find(x => x.fy === fy); return e ? e.revenue / 1000 : null;
+  };
+  // A column is an "E" (estimate) column only when NO company has an actual for that year — otherwise
+  // a year where the acquirer reported (actual) but the target hasn't yet would be wrongly tagged "E".
+  const lastAnyActual = Math.max(acqLastActual ?? -Infinity, tgtLastActual ?? -Infinity);
+  const rows = allYears.map(fy => {
+    const isAcqEst = acqLastActual != null && fy > acqLastActual;
+    const isTgtEst = tgtLastActual != null && fy > tgtLastActual;
+    const acqV = valAt(acqHist, acqEst, fy), tgtV = valAt(tgtHist, tgtEst, fy);
+    return {
+      label: `FY${String(fy).slice(2)}${fy > lastAnyActual ? 'E' : ''}`,
+      // Solid (actual) carries the value through the last actual year (inclusive); dashed (est) starts
+      // at the last actual year so the two segments join visually.
+      acqActual: isAcqEst ? null : acqV,
+      acqEst:    (fy >= acqLastActual) ? acqV : null,
+      tgtActual: isTgtEst ? null : tgtV,
+      tgtEst:    (fy >= tgtLastActual) ? tgtV : null,
+    };
+  });
+  return { rows, hasData: true };
+}
 
 // Build an honest "FY{year}" label from server-supplied metadata; falls back gracefully.
 function fyLabel(company) {
@@ -130,17 +177,33 @@ export function SectionFinancialProfile({ target, acquirer, deal, pageNum }) {
   const acqName = acquirer?.name || 'Acquirer';
   const tgtName = target?.name || 'Target';
 
+  // Multi-year revenue history (last-4 EDGAR actuals) for the trajectory chart.
+  const [acqHist, setAcqHist] = useState([]);
+  const [tgtHist, setTgtHist] = useState([]);
+  useEffect(() => {
+    let cancel = false;
+    const load = (ticker, set) => {
+      if (!ticker) { set([]); return; }
+      fetch(`http://localhost:3001/quote?symbol=${ticker}`)
+        .then(r => r.json())
+        .then(q => { if (!cancel) set(Array.isArray(q?.revenueHistory) ? q.revenueHistory : []); })
+        .catch(() => { if (!cancel) set([]); });
+    };
+    load(acquirer?.ticker, setAcqHist);
+    load(target?.ticker, setTgtHist);
+    return () => { cancel = true; };
+  }, [acquirer?.ticker, target?.ticker]);
+
+  // Fall back to the single fetched latest-year revenue when history is unavailable.
+  const acqHistory = acqHist.length ? acqHist : (a.revenue > 0 ? [{ fy: acquirer?.fiscalYear || new Date().getUTCFullYear(), revenue: a.revenue }] : []);
+  const tgtHistory = tgtHist.length ? tgtHist : (t.revenue > 0 ? [{ fy: target?.fiscalYear || new Date().getUTCFullYear(), revenue: t.revenue }] : []);
+  const { rows: trajRows, hasData: hasTraj } = buildTrajectory(acqHistory, tgtHistory);
+
   const subtitle = `Side-by-side financials ($M) — Acquirer ${fyLabel(acquirer)} · Target ${fyLabel(target)}`;
 
   const fmtEps = (v) => (v != null && !isNaN(v)) ? fmtPerShare(v) : 'N/A';
   const fmtShr = (v) => v > 0 ? `${Math.round(v).toLocaleString('en-US')}M` : 'N/A';
   const fmtCap = (v) => v != null ? fmtMoneyTable(v) : 'N/A';
-
-  const chartData = [
-    { name: acqName, revenue: a.revenue, fyLabel: fyLabel(acquirer), color: NAVY },
-    { name: tgtName, revenue: t.revenue, fyLabel: fyLabel(target),   color: SF_BLUE },
-  ];
-  const hasRevenue = a.revenue > 0 || t.revenue > 0;
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit E">
@@ -171,41 +234,34 @@ export function SectionFinancialProfile({ target, acquirer, deal, pageNum }) {
           <MetricRow label="EV / Revenue"       acq={fmtMult(a.evRev)}                tgt={fmtMult(t.evRev)} sub />
         </div>
 
-        {/* Revenue comparison bar chart */}
+        {/* Revenue trajectory & estimates — multi-year line chart */}
         <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 2, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-          Latest fiscal-year revenue
+          Revenue trajectory &amp; estimates ($B)
         </div>
         <div style={{ fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', marginBottom: 6 }}>
-          {acqName} {fyLabel(acquirer)} vs. {tgtName} {fyLabel(target)}
+          {acqName} vs. {tgtName} — solid = actual (SEC filings); dashed = model estimate (forecast years)
         </div>
         <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, padding: '12px 14px 6px' }}>
-          {hasRevenue ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={chartData} margin={{ top: 8, right: 16, left: 8, bottom: 4 }}>
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 11, fill: '#374151' }}
-                  axisLine={{ stroke: GRAY_BORDER }}
-                  tickLine={false}
+          {hasTraj ? (
+            <ResponsiveContainer width="100%" height={210}>
+              <LineChart data={trajRows} margin={{ top: 8, right: 18, left: 8, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#F3F4F6" vertical={false} />
+                <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#374151' }} axisLine={{ stroke: GRAY_BORDER }} tickLine={false} />
+                <YAxis tick={{ fontSize: 10, fill: '#6B7280' }} axisLine={{ stroke: GRAY_BORDER }} tickLine={false} tickFormatter={(v) => `$${v >= 100 ? Math.round(v) : v.toFixed(0)}B`} width={48} />
+                <Tooltip
+                  formatter={(v, n) => v == null ? null : [`$${v.toFixed(1)}B`, n]}
+                  contentStyle={{ fontSize: 11, borderRadius: 6, border: `1px solid ${GRAY_BORDER}` }}
                 />
-                <YAxis
-                  tick={{ fontSize: 10, fill: '#6B7280' }}
-                  axisLine={{ stroke: GRAY_BORDER }}
-                  tickLine={false}
-                  tickFormatter={(v) => fmtMoneyTable(v)}
-                  width={64}
-                />
-                <Tooltip content={<ChartTooltip />} cursor={{ fill: 'rgba(15,34,68,0.04)' }} />
-                <Bar dataKey="revenue" name="Revenue" radius={[4, 4, 0, 0]} maxBarSize={140}>
-                  {chartData.map((entry, i) => (
-                    <Cell key={i} fill={entry.color} />
-                  ))}
-                </Bar>
-              </BarChart>
+                <Legend wrapperStyle={{ fontSize: 10, paddingTop: 6 }} />
+                <Line type="monotone" dataKey="acqActual" name={`${acqName} (actual)`} stroke={NAVY}    strokeWidth={2.2} dot={{ r: 2.5 }} connectNulls isAnimationActive={false} />
+                <Line type="monotone" dataKey="acqEst"    name={`${acqName} (est.)`}    stroke={NAVY}    strokeWidth={2.2} strokeDasharray="5 4" dot={false} connectNulls isAnimationActive={false} legendType="none" />
+                <Line type="monotone" dataKey="tgtActual" name={`${tgtName} (actual)`} stroke={SF_BLUE} strokeWidth={2.2} dot={{ r: 2.5 }} connectNulls isAnimationActive={false} />
+                <Line type="monotone" dataKey="tgtEst"    name={`${tgtName} (est.)`}    stroke={SF_BLUE} strokeWidth={2.2} strokeDasharray="5 4" dot={false} connectNulls isAnimationActive={false} legendType="none" />
+              </LineChart>
             </ResponsiveContainer>
           ) : (
             <div style={{ padding: '24px 0', textAlign: 'center', fontSize: 11, color: '#9CA3AF' }}>
-              Revenue data unavailable.
+              Revenue history unavailable.
             </div>
           )}
         </div>
@@ -213,7 +269,7 @@ export function SectionFinancialProfile({ target, acquirer, deal, pageNum }) {
 
       {sourceLine && (
         <div style={{ padding: '0 20px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
-          {sourceLine} Gross profit estimated at 65% of revenue.
+          {sourceLine} Gross profit estimated at 65% of revenue. Revenue actuals from SEC filings; forecast years (dashed) are model estimates from trailing growth, not guidance.
         </div>
       )}
     </PageFrame>
