@@ -13,8 +13,8 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
   const acquirerObj = acquirer || {};
   const targetObj = target || {};
 
-  const acqProfile = getCompanyProfile(acquirerObj.ticker, acquirerObj.name);
-  const tgtProfile = getCompanyProfile(targetObj.ticker, targetObj.name);
+  const acqProfile = getCompanyProfile(acquirerObj.ticker, acquirerObj.name, acquirerObj);
+  const tgtProfile = getCompanyProfile(targetObj.ticker, targetObj.name, targetObj);
 
   const acqName = acquirerObj.name || acqProfile.name || 'Acquirer';
   const tgtName = targetObj.name || tgtProfile.name || 'Target';
