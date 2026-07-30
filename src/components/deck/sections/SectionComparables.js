@@ -284,7 +284,9 @@ export function SectionComparables({ target, acquirer, deal, pageNum }) {
   const epsImpactFor = (c) => {
     if (!c || c.loading || c.isAcquirer) return null;        // the acquirer doesn't acquire itself → "—"
     if (dealPremium == null || !(c.livePrice > 0) || c.netIncome == null || !(c.shares > 0)) return null;
-    const peerInputs = { ...baseInputs, companyBShares: c.shares, companyBNetIncome: c.netIncome, companyBEPS: c.eps, currentSharePriceB: c.livePrice };
+    // applySourcesOfFunds:false — the peer screen carries no per-peer balance sheet, so it keeps the simple
+    // 100%-debt convention (unchanged); the sources-of-funds construction applies to the main deal only.
+    const peerInputs = { ...baseInputs, companyBShares: c.shares, companyBNetIncome: c.netIncome, companyBEPS: c.eps, currentSharePriceB: c.livePrice, applySourcesOfFunds: false };
     const peerOffer = c.livePrice * (1 + dealPremium);
     const pct = epsAccretionPct(peerOffer, 0, peerInputs); // 0 synergies → pre-synergy structural impact
     return Number.isFinite(pct) ? pct : null;

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Select from 'react-select';
 import { DeckShell } from './components/deck/DeckShell';
-import { calculate } from './utils/dealCalc';
+import { calculate, MIN_CASH_PCT_DEFAULT } from './utils/dealCalc';
 import { useWindowWidth } from './hooks/useWindowWidth';
 import { getBankFacts } from './services/edgarBankFacts';
 import { fetchLivePrice } from './services/priceService';
@@ -9,7 +9,7 @@ import { SuggestionBadge } from './components/shared/SuggestionBadge';
 import { ExplainButton } from './components/shared/ExplainButton';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { CollapsibleNote } from './components/shared/CollapsibleNote';
-import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial } from './components/deck/shared/deckTokens';
+import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
 import {
   calcSuggestedOfferPrice,
   calcSuggestedTransactionFees,
@@ -428,14 +428,17 @@ const PencilIcon = () => (
 const defaultInputs = {
   companyARevenue: 0, companyAEBITDA: 0, companyANetIncome: 0, companyAOperatingIncome: 0, companyAGrossProfit: null,
   companyAShares: 0, companyADilutedShares: 0, companyAEPS: 0, companyACash: 0, companyASti: null, companyADebt: 0,
-  companyABsAsOf: null, companyABsBasis: null,
+  companyABsAsOf: null, companyABsBasis: null, companyALtmRevenue: null,
   currentSharePriceA: 0,
   companyBRevenue: 0, companyBEBITDA: 0, companyBNetIncome: 0, companyBOperatingIncome: 0, companyBGrossProfit: null,
   companyBShares: 0, companyBDilutedShares: 0, companyBEPS: 0, companyBCash: 0, companyBSti: null, companyBDebt: 0,
-  companyBBsAsOf: null, companyBBsBasis: null,
+  companyBBsAsOf: null, companyBBsBasis: null, companyBLtmRevenue: null,
   currentSharePriceB: 0,
   offerPricePerShare: 0, cashPercent: 60, transactionFees: 0,
   synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
+  // Stage 2E — min operating cash the pro-forma co retains, as a % of pro-forma LTM revenue (scaled default,
+  // user-overridable). Drives the sources-of-funds construction in dealCalc (excess cash funds part of the deal).
+  minCashPct: MIN_CASH_PCT_DEFAULT,
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -525,6 +528,7 @@ function App() {
         companyADilutedShares: data.dilutedShares, companyAEPS: data.eps,
         companyACash: data.cash, companyASti: data.shortTermInvestments ?? null, companyADebt: data.debt,
         companyABsAsOf: data.balanceSheetAsOf ?? null, companyABsBasis: data.balanceSheetBasis ?? null,
+        companyALtmRevenue: data.ltm?.trusted ? data.ltm.revenue : null,   // LTM (not FY) — min-cash basis
         // Don't clobber a live price that the parallel /api/price fetch may have already set.
         // EDGAR (the acquirer's primary source) returns no sharePrice, so falling back to `|| 0`
         // here would overwrite the live price and force the EPS×15 proxy (0 new shares bug).
@@ -566,6 +570,7 @@ function App() {
         companyBDilutedShares: data.dilutedShares, companyBEPS: data.eps,
         companyBCash: data.cash, companyBSti: data.shortTermInvestments ?? null, companyBDebt: data.debt,
         companyBBsAsOf: data.balanceSheetAsOf ?? null, companyBBsBasis: data.balanceSheetBasis ?? null,
+        companyBLtmRevenue: data.ltm?.trusted ? data.ltm.revenue : null,   // LTM (not FY) — min-cash basis
         // Preserve any live price already set by the parallel /api/price fetch (see handleSelectA).
         currentSharePriceB: data.sharePrice || prev.currentSharePriceB || 0 }));
       setFetchedB(true); setLoadingB(false);
@@ -595,10 +600,17 @@ function App() {
   // controls WHEN it runs (after the non-GAAP fetches settle). Reads the freshest non-GAAP via the ref.
   const runBuild = (effectiveInputs) => {
     const { calcInputs, basis } = resolveAccretionBasis(effectiveInputs, nonGaapRef.current.a, nonGaapRef.current.b);
-    const r = calculate(calcInputs);
+    // Guard 1 (Stage 2E): tag the resolved inputs with the deck's isBankDeal (SIC-based, catches JPM/BAC) so
+    // dealCalc's sources-of-funds construction — and every sensitivity cell that shares it — keeps bank deals
+    // on today's 100%-debt behavior. Bank classification is read here, never modified.
+    const bankDeal = isBankDeal({ companyType: companyTypeB, sic: sicB }, { companyType: companyTypeA, sic: sicA });
+    // applySourcesOfFunds opts THIS deal into the sources-of-funds construction; §2's peer-impact column resets
+    // it to false (no per-peer balance sheet), so only the main deal (§8/§9/§10/§11) nets combined cash.
+    const resolvedWithBank = { ...calcInputs, bankDeal, applySourcesOfFunds: true };
+    const r = calculate(resolvedWithBank);
     r.basis = basis;
     setResults(r);
-    setResolvedInputs(calcInputs);
+    setResolvedInputs(resolvedWithBank);
     setAccretionBasis(basis);
     setAnalysisRun(true);
   };
@@ -1107,6 +1119,13 @@ function App() {
                       <LargeNumericField label="Transaction Fees — Base Advisory ($M)"
                         name="transactionFees" value={inputs.transactionFees} onChange={handleChange}
                         placeholder="Base advisory fee only" />
+                      {/* Stage 2E — min cash the pro-forma co retains (% of PF LTM revenue). Combined cash above it
+                          funds part of the deal, cutting new debt vs the 100%-debt assumption. User-overridable. */}
+                      <InputField label="Min Cash of PF Co (% of pro-forma LTM revenue)"
+                        name="minCashPct"
+                        value={inputs.minCashPct != null ? +(inputs.minCashPct * 100).toFixed(2) : +(MIN_CASH_PCT_DEFAULT * 100).toFixed(2)}
+                        onChange={(e) => { const p = parseFloat(e.target.value); setInputs(prev => ({ ...prev, minCashPct: Number.isFinite(p) ? p / 100 : MIN_CASH_PCT_DEFAULT })); }}
+                        note="Combined cash above this retained minimum funds part of the deal (excess cash used); banks keep the 100%-debt convention." />
                       {(() => {
                         const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare : (suggestedPrice ?? 0);
                         const dealSizeM = price > 0 && inputs.companyBShares > 0 ? price * inputs.companyBShares : 0;

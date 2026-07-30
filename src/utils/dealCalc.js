@@ -1,3 +1,5 @@
+import { cashBucket } from '../lib/netDebt';
+
 // ── Sensitivity table constants ───────────────────────────────────────────────
 export const PRICE_MULTS  = [0.8, 0.9, 1.0, 1.1, 1.2];
 export const PRICE_LABELS = ['-20%', '-10%', 'Current', '+10%', '+20%'];
@@ -13,6 +15,10 @@ export const TAX_RATE           = 0.21;  // US federal statutory rate
 // − cashPortion × DEBT_INTEREST_RATE × (1 − TAX_RATE)) ÷ combined shares. This is ON by default
 // because a real cash deal does carry the cost; set to 0 for the simpler quick-accretion convention.
 export const DEBT_INTEREST_RATE = 0.05;  // ~marginal investment-grade acquisition-debt rate (2026)
+// Minimum operating cash the PRO-FORMA company retains, as a % of pro-forma LTM revenue — scales with the
+// business (never a flat constant, which produced a nonsense flip on a $176M deal). Combined cash above this
+// floor funds the deal (excess cash used), cutting new debt vs the old 100%-debt assumption. User-overridable.
+export const MIN_CASH_PCT_DEFAULT = 0.02;
 
 // Acquirer market price for share issuance: prefer the REAL live price; only fall back to a
 // P/E proxy (EPS×15) when no live price is available, and never produce a price from a loss.
@@ -61,6 +67,47 @@ export function targetMarketPrice(inputs) {
   return parseFloat(inputs.currentSharePriceB) || 0;
 }
 
+// ── Sources of funds: acquisition new debt ────────────────────────────────────
+// Faculty's construction: combined cash is a real funding source (subject to a retained minimum) and target
+// debt is assumed repaid on change of control, so
+//   new debt = max(0, cash consideration + target debt repaid − excess cash),   excess cash = max(0, combined cash − min cash).
+// THREE GUARDS (all required — see the Stage-2E diagnostic):
+//  (1) BANK deals keep today's 100%-debt behavior. Bank cash sits off the standard concept (resolves null) and
+//      bank debt/deposits are NOT repaid on change of control — netting them is category-wrong, not imprecise.
+//      Gate on the deck's isBankDeal, passed in as inputs.bankDeal (single source; not recomputed here).
+//  (2) ZERO FLOOR — combined cash can exceed the funding need; surplus can't create negative debt, it renders
+//      as EXCESS CASH USED in Sources & Uses.
+//  (3) MIN CASH SCALES with pro-forma LTM revenue (never a flat dollar), user-overridable via inputs.minCashPct.
+// offerOverride lets the sensitivity grid (calcProFormaEPS) vary the offer while sharing this one construction.
+export function acquisitionNewDebt(inputs, offerOverride) {
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const offer  = offerOverride != null ? offerOverride : (num(inputs.offerPricePerShare) || 0);
+  const shares = num(inputs.companyBShares) || 0;
+  const cashPct = num(inputs.cashPercent) || 0;
+  const cashConsideration = offer * shares * (cashPct / 100);
+  // Opt-in + Guard 1. Only the MAIN deal threads combined cash / target debt / pro-forma LTM revenue and sets
+  // applySourcesOfFunds; peer-screen impacts (§2, which carry no per-peer balance sheet) and BANK deals keep
+  // today's simple 100%-debt convention — newDebt = full cash consideration (no cash netting, no debt repaid).
+  if (!inputs.applySourcesOfFunds || inputs.bankDeal) {
+    return { newDebt: cashConsideration, cashConsideration, targetDebtRepaid: null, combinedCash: null,
+             minCash: null, excessCashAvail: null, excessCashUsed: null, pfLtmRevenue: null, minCashPct: null, bank: !!inputs.bankDeal };
+  }
+  // Combined cash available to fund the deal — convention (b) bucket (cash + short-term marketable), shared helper.
+  const aBucket = cashBucket(num(inputs.companyACash), num(inputs.companyASti)).value;
+  const bBucket = cashBucket(num(inputs.companyBCash), num(inputs.companyBSti)).value;
+  const combinedCash = (aBucket != null && bBucket != null) ? aBucket + bBucket : null;
+  // Guard 3 — min cash scales with pro-forma LTM revenue (LTM, not FY — same figure §2/§3/§11 use).
+  const pfLtmRevenue = (num(inputs.companyALtmRevenue) || 0) + (num(inputs.companyBLtmRevenue) || 0);
+  const pct = Number.isFinite(num(inputs.minCashPct)) ? num(inputs.minCashPct) : MIN_CASH_PCT_DEFAULT;
+  const minCash = pfLtmRevenue * pct;
+  const excessCashAvail  = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0; // above the retained min
+  const targetDebtRepaid = num(inputs.companyBDebt) || 0;                              // faculty assumption: 100% repaid
+  const newDebt = Math.max(0, cashConsideration + targetDebtRepaid - excessCashAvail);  // Guard 2 — zero floor
+  const excessCashUsed = cashConsideration + targetDebtRepaid - newDebt;                // = min(avail, need); surplus stays on B/S
+  return { newDebt, cashConsideration, targetDebtRepaid, combinedCash, minCash,
+           excessCashAvail, excessCashUsed, pfLtmRevenue, minCashPct: pct, bank: false };
+}
+
 // ── Core calculation ──────────────────────────────────────────────────────────
 
 export function calculate(inputs) {
@@ -96,7 +143,10 @@ export function calculate(inputs) {
   // after-tax interest cost of debt-funding the cash portion. One-time transaction fees do NOT
   // belong in recurring earnings, so they are excluded from EPS (shown separately as a deal cost).
   const afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE);
-  const newInterestAfterTax = cashPortion * DEBT_INTEREST_RATE * (1 - TAX_RATE);
+  // Sources of funds (Stage 2E): the drag is charged on the NEW debt after combined excess cash funds part of
+  // the deal — ONE construction, shared with the sensitivity grid (calcProFormaEPS) and read by §8/§9/§10/§11.
+  const sources             = acquisitionNewDebt(inputs);
+  const newInterestAfterTax = sources.newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE);
   const proFormaNetIncome   = companyANetIncome + companyBNetIncome
                               + afterTaxSynergies - newInterestAfterTax;
   const proFormaEPS         = totalShares > 0 ? proFormaNetIncome / totalShares : 0;
@@ -134,6 +184,17 @@ export function calculate(inputs) {
     proFormaNetIncome: proFormaNetIncome.toFixed(0),
     afterTaxSynergies: afterTaxSynergies.toFixed(0),
     newInterestAfterTax: newInterestAfterTax.toFixed(0),
+    // ── Sources of funds (Stage 2E) — the drag above is charged on newDebt; §10 renders the build ──
+    newDebt:           sources.newDebt.toFixed(0),
+    cashConsideration: sources.cashConsideration.toFixed(0),
+    excessCashUsed:    sources.excessCashUsed  == null ? null : sources.excessCashUsed.toFixed(0),
+    excessCashAvail:   sources.excessCashAvail == null ? null : sources.excessCashAvail.toFixed(0),
+    minCashRetained:   sources.minCash       == null ? null : sources.minCash.toFixed(0),
+    combinedCash:      sources.combinedCash  == null ? null : sources.combinedCash.toFixed(0),
+    targetDebtRepaid:  sources.targetDebtRepaid == null ? null : sources.targetDebtRepaid.toFixed(0),
+    pfLtmRevenue:      sources.pfLtmRevenue  == null ? null : sources.pfLtmRevenue.toFixed(0),
+    minCashPct:        sources.minCashPct,
+    bankFinancing:     sources.bank,
     acquirerSharePrice: acqPrice.toFixed(2),
     evEBITDA:          evEBITDA   === null ? 'N/A' : evEBITDA.toFixed(1),
     peRatio:           peRatio    === null ? 'N/A' : peRatio.toFixed(1),
@@ -169,13 +230,13 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   if (acqPrice === 0 || companyBShares === 0) return null;
   const stockPercent = 100 - cashPercent;
   const totalPP      = offerPrice * companyBShares;
-  const cashPortion  = totalPP * (cashPercent / 100);
   const stockPortion = totalPP * (stockPercent / 100);
   const newShares    = stockPortion / acqPrice;
   const totalShares  = acquirerDilutedShares(inputs).shares + newShares; // effective diluted base (matches calculate())
   if (totalShares === 0) return null;
   const afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE);
-  const newInterestAfterTax = cashPortion * DEBT_INTEREST_RATE * (1 - TAX_RATE);
+  // SAME sources-of-funds construction as calculate(), at this grid cell's offer — so the drag never diverges.
+  const newInterestAfterTax = acquisitionNewDebt(inputs, offerPrice).newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE);
   const netIncome = companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax;
   return netIncome / totalShares;
 }
