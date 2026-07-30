@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, DONUT_COLORS, fmtMoney } from '../shared/deckTokens';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, DONUT_COLORS, fmtMoney, fmtAsOf } from '../shared/deckTokens';
 import { getCompanyProfile } from '../../../lib/companyProfiles';
 import { getCustomerMetrics } from '../../../lib/customerMetrics';
 
@@ -141,6 +141,9 @@ export function SectionTargetOverview({ target, pageNum }) {
   ];
 
   const fyStr = target?.fiscalYear ? `FY${target.fiscalYear}` : 'most recent annual';
+  // Denominator disclosure for the return ratios: TTM earnings (numerator) over the balance sheet as of this
+  // instant. Driven by the deck's resolved balanceSheetAsOf (same field §6/§7 label), interim/(FY-end) suffix.
+  const bsAsOf = fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis);
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit C">
@@ -204,7 +207,7 @@ export function SectionTargetOverview({ target, pageNum }) {
       </div>
 
       <div style={{ padding: '8px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
-        Segment &amp; geographic revenue are the target's <strong>latest reported fiscal year</strong> (Financial Modeling Prep); foreign filers reporting in another currency are converted to USD at the fiscal-year average rate. Geographic tiers are shown as reported and may include overlapping regions/countries — figures are magnitudes, not a normalized 100% split. Operating metrics are <strong>trailing-twelve-month</strong> ratios (return / yield); margins &amp; revenue CAGR are from reported annual filings. Where a filer does not report a segmentation, the block reads "not reported" — never an estimate.
+        Segment &amp; geographic revenue are the target's <strong>latest reported fiscal year</strong> (Financial Modeling Prep); foreign filers reporting in another currency are converted to USD at the fiscal-year average rate. Geographic tiers are shown as reported and may include overlapping regions/countries — figures are magnitudes, not a normalized 100% split. Operating metrics are <strong>trailing-twelve-month</strong> ratios (return / yield){bsAsOf ? <> — return metrics use trailing-twelve-month earnings over balance-sheet figures <strong>as of {bsAsOf}</strong></> : null}; margins &amp; revenue CAGR are from reported annual filings. Where a filer does not report a segmentation, the block reads "not reported" — never an estimate.
       </div>
     </PageFrame>
   );
