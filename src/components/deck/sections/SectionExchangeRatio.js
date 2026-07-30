@@ -77,6 +77,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
   // ── Data for the sensitivity matrix (§8 was pure-props; now fetches like §3/§6/§7) ──────────────────
   const { data: verifiedData } = useVerifiedData(target?.ticker ?? null); // 52-wk high/low
   const [tgtPnl, setTgtPnl] = useState(null);                             // consensus forwards (rev/EBITDA/EPS)
+  const [ltmRev, setLtmRev] = useState(null);                             // LTM revenue — the SAME /quote data.ltm.revenue §2/§3 divide by (trusted-gated)
   useEffect(() => {
     let cancel = false;
     const t = target?.ticker;
@@ -85,6 +86,19 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
       .then(r => r.json())
       .then(j => { if (!cancel) setTgtPnl(j && j.ok && Array.isArray(j.columns) ? j : null); })
       .catch(() => { if (!cancel) setTgtPnl(null); });
+    return () => { cancel = true; };
+  }, [target?.ticker]);
+  // LTM revenue for the LTM EV/Rev column — read from /quote's data.ltm (the identical source §2/§3 use), so
+  // the 0%-premium LTM multiple reconciles to Exhibits A/B by construction. Trusted-gated → null (column "—")
+  // when no reliable LTM exists, matching how §2/§3 degrade. NOT recomputed here.
+  useEffect(() => {
+    let cancel = false;
+    const t = target?.ticker;
+    if (!t) { setLtmRev(null); return; }
+    fetch(`http://localhost:3001/quote?symbol=${encodeURIComponent(t)}`)
+      .then(r => r.json())
+      .then(j => { if (!cancel) setLtmRev(j?.ltm?.trusted && j.ltm.revenue != null ? j.ltm.revenue : null); })
+      .catch(() => { if (!cancel) setLtmRev(null); });
     return () => { cancel = true; };
   }, [target?.ticker]);
 
@@ -150,6 +164,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
     const ev = (eq != null && netDebt != null) ? eq + netDebt : null;        // $M
     return {
       prem, o, eq, ev,
+      evRevLtm: (ev != null && ltmRev != null && ltmRev > 0) ? ev / ltmRev : null,  // same EV, ÷ LTM revenue → ties to §2/§3 at 0%
       evRevA: (ev != null && y1?.revenue) ? ev / y1.revenue : null,
       evRevB: (ev != null && y2?.revenue) ? ev / y2.revenue : null,
       evEbitB: (ev != null && y2?.ebitda > 0) ? ev / y2.ebitda : null,
@@ -163,10 +178,10 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
     : 3;
   const struckIs30 = struckPrem != null && Math.abs(struckPrem - 30) < 0.5;
 
-  const headers = ['Premium', 'Offer', 'Equity', 'EV', `${yA} EV/Rev`, `${yB} EV/Rev`, `${yB} EV/EBITDA`, `${yA} P/E`, `${yB} P/E`];
+  const headers = ['Premium', 'Offer', 'Equity', 'EV', 'LTM EV/Rev', `${yA} EV/Rev`, `${yB} EV/Rev`, `${yB} EV/EBITDA`, `${yA} P/E`, `${yB} P/E`];
   const cellsOf = (r) => [
     `${Math.round(r.prem * 100)}%`, dash(r.o, fmtPerShare), bil(r.eq), bil(r.ev),
-    mult(r.evRevA), mult(r.evRevB), mult(r.evEbitB), mult(r.peA), mult(r.peB),
+    mult(r.evRevLtm), mult(r.evRevA), mult(r.evRevB), mult(r.evEbitB), mult(r.peA), mult(r.peB),
   ];
 
   // Reference-price caption (the "$52 low" decode) — 52-wk range + high/low deltas vs the current price.
@@ -228,7 +243,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
           Highlighted row = the deck's struck deal{struckPrem != null ? ` (${struckPrem.toFixed(1)}% premium → ${dash(offer, fmtPerShare)}/share)` : ''}.{' '}
           Premium struck vs current {dash(price, fmtPerShare)} · 52-wk range {dash(w52Low, fmtPerShare)}–{dash(w52High, fmtPerShare)}
           {(w52High != null || w52Low != null) ? ` (high ${pctVs(w52High)} / low ${pctVs(w52Low)} vs current)` : ''}.
-          {' '}Equity = offer × shares; EV = equity + net debt; forward multiples use consensus estimates{y2 ? '' : ' (unavailable for this target — shown as "—")'}. {NET_DEBT_BASIS}{fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis) ? ` Net debt in EV is as of ${bName} ${fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis)}.` : ''}
+          {' '}Equity = offer × shares; EV = equity + net debt. LTM EV/Rev = EV ÷ latest-twelve-month revenue (the same LTM figure as Exhibits A/B, so the 0% row reconciles to those pages); forward EV/Rev, EV/EBITDA and P/E use consensus estimates{y2 ? '' : ' (unavailable for this target — shown as "—")'}. {NET_DEBT_BASIS}{fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis) ? ` Net debt in EV is as of ${bName} ${fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis)}.` : ''}
         </div>
       </div>
 
