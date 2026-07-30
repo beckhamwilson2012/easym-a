@@ -206,7 +206,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               value: (() => {
                 const v = calcPTBV(target);
                 if (v != null) return fmtRatio(v);
-                if (target?.tangibleBookValue) return 'Market cap unavailable';
+                if (target?.tangibleBookValue) return 'Equity value unavailable';
                 if (target?.marketCap) return 'Loading TBV…';
                 return 'N/A';
               })(),

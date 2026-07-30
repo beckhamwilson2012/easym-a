@@ -5,7 +5,7 @@ import { NAVY, GRAY_BORDER, isBankDeal } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
 import { epsAccretionPct } from '../../../utils/dealCalc';
-import { enterpriseValue, cashBucket, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { enterpriseValue, cashBucket, netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
 
 // Fields whose runtime source tags drive the footnote (EDGAR fundamentals + CNBC live price).
 const USED_FIELDS = ['revenue', 'operatingIncome', 'freeCashFlow', 'sharesOutstanding', 'price'];
@@ -87,6 +87,33 @@ function buildCompany(ticker, data, isTarget, displayName) {
   const grossMarginLtm = (gpLtm != null && revLtm > 0) ? (gpLtm / revLtm * 100) : grossMargin; // LTM margin, else the FY grossMargin computed above
   const evRevLtm  = (mktCapSane && ev != null && revActual > 0) ? ev / revActual : null; // trailing EV ÷ (LTM|FY) rev
 
+  // ── P/E (LTM basis — same as revBasis): live price ÷ LTM diluted EPS. n/m when EPS ≤ 0 or out of a
+  // meaningful range (> 100 → near-zero earnings, e.g. SHOP ~130x). GOOGL carries marker ᵃ: its LTM net income
+  // far exceeds operating income (non-operating gains), so the P/E reads low — the same swing §6/§7 disclose.
+  // Value from the LTM object, never hardcoded.
+  const epsPE   = ltmT && ltmT.eps != null ? parseFloat(ltmT.eps) : (data.eps != null ? parseFloat(data.eps) : null);
+  const peRaw   = (live != null && live > 0 && epsPE != null) ? live / epsPE : null;
+  const niLtm   = ltmT && ltmT.netIncome != null ? parseFloat(ltmT.netIncome) : null;
+  const oiLtm   = ltmT && ltmT.operatingIncome != null ? parseFloat(ltmT.operatingIncome) : null;
+  const peNonOp = !!(niLtm != null && oiLtm > 0 && niLtm / oiLtm > 1.2);   // NI >> operating income → non-op inflated
+  const peCell  = peRaw == null ? '—' : ((peRaw <= 0 || peRaw > 100) ? 'n/m' : `${peRaw.toFixed(1)}x${peNonOp ? 'ᵃ' : ''}`);
+
+  // ── EV/EBITDA (LTM): REAL only when D&A resolved (LTM EBITDA > operating income). When EBITDA fell back to
+  // operating income (D&A not tagged under a COMBINED concept — GOOGL, MSFT) → 'n/mᵇ', never an EBIT-based figure
+  // and never a summed D&A (a combined tag ≠ the sum of components; AMZN's DDA exceeds its own by ~30%). A real
+  // but absurd multiple (> 100 → SHOP's near-zero EBITDA) → 'n/m'. EV null → '—'.
+  const ebitLtm  = ltmT && ltmT.ebitda != null ? parseFloat(ltmT.ebitda) : (data.ebitda != null ? parseFloat(data.ebitda) : null);
+  const ebitReal = ebitLtm != null && oiLtm != null ? ebitLtm > oiLtm : (ebitLtm != null && opInc != null ? ebitLtm > opInc : false);
+  const evEbitApprox = ebitLtm != null && !ebitReal;     // EBITDA == operating income → D&A not resolved
+  const evEbitVal = (mktCapSane && ev != null && ebitReal && ebitLtm > 0) ? ev / ebitLtm : null;
+  const evEbitCell = (!mktCapSane || ev == null) ? '—'
+    : (evEbitApprox ? 'n/mᵇ'
+    : (evEbitVal == null ? '—' : (evEbitVal > 100 ? 'n/m' : `${evEbitVal.toFixed(1)}x`)));
+
+  // Net cash/(debt) for the equity value → EV bridge (shared helper). debt||0 (a missing debt tag = near-debt-
+  // free filer at $0 — SHOP; consistent with the EV row and EV/Revenue), cash null-aware (a bank hides cash → "—").
+  const netDebtLtm = netCashDebt(parseFloat(data.debt) || 0, cashVal, stiVal);
+
   return {
     ticker, name: displayName || shortName(data.name, ticker), isTarget,
     revenue: revActual, revBasis, ltmAsOf: ltmT ? ltmT.asOf : null, evRevLtm, stiUsed,
@@ -99,6 +126,8 @@ function buildCompany(ticker, data, isTarget, displayName) {
     // screen fields
     grossMargin: grossMarginLtm, opMarginNG, opIncomeNG, revGrowthProj, evRevProj, employees,
     ev: mktCapSane ? ev : null,
+    // valuation multiples + net-debt bridge (Stage 7A) — pre-formatted cells (n/m / footnote markers baked in)
+    peCell, peNonOp, evEbitCell, evEbitApprox, netDebt: netDebtLtm,
     // raw inputs for the EPS-impact engine
     netIncome: data.netIncome != null ? parseFloat(data.netIncome) : null,
     shares, eps: data.eps != null ? parseFloat(data.eps) : null, livePrice: live,
@@ -297,13 +326,18 @@ export function SectionComparables({ target, acquirer, deal, pageNum }) {
   const STD_METRICS = [
     { label: 'Revenue',              unit: '$M LTM',    get: c => c.revenue,       fmt: fmtIntParens },
     { label: 'Revenue Growth',       unit: 'next-FY est.', get: c => c.revGrowthProj, fmt: fmtPct1Signed },
-    { label: 'Gross Margin',         unit: '%',         get: c => c.grossMargin,   fmt: fmtPct1 },
+    { label: 'Gross Margin',         unit: 'LTM %',     get: c => c.grossMargin,   fmt: fmtPct1 },
     { label: 'Op Margin',            unit: 'NTM·NG',    get: c => c.opMarginNG,    fmt: fmtPct1 },
     { label: 'Op Income',            unit: '$M NTM·NG', get: c => c.opIncomeNG,    fmt: fmtIntParens },
-    { label: 'Market Cap',           unit: '$M',        get: c => c.mktCap,        fmt: fmtIntParens, flagged: c => c.mktCapFlagged },
-    { label: 'Cash & Equiv.',        unit: '$M',        get: c => c.cash,          fmt: fmtIntParens },
+    // Equity value → net debt → enterprise value bridge (reads top-to-bottom; foots per company).
+    { label: 'Equity Value',         unit: '$M current',get: c => c.mktCap,        fmt: fmtIntParens, flagged: c => c.mktCapFlagged },
+    { label: 'Net Debt / (Cash)',    unit: '$M as-of',  get: c => c.netDebt,       fmt: fmtIntParens },
+    { label: 'Enterprise Value',     unit: '$M current',get: c => c.ev,            fmt: fmtIntParens, flagged: c => c.mktCapFlagged },
+    { label: 'Cash & Equiv.',        unit: '$M as-of',  get: c => c.cash,          fmt: fmtIntParens },
     { label: 'Employees',            unit: '',          get: c => c.employees,     fmt: fmtIntPlain },
     { label: 'EV / Revenue',         unit: 'LTM',       get: c => c.evRevLtm,      fmt: fmtEvRev, flagged: c => c.mktCapFlagged },
+    { label: 'EV / EBITDA',          unit: 'LTM',       get: c => c.evEbitCell,    fmt: v => (v == null ? '—' : v) },
+    { label: 'P / E',                unit: 'LTM',       get: c => c.peCell,        fmt: v => (v == null ? '—' : v) },
     { label: 'EPS Impact if Acquired', unit: 'pre-syn.', get: c => c.epsImpact,     fmt: fmtPct1Signed, impact: true, alwaysShow: true },
   ];
   const BANK_METRICS = [
@@ -314,6 +348,8 @@ export function SectionComparables({ target, acquirer, deal, pageNum }) {
     { label: 'CET1',             unit: '',   get: c => c.cet1 != null ? c.cet1 * 100 : null, fmt: fmtPct1 },
   ];
   const loadedCols = ordered.filter(c => !c.loading);
+  const anyPeNonOp     = loadedCols.some(c => c.peNonOp);      // ᵃ footnote (GOOGL-class non-operating LTM EPS)
+  const anyEvEbitApprox = loadedCols.some(c => c.evEbitApprox); // ᵇ footnote (D&A not under a combined concept)
   // Render a row if it's alwaysShow (NRR/Customers/EPS-impact — honest "—" matters) OR at least one
   // LOADED company can supply it (drops universally-empty rows for the optional fetched metrics).
   const metrics = (bankMode ? BANK_METRICS : STD_METRICS)
@@ -445,7 +481,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum }) {
       {(sourceLine || peerProvenance) && (
         <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}
-          Revenue growth and Op Margin/Income (NTM·NG) are forward analyst consensus (non-GAAP) from FMP; market cap &amp; cash are point-in-time. Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile (Exhibit C) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch. {peerProvenance && <span>{peerProvenance}.</span>}
+          Revenue growth and Op Margin/Income (NTM·NG) are forward analyst consensus (non-GAAP) from FMP; equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile (Exhibit C) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§6/§7). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
         </div>
       )}
     </PageFrame>
