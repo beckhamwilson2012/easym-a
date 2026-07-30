@@ -271,6 +271,15 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             <h3 style={{ color: '#0F2244', marginTop: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
               EPS Analysis
               <ExplainButton explain={() => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA })} />
+              <span style={{
+                marginLeft: 'auto', fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
+                padding: '2px 8px', borderRadius: 10,
+                background: (deal.basis === 'Non-GAAP') ? '#EFF6FF' : '#F3F4F6',
+                color: (deal.basis === 'Non-GAAP') ? '#0070D2' : '#6B7280',
+                border: `1px solid ${(deal.basis === 'Non-GAAP') ? '#BFDBFE' : '#E5E7EB'}`,
+              }}>
+                {(deal.basis || 'GAAP')} basis
+              </span>
             </h3>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
               <div style={{ textAlign: 'center' }}>
@@ -293,7 +302,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             </div>
             <h3 style={{ color: '#0F2244', display: 'flex', alignItems: 'center', gap: 6 }}>
               {bankMode ? 'Cost Savings' : 'Synergies'}
-              <ExplainButton explain={() => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, combinedRevenue: results.combinedRevenue, isBank: bankMode, combinedNIE: (target?.nonInterestExpense || 0) + (acquirer?.nonInterestExpense || 0) })} />
+              <ExplainButton explain={() => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, targetRevenue: target?.revenue, isBank: bankMode, targetNIE: target?.nonInterestExpense })} />
             </h3>
             {[
               { label: 'Year 1', value: results.synergiesY1 },
@@ -327,7 +336,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Combined EBITDA (incl. Y1 synergies)', value: fmtMoneyTable(results.combinedEBITDA) },
               { label: 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
-              { label: 'After-Tax Synergies (Y1)',  value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true, explain: () => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, combinedRevenue: results.combinedRevenue, isBank: false }) },
+              { label: 'After-Tax Synergies (Y1)',  value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true, explain: () => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, targetRevenue: target?.revenue, isBank: false }) },
               ...(parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income', value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',       value: fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },

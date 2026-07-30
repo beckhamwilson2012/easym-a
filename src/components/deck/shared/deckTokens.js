@@ -1,3 +1,5 @@
+import { FINANCIAL_SIC } from '../../../lib/financialSic'; // shared with server.js — one SIC source of truth
+
 // ── Color tokens ──────────────────────────────────────────────────────────────
 export const NAVY      = '#0F2244';
 export const SF_BLUE   = '#0070D2';
@@ -16,11 +18,14 @@ export function fmtMoney(m) {
   const v = parseFloat(m);
   if (isNaN(v) || m === null || m === undefined) return 'N/A';
   const abs  = Math.abs(v);
-  const sign = v < 0 ? '-' : '';
-  if (abs >= 1000) return `${sign}$${(abs / 1000).toFixed(1)}B`;
-  if (abs >= 1)    return `${sign}$${abs.toFixed(1)}M`;
-  if (abs >= 0.001) return `${sign}$${(abs * 1000).toFixed(1)}K`;
-  return `${sign}$${(abs * 1e6).toFixed(0)}`;
+  let body;
+  if (abs >= 1000) body = `$${(abs / 1000).toFixed(1)}B`;
+  else if (abs >= 1) body = `$${abs.toFixed(1)}M`;
+  else if (abs >= 0.001) body = `$${(abs * 1000).toFixed(1)}K`;
+  else body = `$${(abs * 1e6).toFixed(0)}`;
+  // Accounting convention: negatives in parentheses, matching fmtMoneyAccounting so every money
+  // formatter agrees. Guard body!=='$0' so a value rounding to zero never shows a misleading ($0).
+  return (v < 0 && body !== '$0') ? `(${body})` : body;
 }
 
 // Table money formatter — stays in M with comma separators until $10B.
@@ -29,11 +34,14 @@ export function fmtMoneyTable(m) {
   const v = parseFloat(m);
   if (isNaN(v) || m === null || m === undefined) return 'N/A';
   const abs  = Math.abs(v);
-  const sign = v < 0 ? '-' : '';
-  if (abs >= 10000) return `${sign}$${(abs / 1000).toFixed(1)}B`;
-  if (abs >= 1)     return `${sign}$${Math.round(abs).toLocaleString('en-US')}M`;
-  if (abs >= 0.001) return `${sign}$${(abs * 1000).toFixed(1)}K`;
-  return `${sign}$${(abs * 1e6).toFixed(0)}`;
+  let body;
+  if (abs >= 10000) body = `$${(abs / 1000).toFixed(1)}B`;
+  else if (abs >= 1) body = `$${Math.round(abs).toLocaleString('en-US')}M`;
+  else if (abs >= 0.001) body = `$${(abs * 1000).toFixed(1)}K`;
+  else body = `$${(abs * 1e6).toFixed(0)}`;
+  // Accounting convention: negatives in parentheses, matching fmtMoneyAccounting. fmtMoneyAccounting
+  // passes Math.abs(v) in, so it never double-wraps. Guard body!=='$0' so near-zero shows no ($0).
+  return (v < 0 && body !== '$0') ? `(${body})` : body;
 }
 
 // Dual money formatter — shows billions + millions for values >= $1B.
@@ -55,6 +63,34 @@ export function fmtMoneyAccounting(m) {
   if (isNaN(v) || m === null || m === undefined) return 'N/A';
   if (v < 0) return `(${fmtMoneyTable(Math.abs(v))})`;
   return fmtMoneyTable(v);
+}
+
+// Uniform-scale money formatter — the CALLER commits ONE scale ('B' or 'M') for a whole table so every
+// row reads in the same unit. Unlike fmtMoney/fmtMoneyTable, which auto-switch to $B per-value at a
+// magnitude threshold (mixing $B and $M in one column), this keeps a table's chosen scale fixed. Input
+// in millions. Negatives use the accounting-parens convention, consistent with fmtMoney/fmtMoneyTable.
+export function fmtScaled(value, scale = 'M') {
+  const v = parseFloat(value);
+  if (isNaN(v) || value === null || value === undefined) return 'N/A';
+  const abs = Math.abs(v);
+  const body = scale === 'B'
+    ? `$${(abs / 1000).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })}B`
+    : `$${Math.round(abs).toLocaleString('en-US')}M`;
+  const roundsToZero = body === '$0M' || body === '$0.0B';
+  return (v < 0 && !roundsToZero) ? `(${body})` : body;
+}
+
+// Choose ONE uniform scale for a set of values (in millions) so a whole table commits to a single unit.
+// Returns 'B' only when the table is large (max ≥ $10B) AND its smallest non-zero magnitude still reads
+// cleanly in $B (≥ $1B) — so no value collapses to "$0.xB" and loses signal; otherwise 'M' (lossless,
+// comma-separated). Precision-safe: a table with any sub-$1B value stays in $M rather than crushing it.
+export function pickScale(values) {
+  const mags = (values || [])
+    .map((v) => Math.abs(parseFloat(v)))
+    .filter((m) => Number.isFinite(m) && m > 0);
+  if (!mags.length) return 'M';
+  const max = Math.max(...mags), min = Math.min(...mags);
+  return (max >= 10000 && min >= 1000) ? 'B' : 'M';
 }
 
 // Default percentage — input is already a percent value (e.g., 25.3 means 25.3%).
@@ -79,6 +115,25 @@ export function fmtPctWhole(v) {
   return `${Math.round(n)}%`;
 }
 
+// Ownership/share % that never collapses a TRUE POSITIVE to "0%": a value that rounds to 0 at the given
+// precision but is > 0 shows "<0.1%" (or "<1%" at 0 digits); the near-100% counterpart shows ">99.9%". So a
+// tiny target stake reads as immaterial-but-present, not a null 0% (RRGB's ~0.04% equity of a mega-cap).
+export function fmtPctFloor(v, digits = 1) {
+  const n = parseFloat(v);
+  if (isNaN(n) || v === null || v === undefined) return 'N/A';
+  const floor = digits === 0 ? 1 : Math.pow(10, -digits);
+  if (n > 0 && n < floor) return `<${floor}%`;
+  if (n < 100 && n > 100 - floor) return `>${(100 - floor).toFixed(digits)}%`;
+  return `${n.toFixed(digits)}%`;
+}
+
+// Balance-sheet as-of date label (2B-2). Basis-driven so a reader can tell an INTERIM instant from a
+// fiscal year-end at the same date (e.g. GOOGL 2026-06-30 interim vs MSFT 2026-06-30 FY-end).
+export function fmtAsOf(asOf, basis) {
+  if (!asOf) return null;
+  return basis === 'annual' ? `${asOf} (FY-end)` : asOf;
+}
+
 export function fmtMult(v) {
   if (v === null || v === undefined || v === 'N/A') return 'N/A';
   const n = parseFloat(v);
@@ -92,17 +147,42 @@ export function fmtPerShare(v) {
   return `$${n.toFixed(2)}`;
 }
 
-// Single standalone-EPS basis for the WHOLE deck: net income ÷ shares outstanding. This is the same
-// basis dealCalc.acquirerStandaloneEPS uses for the accretion math, so a company shows ONE EPS on
-// every slide (the dashboard/§7 already use this; §3/§4/§5/§6/FinancialProfile previously printed the
-// reported `eps` field, which differs for profitable filers because reported EPS uses diluted
-// weighted-average shares). Falls back to the reported `eps` field only when NI or shares is missing.
+// Single standalone-EPS basis for the WHOLE deck: the company's REPORTED DILUTED EPS (the filed
+// per-share figure), matching dealCalc.acquirerStandaloneEPS so a company shows ONE EPS on every
+// slide. Net income ÷ shares is the FALLBACK only — used when reported EPS is genuinely unavailable
+// (and it prefers diluted weighted-average shares, never the point-in-time cover-page count, which
+// biased EPS high — the bug this fixes).
 export function standaloneEPS(company) {
-  const ni = parseFloat(company?.netIncome);
-  const sh = parseFloat(company?.shares);
-  if (!isNaN(ni) && sh > 0) return ni / sh;
   const rep = parseFloat(company?.eps);
-  return isNaN(rep) ? null : rep;
+  if (Number.isFinite(rep) && rep !== 0) return rep;
+  const ni = parseFloat(company?.netIncome);
+  const sh = parseFloat(company?.dilutedShares) || parseFloat(company?.shares);
+  return (!isNaN(ni) && sh > 0) ? ni / sh : null;
+}
+
+// Reported NON-GAAP profitability for a company, sourced from /api/nongaap (the fiscal-year-end
+// earnings 8-K, period-matched to the deck FY and code-reconciled server-side) and threaded onto the
+// company object as `company.nonGaap` (the full API payload). Returns the usable figures ONLY when the
+// server isolated AND reconciled the annual column; otherwise null, so callers fall back to GAAP and
+// label the basis honestly. We NEVER derive/fake a non-GAAP number here — display-only of a real figure.
+export function nonGaapFigures(company) {
+  const ng = company?.nonGaap;
+  if (!ng || !ng.allReconciled) return null;
+  const f = ng.nonGaap || {};
+  const oi  = parseFloat(f.operatingIncome);
+  const ni  = parseFloat(f.netIncome);
+  const eps = parseFloat(f.dilutedEPS);
+  const sh  = parseFloat(f.dilutedShares);
+  if (!Number.isFinite(oi) && !Number.isFinite(ni) && !Number.isFinite(eps)) return null;
+  return {
+    operatingIncome: Number.isFinite(oi)  ? oi  : null,
+    netIncome:       Number.isFinite(ni)  ? ni  : null,
+    dilutedEPS:      Number.isFinite(eps) ? eps : null,
+    dilutedShares:   Number.isFinite(sh)  ? sh  : null, // sourced from the 8-K (Part 1); used by the accretion flip
+    accession:       ng.sourceAccession || null,
+    sourceUrl:       ng.sourceUrl || null,
+    fiscalYear:      ng.fiscalYear || null,
+  };
 }
 
 // Share count formatter — input in millions (e.g., 47.3 = 47.3M shares).
@@ -124,7 +204,26 @@ export function isFinancial(companyTypeOrCompany) {
   if (!companyTypeOrCompany) return false;
   if (typeof companyTypeOrCompany === 'string') return companyTypeOrCompany === 'financial';
   return companyTypeOrCompany.companyType === 'financial' ||
-    ['6020', '6021', '6022', '6199', '6211'].includes(companyTypeOrCompany.sic);
+    FINANCIAL_SIC.includes(companyTypeOrCompany.sic);
+}
+
+// Restaurant SIC detection (sibling to isFinancial — single source of truth, no parallel check). For
+// 5812 (Eating Places) / 5813 (Drinking Places), "gross profit" = revenue − COGS is meaningless: COGS is
+// food/beverage only (~26%); the dominant labor (~34%) + occupancy costs sit BELOW the gross line, so the
+// figure shows a false ~74% margin next to a near-zero operating margin (or, when COGS isn't tagged, the
+// fabricated 65% estimate). §5/§6/§7/§14 suppress gross profit for these and show operating income instead.
+export function isRestaurant(company) {
+  return company?.sic === '5812' || company?.sic === '5813';
+}
+
+// Accretion verdict with a NEUTRAL band (Fix #4). A % that DISPLAYS as ±0.0% — i.e. |pct| rounds to 0.0
+// at one decimal, the same rounding §8/§9 show — is breakeven (rounding noise), NOT a direction: return
+// 'neutral'. Anything that displays as a non-zero % keeps its real 'accretive'/'dilutive' verdict. null
+// for n/m (no pct). Single source of truth so §8 (accretion table) and §9 (forward bridge) agree.
+export function accretionVerdict(pct) {
+  if (pct == null || !Number.isFinite(pct)) return null;
+  if (Math.abs(pct).toFixed(1) === '0.0') return 'neutral'; // matches the displayed ±0.0%
+  return pct >= 0 ? 'accretive' : 'dilutive';
 }
 
 export function isSaaSLike(companyType) {
@@ -134,7 +233,7 @@ export function isSaaSLike(companyType) {
 // ── Estimation helpers ────────────────────────────────────────────────────────
 
 export function estimateSegmentMix(target) {
-  if (isFinancial(target.companyType)) {
+  if (isFinancial(target)) { // OBJECT → SIC fallback: banks /quote tags 'standard' still get the bank mix
     return [
       { name: 'Investment Banking', value: 30 },
       { name: 'Wealth Management', value: 25 },
@@ -168,28 +267,16 @@ export function estimateEmployeeMix() {
   ];
 }
 
-export function generatePriceSeries(target, deal) {
-  const ebitda = parseFloat(target.ebitda) || 0;
-  const shares = parseFloat(target.shares) || 1;
-  const cash   = parseFloat(target.cash)   || 0;
-  const debt   = parseFloat(target.debt)   || 0;
-  const offerPrice = parseFloat(deal.offerPrice) || 0;
-  const multiples  = [8, 10, 12, 14, 16];
-
-  return multiples.map(mult => {
-    const ev     = ebitda > 0 ? ebitda * mult : 0;
-    const equity = ev - debt + cash;
-    const price  = shares > 0 ? equity / shares : 0;
-    const diff   = offerPrice > 0 && price > 0 ? ((offerPrice - price) / price) * 100 : null;
-    return { multiple: mult, ev, price: Math.max(price, 0), diffPct: diff };
-  });
-}
-
 export function buildFinancialCommentary(target, deal) {
   const lines = [];
   const rev   = parseFloat(target.revenue)  || 0;
   const ebitda = parseFloat(target.ebitda)  || 0;
   const ni    = parseFloat(target.netIncome) || 0;
+  // Basis-aware net income so the §5 commentary matches the (non-GAAP) table on a non-GAAP deal. Gated by
+  // deal.basis exactly like the table — a GAAP/bank deal leaves niVal == ni, so the wording is unchanged.
+  const ng    = deal?.basis === 'Non-GAAP' ? nonGaapFigures(target) : null;
+  const niVal = ng?.netIncome ?? ni;
+  const niIsNonGaap = ng?.netIncome != null;
   const margin = rev > 0 && ebitda > 0 ? (ebitda / rev * 100).toFixed(1) : null;
 
   if (margin !== null) {
@@ -203,8 +290,8 @@ export function buildFinancialCommentary(target, deal) {
     const adj2 = parseFloat(deal.evEBITDA) > 15 ? 'above' : 'in line with';
     lines.push(`Entry EV/EBITDA of ${fmtMult(deal.evEBITDA)} is ${adj2} sector median.`);
   }
-  if (ni > 0 && rev > 0) {
-    lines.push(`Net income of ${fmtMoney(ni)} represents a ${(ni / rev * 100).toFixed(1)}% net margin.`);
+  if (niVal > 0 && rev > 0) {
+    lines.push(`Net income of ${fmtMoney(niVal)}${niIsNonGaap ? ' (non-GAAP)' : ''} represents a ${(niVal / rev * 100).toFixed(1)}% net margin.`);
   }
   lines.push(`Transaction financed ${fmtPct(deal.cashPercent)} cash / ${fmtPct(100 - parseFloat(deal.cashPercent || 0))} stock.`);
   return lines;
@@ -254,8 +341,10 @@ export function buildStrategicSection(target, acquirer, deal) {
 export const US_GSIBS = ['JPM', 'BAC', 'C', 'WFC', 'GS', 'MS', 'BK', 'STT'];
 export const isGSIB = (ticker) => US_GSIBS.includes(ticker?.toUpperCase());
 
+// Pass the OBJECTS (not target.companyType strings) so isFinancial's SIC fallback fires — banks that
+// /quote classifies 'standard' (e.g. JPM/BAC, SIC 6021) are still recognized by SIC. Single source.
 export const isBankDeal = (target, acquirer) =>
-  isFinancial(target?.companyType) && isFinancial(acquirer?.companyType);
+  isFinancial(target) && isFinancial(acquirer);
 
 export const calcPTBV = (company) => {
   if (!company?.marketCap || !company?.tangibleBookValue) return null;

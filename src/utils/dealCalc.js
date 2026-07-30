@@ -23,16 +23,34 @@ export function acquirerSharePrice(inputs) {
   return eps > 0 ? eps * 15 : 0;
 }
 
-// Acquirer standalone EPS for the accretion/dilution comparison. Computed as net income ÷ shares
-// outstanding so it is on the SAME basis as the pro-forma EPS (also net income ÷ shares) — an
-// apples-to-apples comparison. This can differ slightly from the reported (diluted) EPS shown on the
-// Standalone P&L slide because reported EPS uses diluted weighted-average shares. Falls back to the
-// reported EPS only when shares are missing.
+// Acquirer standalone EPS — the accretion/dilution BASELINE. The company's REPORTED DILUTED EPS
+// (the filed per-share figure) is canonical and primary. Fall back to net income ÷ weighted-average
+// DILUTED shares only when reported EPS is genuinely unavailable — never net income ÷ the
+// point-in-time cover-page share count, which biased EPS high (the bug this fixes).
 export function acquirerStandaloneEPS(inputs) {
-  const shares = parseFloat(inputs.companyAShares)    || 0;
+  const reported = parseFloat(inputs.companyAEPS);
+  if (Number.isFinite(reported) && reported !== 0) return reported;
   const ni     = parseFloat(inputs.companyANetIncome) || 0;
-  if (shares > 0) return ni / shares;
-  return parseFloat(inputs.companyAEPS) || 0;
+  const shares = parseFloat(inputs.companyADilutedShares) || parseFloat(inputs.companyAShares) || 0;
+  return shares > 0 ? ni / shares : 0;
+}
+
+// Effective acquirer DILUTED share count for the EPS basis. Prefer the real weighted-average diluted
+// count (companyADilutedShares). When it is unavailable, DERIVE the count from reported EPS
+// (companyANetIncome ÷ companyAEPS) so net income ÷ this count ≈ the reported EPS — i.e. the pro-forma
+// acquirer leg sits on the SAME basis as the reported-EPS standalone baseline, never the point-in-time
+// cover-page count on one side only. If reported EPS is also unavailable, fall back to the cover-page
+// count (companyAShares) — used on BOTH sides so they still agree — and flag the figure as approximate.
+export function acquirerDilutedShares(inputs) {
+  const diluted = parseFloat(inputs.companyADilutedShares) || 0;
+  if (diluted > 0) return { shares: diluted, approximate: false };
+  const eps = parseFloat(inputs.companyAEPS);
+  const ni  = parseFloat(inputs.companyANetIncome);
+  if (Number.isFinite(eps) && eps !== 0 && Number.isFinite(ni) && ni !== 0) {
+    return { shares: ni / eps, approximate: false }; // NI ÷ shares ≈ reported EPS by construction
+  }
+  const cover = parseFloat(inputs.companyAShares) || 0;
+  return { shares: cover, approximate: true }; // last resort: same cover-page basis on BOTH sides
 }
 
 // Target market price for the PREMIUM. Use ONLY the real live price — a premium measured against an
@@ -47,7 +65,7 @@ export function targetMarketPrice(inputs) {
 
 export function calculate(inputs) {
   const {
-    companyAShares, companyADebt,
+    companyADebt,
     companyBShares, companyBEPS, companyBCash, companyBDebt,
     companyARevenue, companyAEBITDA, companyANetIncome,
     companyBRevenue, companyBEBITDA, companyBNetIncome,
@@ -64,7 +82,12 @@ export function calculate(inputs) {
   // stock portion and we have a price). This is the bug that previously produced "0M new shares".
   const acqPrice         = acquirerSharePrice(inputs);
   const newSharesIssued  = acqPrice > 0 ? stockPortion / acqPrice : 0;
-  const totalShares      = companyAShares + newSharesIssued;
+  // EPS math uses the weighted-average DILUTED share base (falls back to companyAShares if absent),
+  // so pro-forma EPS sits on the same basis as the reported-diluted standalone EPS. Ownership and
+  // market cap read companyAShares (point-in-time) directly elsewhere and are unaffected by this.
+  const acqDiluted       = acquirerDilutedShares(inputs);
+  const acqBaseShares    = acqDiluted.shares;
+  const totalShares      = acqBaseShares + newSharesIssued;
 
   const combinedRevenue  = companyARevenue + companyBRevenue;
   const combinedEBITDA   = companyAEBITDA + companyBEBITDA + synergiesY1; // synergies pre-tax
@@ -94,11 +117,14 @@ export function calculate(inputs) {
   const purchasePremium  = tgtPrice > 0 ? ((offerPricePerShare - tgtPrice) / tgtPrice) * 100 : null;
 
   // Multiples / leverage — guard non-positive denominators (negative EBITDA/EPS → N/A, not nonsense).
-  const enterpriseValue  = totalPurchasePrice + companyBDebt - companyBCash;
-  const evEBITDA         = companyBEBITDA > 0 ? enterpriseValue / companyBEBITDA : null;
+  // Fix A: EV and combined leverage require BOTH debt and cash; if a component was stale-rejected (null),
+  // the metric is unavailable (null → 'N/A') — never let null coerce to 0 (silent $0 EV / understated
+  // leverage that could mute the ">5×" flag). Non-stale deals pass real numbers → unchanged.
+  const enterpriseValue  = (companyBDebt != null && companyBCash != null) ? totalPurchasePrice + companyBDebt - companyBCash : null;
+  const evEBITDA         = (companyBEBITDA > 0 && enterpriseValue != null) ? enterpriseValue / companyBEBITDA : null;
   const peRatio          = companyBEPS    > 0 ? offerPricePerShare / companyBEPS : null;
-  const combinedDebt     = companyADebt + companyBDebt + cashPortion;
-  const debtEBITDA       = combinedEBITDA > 0 ? combinedDebt / combinedEBITDA : null;
+  const combinedDebt     = (companyADebt != null && companyBDebt != null) ? companyADebt + companyBDebt + cashPortion : null;
+  const debtEBITDA       = (combinedEBITDA > 0 && combinedDebt != null) ? combinedDebt / combinedEBITDA : null;
 
   return {
     isAccretive,
@@ -126,6 +152,11 @@ export function calculate(inputs) {
     // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
     // dashboard "Before → After" and the percent change are internally consistent).
     companyAEPS:        standaloneEPS.toFixed(2),
+    // True only when the acquirer diluted-share count fell all the way back to the cover-page count
+    // (no weighted-avg diluted AND no reported EPS to derive from). Baseline and pro-forma still share
+    // that basis (they never disagree), but it is approximate. False whenever a real or EPS-derived
+    // diluted count was used.
+    proFormaDilutedApproximate: acqDiluted.approximate,
   };
 }
 
@@ -133,8 +164,7 @@ export function calculate(inputs) {
 // Must mirror calculate()'s pro-forma EPS exactly so the sensitivity grid is consistent.
 
 export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
-  const { companyAShares, companyANetIncome, companyBShares,
-          companyBNetIncome, cashPercent } = inputs;
+  const { companyANetIncome, companyBShares, companyBNetIncome, cashPercent } = inputs;
   const acqPrice = acquirerSharePrice(inputs);
   if (acqPrice === 0 || companyBShares === 0) return null;
   const stockPercent = 100 - cashPercent;
@@ -142,7 +172,7 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const cashPortion  = totalPP * (cashPercent / 100);
   const stockPortion = totalPP * (stockPercent / 100);
   const newShares    = stockPortion / acqPrice;
-  const totalShares  = companyAShares + newShares;
+  const totalShares  = acquirerDilutedShares(inputs).shares + newShares; // effective diluted base (matches calculate())
   if (totalShares === 0) return null;
   const afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE);
   const newInterestAfterTax = cashPortion * DEBT_INTEREST_RATE * (1 - TAX_RATE);

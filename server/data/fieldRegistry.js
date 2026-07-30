@@ -27,15 +27,27 @@ module.exports = [
   { key: 'cash',             sources: ['edgar','fmp'],         sot: 'edgar', tol: 0.02,  unit: '$',    period: true },
   { key: 'freeCashFlow',     sources: ['edgar','fmp'],         sot: 'edgar', tol: 0.02,  unit: '$',    period: true },
 
+  // --- §16 expansion (Pass A): four EDGAR-SOT vs FMP-cross rows, same fiscal period as Revenue (edgar
+  // uses period-matched pickAtEnd). GAAP both sides (FMP /stable statements are as-reported, not adjusted).
+  // EPS is per-share ('$/sh', NOT inM); the rest are $ → inM like Revenue. period:true → the period guard
+  // excludes FMP if its fiscal window differs, so a cross-period value can never produce a false ✓. ---
+  { key: 'grossProfit',             sources: ['edgar','fmp'], sot: 'edgar', tol: 0.01, unit: '$',    period: true },
+  { key: 'epsDiluted',              sources: ['edgar','fmp'], sot: 'edgar', tol: 0.01, unit: '$/sh', period: true },
+  { key: 'totalAssets',             sources: ['edgar','fmp'], sot: 'edgar', tol: 0.01, unit: '$',    period: true },
+  { key: 'totalStockholdersEquity', sources: ['edgar','fmp'], sot: 'edgar', tol: 0.02, unit: '$',    period: true },
+
   // --- analyst consensus: NO single authoritative free source. Nasdaq (SOT — richest: mean/high/low
   // + buy/hold/sell) is cross-checked against StockAnalysis for the MEAN only. Tolerance is 5%, much
   // wider than price (0.8%): aggregators poll different broker panels on different days, so a few-%
   // mean difference is LEGITIMATE — the cross-check exists to catch a PARSE error (10x misread, wrong
   // field, stale-by-months), not panel drift. `priceBand` adds a sanity guard: a target outside
   // [0.2×, 5×] the current price is rejected as a likely parse error rather than displayed.
-  // mean is the cross-checked field (Nasdaq vs StockAnalysis). high/low/count/ratings come from
-  // Nasdaq only → they resolve to `single` (shown, but honestly marked unconfirmed — no `single:true`).
-  { key: 'analystTargetMean', sources: ['nasdaq','stockanalysis'], sot: 'nasdaq', tol: 0.05, unit: '$/sh', priceBand: true },
+  // mean is the cross-checked field — now reconciled across THREE sources (Nasdaq SOT + StockAnalysis +
+  // FMP /stable price-target-consensus); ≥2 within tol → verified, one diverges → flagged, only one
+  // returns → single. high/low/count/ratings come from Nasdaq only → they resolve to `single` (shown,
+  // honestly marked unconfirmed — no `single:true`). FMP is additive: if it's down the mean still
+  // reconciles across the remaining two, so the cross-check only ever gets stronger, never weaker.
+  { key: 'analystTargetMean', sources: ['nasdaq','stockanalysis','fmp'], sot: 'nasdaq', tol: 0.05, unit: '$/sh', priceBand: true },
   { key: 'analystTargetHigh', sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: '$/sh', priceBand: true },
   { key: 'analystTargetLow',  sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: '$/sh', priceBand: true },
   { key: 'analystCount',      sources: ['nasdaq'],                 sot: 'nasdaq', tol: 0,    unit: 'n' },

@@ -4,6 +4,8 @@ import { PageHeader } from '../shared/PageHeader';
 import { NAVY, GRAY_BORDER, isBankDeal } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
+import { epsAccretionPct } from '../../../utils/dealCalc';
+import { enterpriseValue, cashBucket, NET_DEBT_BASIS } from '../../../lib/netDebt';
 
 // Fields whose runtime source tags drive the footnote (EDGAR fundamentals + CNBC live price).
 const USED_FIELDS = ['revenue', 'operatingIncome', 'freeCashFlow', 'sharesOutstanding', 'price'];
@@ -14,10 +16,11 @@ const TARGET_BORDER = '#F59E0B';
 // ── Formatters (reference screening style) ─────────────────────────────────────
 const fmtIntParens = (v) => v == null ? '—' : (v < 0 ? `(${Math.abs(Math.round(v)).toLocaleString()})` : Math.round(v).toLocaleString());
 const fmtPctWhole  = (v) => v == null ? '—' : `${v < 0 ? '(' : ''}${Math.abs(Math.round(v))}%${v < 0 ? ')' : ''}`;
-const fmtMktCap    = (v) => v == null ? '—' : `~$${Math.round(v / 1000).toLocaleString()}B`;
 const fmtEvRev     = (v) => v == null ? '—' : `${v.toFixed(1)}x`;
 const fmtRatioX    = (v) => v == null ? '—' : `${v.toFixed(1)}x`;
 const fmtPct1      = (v) => v == null ? '—' : `${v.toFixed(1)}%`;
+const fmtPct1Signed= (v) => v == null ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
+const fmtIntPlain  = (v) => v == null ? '—' : Math.round(v).toLocaleString('en-US');
 
 // "Salesforce, Inc." → "Salesforce"; "ADOBE INC." → "Adobe"; "SAP SE" → "SAP".
 function shortName(name, ticker) {
@@ -34,7 +37,15 @@ function buildCompany(ticker, data, isTarget, displayName) {
   const live   = data.livePrice != null && data.livePrice > 0 ? data.livePrice : null;
   const shares = parseFloat(data.shares) || 0;
   const mktCap = live != null && shares > 0 ? live * shares : null;
-  const ev     = mktCap != null ? mktCap + (parseFloat(data.debt) || 0) - (parseFloat(data.cash) || 0) : null;
+  // EV via the shared helper — cash bucket = cash + short-term marketable securities (convention b).
+  // Cash is null-aware: the helper short-circuits (net debt → null → EV → null → "—") when cash is null, so a
+  // bank added as a peer — cash sits under CashAndDueFromBanks, not the standard concept, so data.cash is null —
+  // renders "—" rather than a fabricated EV built from ~$300B of un-netted debt. Debt keeps ||0: a missing debt
+  // tag means a near-debt-free filer (e.g. SHOP has no LongTermDebt), where treating it as $0 is honest.
+  const stiVal = parseFloat(data.shortTermInvestments);
+  const cashVal = Number.isFinite(parseFloat(data.cash)) ? parseFloat(data.cash) : null;
+  const ev     = enterpriseValue(mktCap, parseFloat(data.debt) || 0, cashVal, stiVal);
+  const stiUsed = cashBucket(0, stiVal).stiUsed;   // provenance: false → this column is cash-only (no ST-marketable line)
   const evRev  = ev != null && rev > 0 ? ev / rev : null;
   const opInc  = data.operatingIncome != null ? parseFloat(data.operatingIncome) : null;
   // Preserve the live-price EV fix: a market cap implausibly small vs revenue for a PROFITABLE company
@@ -50,12 +61,47 @@ function buildCompany(ticker, data, isTarget, displayName) {
   const tbv  = data.tangibleBookValue != null ? parseFloat(data.tangibleBookValue) : null;
   const ptbv = mktCap && tbv ? mktCap / tbv : null;
 
+  // ── Target-screen additions (Stage 3) ──
+  const grossProfit = data.grossProfit != null ? parseFloat(data.grossProfit) : null;
+  const grossMargin = (grossProfit != null && rev > 0) ? (grossProfit / rev * 100) : null;
+  // Forward (NTM) consensus from /api/pnl: revenue → growth proj + EV/Rev proj; opInc (ebitAvg, non-GAAP).
+  const pnl = data.pnl && Array.isArray(data.pnl.columns) ? data.pnl.columns : null;
+  const fwd = pnl ? pnl.find(c => !c.actual) : null;
+  const latestAct = pnl ? [...pnl].reverse().find(c => c.actual) : null;
+  const fwdRev = fwd && fwd.revenue != null ? fwd.revenue : null;
+  const revGrowthProj = (fwdRev != null && latestAct && latestAct.revenue) ? ((fwdRev - latestAct.revenue) / latestAct.revenue * 100) : null;
+  const opIncomeNG = fwd && fwd.operatingIncome != null ? fwd.operatingIncome : null;
+  const opMarginNG = (opIncomeNG != null && fwdRev) ? (opIncomeNG / fwdRev * 100) : null;
+  const evRevProj  = (ev != null && fwdRev) ? (ev / fwdRev) : null;
+  const employees  = (data.profile && data.profile.employees != null) ? data.profile.employees : null;
+
+  // ── LTM basis (Stage 3): the ACTUAL revenue / gross margin / EV-Rev switch to trailing-12mo when this
+  // company's /quote carries a TRUSTED LTM (Stage-0 span-match gate); foreign/untrusted → stays FY,
+  // flagged per-column. EV is point-in-time (mktcap + net debt) — NOT recomputed onto a period basis;
+  // only the LTM denominator changes (standard comps: current EV ÷ trailing revenue).
+  const ltmT   = (data.ltm && data.ltm.trusted === true) ? data.ltm : null;
+  const revLtm = ltmT && ltmT.revenue != null ? parseFloat(ltmT.revenue) : null;
+  const gpLtm  = ltmT && ltmT.grossProfit != null ? parseFloat(ltmT.grossProfit) : null;
+  const revActual = revLtm != null ? revLtm : rev;                 // LTM if trusted, else FY annual
+  const revBasis  = revLtm != null ? 'LTM' : 'FY';
+  const grossMarginLtm = (gpLtm != null && revLtm > 0) ? (gpLtm / revLtm * 100) : grossMargin; // LTM margin, else the FY grossMargin computed above
+  const evRevLtm  = (mktCapSane && ev != null && revActual > 0) ? ev / revActual : null; // trailing EV ÷ (LTM|FY) rev
+
   return {
     ticker, name: displayName || shortName(data.name, ticker), isTarget,
-    revenue: rev, operatingIncome: opInc, fcfMargin,
+    revenue: revActual, revBasis, ltmAsOf: ltmT ? ltmT.asOf : null, evRevLtm, stiUsed,
+    bsAsOf: data.balanceSheetAsOf || null, bsBasis: data.balanceSheetBasis || null,
+    cash: data.cash != null ? parseFloat(data.cash) : null,   // point-in-time (same balance-sheet cash as the EV calc)
+    operatingIncome: opInc, fcfMargin,
     mktCap: mktCapSane ? mktCap : null, evRev: mktCapSane ? evRev : null, mktCapFlagged: !mktCapSane && mktCap != null,
     totalAssets: data.totalAssets != null ? parseFloat(data.totalAssets) : null,
     effRatio, ptbv, cet1: data.cet1Ratio != null ? parseFloat(data.cet1Ratio) : null,
+    // screen fields
+    grossMargin: grossMarginLtm, opMarginNG, opIncomeNG, revGrowthProj, evRevProj, employees,
+    ev: mktCapSane ? ev : null,
+    // raw inputs for the EPS-impact engine
+    netIncome: data.netIncome != null ? parseFloat(data.netIncome) : null,
+    shares, eps: data.eps != null ? parseFloat(data.eps) : null, livePrice: live,
   };
 }
 
@@ -103,13 +149,16 @@ function EditPeersModal({ autoPeers, customPeers, onSave, onClose }) {
 }
 
 // ── Main component — transposed public-company screening table ──────────────────
-export function SectionComparables({ target, acquirer, pageNum }) {
-  const bankMode     = isBankDeal(target, acquirer);
-  const targetTicker = target?.ticker;
+export function SectionComparables({ target, acquirer, deal, pageNum }) {
+  const bankMode      = isBankDeal(target, acquirer);
+  const targetTicker  = target?.ticker;
+  const acquirerTicker = acquirer?.ticker && acquirer.ticker !== targetTicker ? acquirer.ticker : null;
   const { data: verifiedData } = useVerifiedData(targetTicker ?? null);
   const sourceLine = composeSourceLine(USED_FIELDS, verifiedData?.fields, verifiedData?.asOf);
 
   const [autoPeers, setAutoPeers]     = useState([]);
+  const [peerSource, setPeerSource]   = useState(null); // coverage tier from /api/peers (provenance only)
+  const [peerTrust, setPeerTrust]     = useState(null); // 'trusted' | 'untrusted' — untrusted → suppress peer cols
   const [customPeers, setCustomPeers] = useState(() => {
     if (!targetTicker) return null;
     try { return JSON.parse(localStorage.getItem(`peers_${targetTicker}`)); } catch { return null; }
@@ -126,8 +175,8 @@ export function SectionComparables({ target, acquirer, pageNum }) {
     setPeersLoading(true);
     fetch(`http://localhost:3001/api/peers/${targetTicker}`)
       .then(r => r.json())
-      .then(d => setAutoPeers(d.peers || []))
-      .catch(() => setAutoPeers([]))
+      .then(d => { setAutoPeers(d.peers || []); setPeerSource(d.source || null); setPeerTrust(d.trust || null); })
+      .catch(() => { setAutoPeers([]); setPeerSource(null); setPeerTrust(null); })
       .finally(() => setPeersLoading(false));
   }, [targetTicker]);
 
@@ -150,13 +199,33 @@ export function SectionComparables({ target, acquirer, pageNum }) {
             if (bf) merged = { ...merged, ...bf, revenue: quoteData.revenue };
           } catch { /* ignore */ }
         }
+        // Target-screen (Stage 3): forward consensus (/api/pnl → growth proj, EV/Rev proj, NTM non-GAAP
+        // op income) + employees (/api/profile). Best-effort — null where a company lacks coverage → "—".
+        try {
+          const [pnlR, profR] = await Promise.all([
+            fetch(`http://localhost:3001/api/pnl/${ticker}`).then(r => r.json()).catch(() => null),
+            fetch(`http://localhost:3001/api/profile/${ticker}`).then(r => r.json()).catch(() => null),
+          ]);
+          merged = { ...merged, pnl: pnlR && pnlR.ok ? pnlR : null, profile: profR && profR.ok ? profR : null };
+        } catch { /* ignore */ }
         setPeerData(prev => ({ ...prev, [ticker]: merged }));
       })
       .catch(() => setPeerData(prev => ({ ...prev, [ticker]: null })));
   }, []);
 
-  // Fetch the target AND every peer (the target is a column too).
-  const companyTickers = [targetTicker, ...activePeers].filter(Boolean);
+  // Fetch the acquirer, the target, AND every peer (acquirer + target are both columns; spec §2
+  // pins acquirer first, target second, then peers).
+  // Take 6 peers AFTER removing the acquirer/target from the peer list — the curated set can include the
+  // acquirer (e.g. CRM is in TEAM's peer set), and slicing before dedup would drop a real peer (SNOW).
+  // Safety floor: an UNTRUSTED auto-resolved peer set (broad-market mega-caps, or a 2-digit-group
+  // cross-industry match like a space company → autos) is NOT a valid comp set — suppress the peer
+  // columns and show an honest "no comparable public peers" note instead of presenting false comps.
+  // Explicit user choice always wins: custom peers render regardless of trust.
+  const peersSuppressed = !customPeers && peerTrust === 'untrusted';
+  const screenPeers = peersSuppressed
+    ? []
+    : activePeers.filter(t => t && t !== acquirerTicker && t !== targetTicker).slice(0, 6);
+  const companyTickers = [acquirerTicker, targetTicker, ...screenPeers].filter(Boolean);
   const fetchKey = [...new Set(companyTickers)].sort().join(',');
   useEffect(() => {
     for (const t of new Set(companyTickers)) fetchOne(t);
@@ -171,26 +240,69 @@ export function SectionComparables({ target, acquirer, pageNum }) {
   };
 
   // ── Assemble columns: target first, then peers by revenue desc ───────────────
+  // Bank deals: the SUBJECT companies' bank facts (TBV/CET1/NII/NIE/totalAssets) are already threaded
+  // into target/acquirer deck state — the same source §4/§5/§I/§J use. /quote tags JPM/BAC 'standard',
+  // so fetchOne above skipped /api/bank-facts for them, leaving the subject row blank. Merge the threaded
+  // facts (one source of truth, no new fetch) so the subject reads as a bank like the peers. Peers are
+  // untouched (they populate from the peer pipeline); non-bank deals are unaffected (subject stays null).
+  const BANK_FACT_KEYS = ['tangibleBookValue', 'cet1Ratio', 'nonInterestExpense', 'netInterestIncome', 'nonInterestIncome', 'totalAssets'];
+  const threadedBankFacts = (co) => {
+    const out = {};
+    for (const k of BANK_FACT_KEYS) if (co?.[k] != null) out[k] = co[k];
+    return out;
+  };
   const uniqueTickers = [...new Set(companyTickers)];
   const cols = uniqueTickers.map(t => {
     const d = peerData[t];
     const isTarget = t === targetTicker;
-    const dispName = isTarget ? shortName(target?.name, t) : undefined;
-    if (!d || d === 'loading') return { ticker: t, isTarget, loading: true, name: dispName || t, revenue: 0 };
-    return buildCompany(t, d, isTarget, dispName);
+    const isAcquirer = t === acquirerTicker && !isTarget;
+    const dispName = isTarget ? shortName(target?.name, t) : (isAcquirer ? shortName(acquirer?.name, t) : undefined);
+    if (!d || d === 'loading') return { ticker: t, isTarget, isAcquirer, loading: true, name: dispName || t, revenue: 0 };
+    // Fill ONLY the subject's bank-metric cells from the threaded facts (market cap/shares/revenue stay
+    // from the peer pipeline, so P/TBV is the current-trading basis used for every other column).
+    const subject = bankMode ? (isTarget ? target : isAcquirer ? acquirer : null) : null;
+    const dForCol = subject ? { ...d, ...threadedBankFacts(subject) } : d;
+    return { ...buildCompany(t, dForCol, isTarget, dispName), isAcquirer };
   });
+  // Spec §2 order: acquirer first, target second, then remaining peers by revenue desc.
   const ordered = [
+    ...cols.filter(c => c.isAcquirer),
     ...cols.filter(c => c.isTarget),
-    ...cols.filter(c => !c.isTarget).sort((a, b) => (b.revenue || 0) - (a.revenue || 0)),
+    ...cols.filter(c => !c.isTarget && !c.isAcquirer).sort((a, b) => (b.revenue || 0) - (a.revenue || 0)),
   ];
 
-  // ── Metric rows (only fetchable; no n/d filler rows) ─────────────────────────
+  // ── EPS Impact if Acquired — reuse the deck's accretion engine per company (Stage 3) ─────────────────
+  // For each company, model THIS acquirer buying it at the SAME premium / cash-stock mix / financing as
+  // the live deal (deal._inputs), synergies = 0 (target-specific, not transferable → a clean PRE-SYNERGY,
+  // comparable basis across all columns). Identical epsAccretionPct used by §7/§8 — not a separate calc.
+  const baseInputs = (deal && deal._inputs) || {};
+  const dealPremium = (() => {
+    const offer = parseFloat(deal?.offerPrice) || parseFloat(baseInputs.offerPricePerShare) || 0;
+    const tgtPx = parseFloat(baseInputs.currentSharePriceB) || 0;
+    return (offer > 0 && tgtPx > 0) ? (offer - tgtPx) / tgtPx : null;
+  })();
+  const epsImpactFor = (c) => {
+    if (!c || c.loading || c.isAcquirer) return null;        // the acquirer doesn't acquire itself → "—"
+    if (dealPremium == null || !(c.livePrice > 0) || c.netIncome == null || !(c.shares > 0)) return null;
+    const peerInputs = { ...baseInputs, companyBShares: c.shares, companyBNetIncome: c.netIncome, companyBEPS: c.eps, currentSharePriceB: c.livePrice };
+    const peerOffer = c.livePrice * (1 + dealPremium);
+    const pct = epsAccretionPct(peerOffer, 0, peerInputs); // 0 synergies → pre-synergy structural impact
+    return Number.isFinite(pct) ? pct : null;
+  };
+  ordered.forEach(c => { c.epsImpact = epsImpactFor(c); });
+
+  // ── Target-screen metric rows (Stage 3) — real where sourceable; NRR + Customers honest "—" ──────────
   const STD_METRICS = [
-    { label: 'Revenue',     unit: '$M', get: c => c.revenue,         fmt: fmtIntParens },
-    { label: 'FCF Margin',  unit: '%',  get: c => c.fcfMargin,       fmt: fmtPctWhole },
-    { label: 'Op Income',   unit: '$M', get: c => c.operatingIncome, fmt: fmtIntParens },
-    { label: 'Market Cap',  unit: '',   get: c => c.mktCap,          fmt: fmtMktCap,  flagged: c => c.mktCapFlagged },
-    { label: 'EV / Revenue',unit: '',   get: c => c.evRev,           fmt: fmtEvRev,   flagged: c => c.mktCapFlagged },
+    { label: 'Revenue',              unit: '$M LTM',    get: c => c.revenue,       fmt: fmtIntParens },
+    { label: 'Revenue Growth',       unit: 'next-FY est.', get: c => c.revGrowthProj, fmt: fmtPct1Signed },
+    { label: 'Gross Margin',         unit: '%',         get: c => c.grossMargin,   fmt: fmtPct1 },
+    { label: 'Op Margin',            unit: 'NTM·NG',    get: c => c.opMarginNG,    fmt: fmtPct1 },
+    { label: 'Op Income',            unit: '$M NTM·NG', get: c => c.opIncomeNG,    fmt: fmtIntParens },
+    { label: 'Market Cap',           unit: '$M',        get: c => c.mktCap,        fmt: fmtIntParens, flagged: c => c.mktCapFlagged },
+    { label: 'Cash & Equiv.',        unit: '$M',        get: c => c.cash,          fmt: fmtIntParens },
+    { label: 'Employees',            unit: '',          get: c => c.employees,     fmt: fmtIntPlain },
+    { label: 'EV / Revenue',         unit: 'LTM',       get: c => c.evRevLtm,      fmt: fmtEvRev, flagged: c => c.mktCapFlagged },
+    { label: 'EPS Impact if Acquired', unit: 'pre-syn.', get: c => c.epsImpact,     fmt: fmtPct1Signed, impact: true, alwaysShow: true },
   ];
   const BANK_METRICS = [
     { label: 'Total Revenue',    unit: '$M', get: c => c.revenue,     fmt: fmtIntParens },
@@ -200,20 +312,43 @@ export function SectionComparables({ target, acquirer, pageNum }) {
     { label: 'CET1',             unit: '',   get: c => c.cet1 != null ? c.cet1 * 100 : null, fmt: fmtPct1 },
   ];
   const loadedCols = ordered.filter(c => !c.loading);
-  // Only render a metric row if at least one LOADED company can supply it (drops universally-empty rows).
+  // Render a row if it's alwaysShow (NRR/Customers/EPS-impact — honest "—" matters) OR at least one
+  // LOADED company can supply it (drops universally-empty rows for the optional fetched metrics).
   const metrics = (bankMode ? BANK_METRICS : STD_METRICS)
-    .filter(m => loadedCols.length === 0 || loadedCols.some(c => m.get(c) != null));
+    .filter(m => m.alwaysShow || loadedCols.length === 0 || loadedCols.some(c => m.get(c) != null));
 
   const nCols = ordered.length;
+  // Balance-sheet as-of range across the comp set (2B-2): columns anchor at DIFFERENT dates (each filer's
+  // latest interim, or its FY-end when no interim LTM), so state the RANGE as one note rather than one date.
+  const bsDates = ordered.map(c => c.bsAsOf).filter(Boolean).sort();
+  const bsRange = bsDates.length ? (bsDates[0] === bsDates[bsDates.length - 1] ? bsDates[0] : `${bsDates[0]} – ${bsDates[bsDates.length - 1]}`) : null;
   const methodLabel = customPeers ? 'Custom set' : 'Auto-selected';
-  const subtitle = `Operating & valuation screen · ${nCols} ${nCols === 1 ? 'company' : 'companies'} · ${methodLabel} · target shaded`;
+  // Honest, understated provenance of the auto peer set (from /api/peers `source`). Reads like a source
+  // citation — confidence level, not a warning. Custom (user-edited) sets carry their own note instead.
+  const PEER_SOURCE_LABEL = {
+    curated: 'Peer set: curated',
+    sic: 'Peers selected by industry classification (SIC)',
+    'sector-default': 'Peers selected by sector (approximated)',
+    'broad-default': 'Limited peer coverage — broad-market proxies shown',
+  };
+  const peerProvenance = customPeers
+    ? 'Peer set: custom (user-edited)'
+    : (peersSuppressed
+        ? 'No comparable public peers identified — peer screen omitted (broad-market / cross-sector proxies withheld rather than shown as false comps); sector-median EV/Revenue likewise suppressed from valuation'
+        : (peerSource ? PEER_SOURCE_LABEL[peerSource] : null));
+  const subtitle = `Acquirer + target + peer screen · ${nCols} ${nCols === 1 ? 'company' : 'companies'} · ${methodLabel} · actuals on LTM basis (columns marked "· FY" lack interim data) · target shaded`;
+  // Surface each subject's LTM period-end so the near-alignment is transparent (not hidden): the LTM basis
+  // aligns the companies' measurement windows to within ~1 month, vs a multi-month fiscal-year-end offset.
+  const asOfShort = (d) => { if (!d) return null; const t = new Date(d + 'T12:00:00Z'); return t.toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) + " '" + String(t.getUTCFullYear()).slice(2); };
+  const acqAsOf = asOfShort(ordered.find(c => c.isAcquirer)?.ltmAsOf);
+  const tgtAsOf = asOfShort(ordered.find(c => c.isTarget)?.ltmAsOf);
 
   // Column width: metric label gets a fixed share; companies split the rest evenly.
   const labelW = 132;
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit A">
-      <PageHeader title="Comparable Public Companies" subtitle={subtitle} />
+      <PageHeader title="Public Company Screen" subtitle={subtitle} />
 
       <div style={{ padding: '6px 22px 0', display: 'flex', justifyContent: 'flex-end' }}>
         {targetTicker && (
@@ -222,6 +357,21 @@ export function SectionComparables({ target, acquirer, pageNum }) {
           </button>
         )}
       </div>
+
+      {peersSuppressed && (
+        <div style={{ margin: '4px 22px 0', padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderLeft: '4px solid #B45309', borderRadius: 4 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: '#92400E', marginBottom: 2 }}>
+            No comparable public peers identified — comparables omitted
+          </div>
+          <div style={{ fontSize: 10, color: '#78350F', lineHeight: 1.45 }}>
+            The automatic screen resolved only broad-market / cross-sector proxies (no true same-industry public
+            peers), which are not meaningful comparables. Rather than present them as comps, the peer columns are
+            withheld; only {acquirerTicker ? 'the acquirer and target' : 'the target'} — real, deal-specific — are
+            shown, and the sector-median EV/Revenue is likewise suppressed from the valuation. Use “Edit Peers” to
+            set a custom comparable set, or see the target's latest 10-K for its stated peer group.
+          </div>
+        </div>
+      )}
 
       <div style={{ padding: '8px 22px 30px', overflowX: 'auto' }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed', fontVariantNumeric: 'tabular-nums' }}>
@@ -244,7 +394,7 @@ export function SectionComparables({ target, acquirer, pageNum }) {
                 }}>
                   <div style={{ fontSize: 10.5, fontWeight: 700, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>
                   <div style={{ fontSize: 8.5, fontWeight: 600, color: c.isTarget ? '#FCD34D' : '#9DB4D4', marginTop: 1 }}>
-                    {c.ticker}{c.isTarget ? ' • TARGET' : ''}
+                    {c.ticker}{c.isTarget ? ' • TARGET' : c.isAcquirer ? ' • ACQUIRER' : ''}{!c.loading && c.revBasis === 'FY' ? ' · FY' : ''}
                   </div>
                 </th>
               ))}
@@ -256,22 +406,26 @@ export function SectionComparables({ target, acquirer, pageNum }) {
             )}
             {metrics.map((m, ri) => (
               <tr key={m.label}>
-                <td style={{ padding: '6px 8px', background: ri % 2 ? '#F9FAFB' : '#fff', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10.5, fontWeight: 600, color: NAVY }}>
+                <td style={{ padding: '6px 8px', background: m.impact ? '#EEF4FB' : (ri % 2 ? '#F9FAFB' : '#fff'), borderTop: m.impact ? `2px solid ${NAVY}` : 'none', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10.5, fontWeight: m.impact ? 700 : 600, color: NAVY }}>
                   {m.label}{m.unit ? <span style={{ color: '#9CA3AF', fontWeight: 400 }}> ({m.unit})</span> : ''}
                 </td>
                 {ordered.map(c => {
                   const flagged = c.loading ? false : (m.flagged ? m.flagged(c) : false);
-                  const val = c.loading ? '…' : (flagged ? '⚠' : m.fmt(m.get(c)));
-                  const negative = !c.loading && typeof m.get(c) === 'number' && m.get(c) < 0;
+                  const raw = c.loading ? null : m.get(c);
+                  const val = c.loading ? '…' : (flagged ? '⚠' : m.fmt(raw));
+                  const negative = typeof raw === 'number' && raw < 0;
+                  // EPS-impact row: accretive (+) green, dilutive (−) red, like the deck's verdict colors.
+                  const impactColor = m.impact && typeof raw === 'number' ? (raw >= 0 ? '#166534' : '#DC2626') : null;
                   return (
                     <td key={c.ticker} style={{
                       padding: '6px 6px', textAlign: 'right', fontSize: 10.5,
-                      background: c.isTarget ? TARGET_TINT : (ri % 2 ? '#F9FAFB' : '#fff'),
+                      background: c.isTarget ? TARGET_TINT : (m.impact ? '#F4F8FD' : (ri % 2 ? '#F9FAFB' : '#fff')),
+                      borderTop: m.impact ? `2px solid ${NAVY}` : 'none',
                       borderBottom: `1px solid ${GRAY_BORDER}`,
                       borderLeft: c.isTarget ? `2px solid ${TARGET_BORDER}` : 'none',
                       borderRight: c.isTarget ? `2px solid ${TARGET_BORDER}` : 'none',
-                      color: flagged ? '#B45309' : negative ? '#DC2626' : '#111827',
-                      fontWeight: c.isTarget ? 700 : 500,
+                      color: impactColor || (flagged ? '#B45309' : negative ? '#DC2626' : '#111827'),
+                      fontWeight: (c.isTarget || m.impact) ? 700 : 500,
                     }}>
                       {val}
                     </td>
@@ -286,9 +440,10 @@ export function SectionComparables({ target, acquirer, pageNum }) {
       {editOpen && (
         <EditPeersModal autoPeers={autoPeers} customPeers={customPeers} onSave={handleSavePeers} onClose={() => setEditOpen(false)} />
       )}
-      {sourceLine && (
+      {(sourceLine || peerProvenance) && (
         <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
-          {sourceLine} Operating figures are GAAP from SEC filings; market cap and EV use live price × reported shares.
+          {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}
+          Revenue growth and Op Margin/Income (NTM·NG) are forward analyst consensus (non-GAAP) from FMP; market cap &amp; cash are point-in-time. Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile (Exhibit C) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch. {peerProvenance && <span>{peerProvenance}.</span>}
         </div>
       )}
     </PageFrame>

@@ -57,17 +57,24 @@ export function calcAllInFeeEstimate(dealSizeM) {
 export function calcSuggestedSynergy(target, acquirer, year) {
   const bankMode = isBankDeal(target, acquirer);
   if (bankMode) {
-    const combinedNIE = (target?.nonInterestExpense || 0) + (acquirer?.nonInterestExpense || 0);
-    // If bank facts have loaded, use NIE-based rates; otherwise fall through to revenue fallback.
-    if (combinedNIE > 0) {
+    // Synergies are bounded by the TARGET being absorbed — scale to the TARGET's non-interest
+    // expense, not the combined figure (same fix as the standard-mode revenue branch: a giant bank
+    // can't wring more cost savings out of a small target just by being large).
+    const targetNIE = target?.nonInterestExpense || 0;
+    // If target bank facts have loaded, use NIE-based rates; otherwise fall through to revenue fallback.
+    if (targetNIE > 0) {
       const rates = { 1: 0.05, 2: 0.08, 3: 0.11 };
-      return Math.round(combinedNIE * (rates[year] || 0.05));
+      return Math.round(targetNIE * (rates[year] || 0.05));
     }
   }
-  const combinedRev = (target?.revenue || 0) + (acquirer?.revenue || 0);
-  if (!(combinedRev > 0)) return null;
+  // Synergies are bounded by the TARGET being absorbed, not the combined entity — a giant acquirer
+  // can't wring more savings out of a small target just by being large. Scale to the TARGET's revenue
+  // (the standard rough heuristic), NOT combined revenue: scaling to combined let UNH ($448B) inflate
+  // ADBE's Year-1 synergies to $9.4B — larger than ADBE's entire net income (the bug this fixes).
+  const targetRev = target?.revenue || 0;
+  if (!(targetRev > 0)) return null;
   const rates = { 1: 0.02, 2: 0.035, 3: 0.05 };
-  return Math.round(combinedRev * (rates[year] || 0.02));
+  return Math.round(targetRev * (rates[year] || 0.02));
 }
 
 // ── Tooltip builders ──────────────────────────────────────────────────────────
@@ -79,7 +86,7 @@ export function buildOfferPriceTooltip(target) {
 
   const peerPEPrice = eps > 0 ? parseFloat((eps * 15).toFixed(2)) : null;
   const evEBITDAPrice = (shares > 0 && ebitda > 0) ? parseFloat(((ebitda * 12) / shares).toFixed(2)) : null;
-  const isFinancialCo = isFinancial(target?.companyType);
+  const isFinancialCo = isFinancial(target); // OBJECT → SIC fallback fires for banks /quote tags 'standard'
 
   const inputs = [];
   if (sharePrice > 0) {
@@ -168,32 +175,26 @@ export function buildSynergyTooltip(target, acquirer, year) {
   const resultStr = suggested !== null ? fmtMoneyDual(suggested) : 'Insufficient data';
 
   if (bankMode) {
-    const combinedNIE = (target?.nonInterestExpense || 0) + (acquirer?.nonInterestExpense || 0);
     return {
-      formula: `Year ${year} synergies = combined non-interest expense × ${(rate * 100).toFixed(0)}%`,
+      formula: `Year ${year} synergies = target non-interest expense × ${(rate * 100).toFixed(0)}%`,
       inputs: [
-        { label: 'Acquirer non-interest expense', value: fmtMoney(acquirer?.nonInterestExpense || 0) },
-        { label: 'Target non-interest expense',   value: fmtMoney(target?.nonInterestExpense || 0) },
-        { label: 'Combined non-interest expense', value: fmtMoney(combinedNIE) },
-        { label: `Year ${year} cost-takeout rate`, value: `${(rate * 100).toFixed(0)}% of combined expense base` },
+        { label: 'Target non-interest expense',     value: fmtMoney(target?.nonInterestExpense || 0) },
+        { label: `Year ${year} cost-takeout rate`,  value: `${(rate * 100).toFixed(0)}% of target expense base` },
       ],
       result: resultStr,
-      notes: 'Bank M&A synergies are overwhelmingly cost-driven. Target synergies of 25–35% of target expense base over 3 years is the historical benchmark; revenue synergies typically realize at 30–50% of estimated value. This tool models cost synergies only — branch consolidation, technology integration, and overlapping operations are the primary levers.',
+      notes: 'Bank M&A synergies are overwhelmingly cost-driven and are bounded by the TARGET being absorbed — a larger acquirer cannot wring more savings from a small target. Target synergies of 25–35% of the target expense base over 3 years is the historical benchmark; revenue synergies typically realize at 30–50% of estimated value. This tool models cost synergies only — branch consolidation, technology integration, and overlapping operations are the primary levers.',
       sources: ['Federal Reserve Bank merger studies', 'Oliver Wyman Banking M&A Insights'],
     };
   }
 
-  const combinedRev = (target?.revenue || 0) + (acquirer?.revenue || 0);
   return {
-    formula: `Year ${year} synergies = combined revenue × ${(rate * 100).toFixed(1)}%`,
+    formula: `Year ${year} synergies = target revenue × ${(rate * 100).toFixed(1)}%`,
     inputs: [
-      { label: 'Acquirer revenue',   value: fmtMoney(acquirer?.revenue || 0) },
-      { label: 'Target revenue',     value: fmtMoney(target?.revenue || 0) },
-      { label: 'Combined revenue',   value: fmtMoney(combinedRev) },
+      { label: 'Target revenue',                value: fmtMoney(target?.revenue || 0) },
       { label: `Year ${year} realization rate`, value: `${(rate * 100).toFixed(1)}% (industry rule of thumb)` },
     ],
     result: resultStr,
-    notes: 'Combined estimate: ~55% cost synergies (headcount, facility consolidation, procurement) and ~45% revenue synergies (cross-sell, market expansion). Synergies typically ramp from ~2% in Year 1 to ~5% by Year 3 as integration completes. Real deals often track cost and revenue synergies separately — this tool combines them for simplicity. Actual realization historically averages 60–70% of announced figures.',
+    notes: 'Synergies are scaled to the TARGET being absorbed (target revenue), not the combined entity — scaling to combined revenue would let a large acquirer inflate synergies beyond the entire earnings of the target. The estimate blends ~55% cost synergies (headcount, facility consolidation, procurement) and ~45% revenue synergies (cross-sell, market expansion). The realization rate ramps from ~2% in Year 1 to ~5% by Year 3 as integration completes. Actual realization historically averages 60–70% of announced figures.',
     sources: ['Bain & Company M&A Practitioners Report', 'Damodaran corporate finance lectures'],
   };
 }

@@ -37,12 +37,36 @@ function pick(ns, names, unit = 'USD') {
   return best;
 }
 
+// Period-MATCHED pick (Pass A): the annual (10-K/20-F) entry for the first concept in `names` whose
+// period-END equals `refEnd` (the revenue period) — mirrors server.js pickMatched's discipline (never
+// returns a stale/discontinued tag from a DIFFERENT period, the KO-class trap). Duration concepts are
+// constrained to a full-year span (350–380 days) so a same-END quarter can't be mistaken for the annual
+// (critical for a NEGATIVE EPS, where a naive max-val would wrongly prefer the less-negative quarter).
+// Instant balance-sheet concepts (Assets/Equity — no `start`) pass through. null → honest single/missing.
+function pickAtEnd(ns, names, refEnd, unit = 'USD') {
+  if (!refEnd) return null;
+  for (const name of names) {
+    const entries = ns[name]?.units?.[unit];
+    if (!entries) continue;
+    const matches = entries.filter(e => {
+      if (e.form !== '10-K' && e.form !== '20-F') return false;
+      if (e.end !== refEnd) return false;
+      if (e.start) { const span = (Date.parse(e.end) - Date.parse(e.start)) / 86400000; return span >= 350 && span <= 380; }
+      return true; // instant (balance-sheet) concept — no start
+    });
+    if (!matches.length) continue;
+    const chosen = matches.reduce((a, e) => ((e.filed || '') > (a.filed || '') ? e : a), matches[0]); // latest restatement
+    return { val: chosen.val, end: chosen.end, fy: chosen.fy, fp: chosen.fp, form: chosen.form };
+  }
+  return null;
+}
+
 function makeField(entry, valueInM = true) {
   if (!entry) return null;
   return {
     value: valueInM ? inM(entry.val) : entry.val,
     asOf:  entry.end,
-    period: { fy: entry.fy, fp: entry.fp, form: entry.form },
+    period: { fy: entry.fy, fp: entry.fp, form: entry.form, end: entry.end }, // end date = the cross-source match key
     source: 'edgar',
   };
 }
@@ -65,25 +89,47 @@ async function fetchFields(cik) {
     : ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet',
        'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense']);
 
-  const opIncomeEntry = pick(ns, useIfrs
+  // Revenue's period-end is the ONE anchor for the whole §16 EDGAR page — every NON-anchor financial row
+  // period-matches to it (pickAtEnd) so a discontinued tag's stale latest-end can't win (JPM debt @2013
+  // $267.9B, cash @2018 $278.8B). Revenue itself stays pick() — it DEFINES this anchor. sharesOutstanding
+  // stays latestAnnualEntry (its count is often cover-dated post-FYE, so pickAtEnd would null legit counts).
+  const refEnd = revenueEntry?.end;
+
+  const opIncomeEntry = pickAtEnd(ns, useIfrs
     ? ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax']
-    : ['OperatingIncomeLoss']);
+    : ['OperatingIncomeLoss'], refEnd);
 
-  const netIncomeEntry = pick(ns, useIfrs
+  const netIncomeEntry = pickAtEnd(ns, useIfrs
     ? ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss']
-    : ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic']);
+    : ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'], refEnd);
 
-  const cashEntry = pick(ns, useIfrs
+  const cashEntry = pickAtEnd(ns, useIfrs
     ? ['CashAndCashEquivalents']
-    : ['CashAndCashEquivalentsAtCarryingValue']);
+    : ['CashAndCashEquivalentsAtCarryingValue'], refEnd);
 
-  const debtEntry = pick(ns, useIfrs
+  // GAAP list mirrors /quote's pickMatched (server.js:503): `LongTermDebtAndCapitalLeaseObligations` is a
+  // FALLBACK after the primaries. Some filers (KO from FY2024) DROP `LongTermDebt`/`LongTermDebtNoncurrent`
+  // and report long-term debt only under this lease-inclusive concept. pickAtEnd period-matches to Revenue's
+  // end (parity fix): KO's lease concept IS tagged at the current FY end → kept ($42.12B); JPM's only tag is
+  // a discontinued `LongTermDebt` @2013 → no match at 2025 → null → FMP cross-check fills current-primary
+  // (was the 12-yr-stale $267.9B). Clean filers (CRM/ADBE/HD) unchanged — their debt is at Revenue's end.
+  const debtEntry = pickAtEnd(ns, useIfrs
     ? ['LongtermBorrowings', 'Borrowings', 'NoncurrentPortionOfLongtermBorrowings']
-    : ['LongTermDebt', 'LongTermDebtNoncurrent']);
+    : ['LongTermDebt', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations'], refEnd);
 
-  // OCF and CapEx always from us-gaap (even for IFRS filers that also tag us-gaap)
-  const ocfEntry   = pick(gaap, ['NetCashProvidedByUsedInOperatingActivities']);
-  const capexEntry = pick(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment']);
+  // §16 expansion (Pass A) — four EDGAR-SOT vs FMP-cross rows, PERIOD-MATCHED to revenue's end so a
+  // discontinued tag can't strand a stale value. EPS is per-share (USD/shares, NOT inM); GrossProfit /
+  // Assets / Equity are $ → inM like Revenue. Foreign/degraded (no concept at refEnd) → null → single/FMP.
+  const epsEntry    = pickAtEnd(ns, useIfrs ? ['DilutedEarningsLossPerShare', 'BasicEarningsLossPerShare'] : ['EarningsPerShareDiluted', 'EarningsPerShareBasic'], refEnd, 'USD/shares');
+  const grossEntry  = pickAtEnd(ns, ['GrossProfit'], refEnd);
+  const assetsEntry = pickAtEnd(ns, ['Assets'], refEnd);
+  const equityEntry = pickAtEnd(ns, useIfrs ? ['Equity', 'EquityAttributableToOwnersOfParent'] : ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'], refEnd);
+
+  // OCF and CapEx always from us-gaap (even for IFRS filers that also tag us-gaap). BOTH legs period-matched
+  // to refEnd so FCF = OCF + CapEx stays same-period; if either leg has no fact at refEnd → null → the
+  // `if (ocfEntry && capexEntry)` guard below yields FCF "—", never a half-computed cross-period figure.
+  const ocfEntry   = pickAtEnd(gaap, ['NetCashProvidedByUsedInOperatingActivities'], refEnd);
+  const capexEntry = pickAtEnd(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment'], refEnd);
 
   // Shares: point-in-time balance sheet count preferred over weighted average
   const sharesEntry =
@@ -97,7 +143,7 @@ async function fetchFields(cik) {
     freeCashFlow = {
       value: inM(ocfEntry.val) + inM(capexEntry.val),
       asOf:  ocfEntry.end,
-      period: { fy: ocfEntry.fy, fp: ocfEntry.fp, form: ocfEntry.form },
+      period: { fy: ocfEntry.fy, fp: ocfEntry.fp, form: ocfEntry.form, end: ocfEntry.end },
       source: 'edgar',
     };
   }
@@ -105,7 +151,7 @@ async function fetchFields(cik) {
   const sharesField = sharesEntry ? {
     value: inM(sharesEntry.val),
     asOf:  sharesEntry.end,
-    period: { fy: sharesEntry.fy, fp: sharesEntry.fp, form: sharesEntry.form },
+    period: { fy: sharesEntry.fy, fp: sharesEntry.fp, form: sharesEntry.form, end: sharesEntry.end },
     source: 'edgar',
   } : null;
 
@@ -115,6 +161,10 @@ async function fetchFields(cik) {
     netIncome:         makeField(netIncomeEntry),
     cash:              makeField(cashEntry),
     totalDebt:         makeField(debtEntry),
+    grossProfit:             makeField(grossEntry),
+    epsDiluted:              makeField(epsEntry, false),  // per-share — NOT inM
+    totalAssets:             makeField(assetsEntry),
+    totalStockholdersEquity: makeField(equityEntry),
     freeCashFlow,
     sharesOutstanding: sharesField,
   };

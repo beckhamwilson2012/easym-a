@@ -1,7 +1,7 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtPct } from '../shared/deckTokens';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, nonGaapFigures, isBankDeal, isRestaurant } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 
 // Lighter shade of SF_BLUE used for the target segment of each stacked bar.
@@ -22,17 +22,26 @@ function splitContribution(a, b) {
   return { aVal: aNum, bVal: bNum, aPct: (aNum / total) * 100, bPct: (bNum / total) * 100, nm: false };
 }
 
-export function SectionRelativeContribution({ target, acquirer, deal, pageNum }) {
+export function SectionRelativeContribution({ target, acquirer, deal, model, pageNum }) {
   const aName = acquirer.name || acquirer.ticker || 'Acquirer';
   const bName = target.name || target.ticker || 'Target';
 
   // ── Standalone inputs (all $M) ──────────────────────────────────────────────
   const aRev = parseFloat(acquirer.revenue) || 0;
   const bRev = parseFloat(target.revenue) || 0;
-  const aGP = aRev * 0.65; // est.
-  const bGP = bRev * 0.65; // est.
-  const aOI = parseFloat(acquirer.ebitda) || 0; // est. operating income ≈ EBITDA
-  const bOI = parseFloat(target.ebitda) || 0;   // est.
+  // Real gross profit from the filing; 65% fallback only when a filer doesn't tag it.
+  const aRealGP = parseFloat(acquirer.grossProfit), bRealGP = parseFloat(target.grossProfit);
+  const gpIsEst = !Number.isFinite(aRealGP) || !Number.isFinite(bRealGP);
+  const aGP = Number.isFinite(aRealGP) ? aRealGP : aRev * 0.65;
+  const bGP = Number.isFinite(bRealGP) ? bRealGP : bRev * 0.65;
+  // Operating income on the DECK'S basis (so §I agrees with §4/§5/§6): reported NON-GAAP operating
+  // income when the deal is non-GAAP (same /api/nongaap figures §5 shows — e.g. TEAM +$1,287M), else
+  // GAAP operating income. NOT EBITDA (which is negative for loss-making filers → false "n/m").
+  const ngA = deal?.basis === 'Non-GAAP' ? nonGaapFigures(acquirer) : null;
+  const ngB = deal?.basis === 'Non-GAAP' ? nonGaapFigures(target)   : null;
+  const aOI = ngA?.operatingIncome ?? (parseFloat(acquirer.operatingIncome) || 0);
+  const bOI = ngB?.operatingIncome ?? (parseFloat(target.operatingIncome)   || 0);
+  const oiNonGaap = ngA?.operatingIncome != null && ngB?.operatingIncome != null;
   // ── Free Cash Flow (Fix 3): prefer the fetched EDGAR FCF from the verified-data layer; fall
   //    back to the net-income proxy ONLY when a side's fetched FCF is genuinely missing. The proxy
   //    is misleading for growth-stage targets (e.g. TEAM net income is negative but FCF is +$1.5B,
@@ -51,37 +60,73 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
     `CONSUMED=${fcfFromProxy ? 'NIproxy(fallback)' : 'fetchedFCF'}`
   );
 
-  // ── Pro-forma ownership split (shared convention) ───────────────────────────
-  const acqShares = parseFloat(acquirer.shares) || 0;
-  const newShares = parseFloat(deal.newSharesIssued) || 0;
-  const totalShares = acqShares + newShares;
-  const acqOwnPct = totalShares > 0 ? (acqShares / totalShares) * 100 : 0;
-  const tgtOwnPct = totalShares > 0 ? (newShares / totalShares) * 100 : 0;
+  // ── Target ownership % — used ONLY by the thesis line below (the "for Z% of combined equity"
+  //    comparison that is the analytical point of a contribution slide). Ownership is NOT charted here;
+  //    it is the §H donut. Same C1 source (src/lib/deckModel.js) so the thesis % matches §H. ──
+  const d = model?.derived || {};
+  const acqShares = d.preDealShares  ?? (parseFloat(acquirer.shares) || 0);
+  const newShares = d.newShares      ?? (parseFloat(deal.newSharesIssued) || 0);
+  const totalShares = d.proFormaShares ?? (acqShares + newShares);
+  const tgtOwnPct = d.ownershipNewPct ?? (totalShares > 0 ? (newShares / totalShares) * 100 : 0);
+  const acqOwnPct = d.ownershipExistingPct ?? (totalShares > 0 ? (acqShares / totalShares) * 100 : 0);
   const ownNm = totalShares <= 0;
 
-  // ── Metric rows ─────────────────────────────────────────────────────────────
-  const metrics = [
-    { label: 'Revenue', isMoney: true, ...splitContribution(aRev, bRev) },
-    { label: 'Gross Profit (est.)', isMoney: true, ...splitContribution(aGP, bGP) },
-    { label: 'Operating Income (est. ≈ EBITDA)', isMoney: true, ...splitContribution(aOI, bOI) },
-    { label: fcfLabel, isMoney: true, ...splitContribution(aFCF, bFCF) },
-    {
-      label: 'Pro-Forma Ownership',
-      isMoney: false,
-      aVal: acqShares,
-      bVal: newShares,
-      aPct: ownNm ? null : acqOwnPct,
-      bPct: ownNm ? null : tgtOwnPct,
-      nm: ownNm,
-    },
-  ];
+  // ── Bank deals: gross profit and operating income don't apply (and the 65%×revenue gross-profit
+  //    fallback would be fabricated). Use the bank income stack instead — Net Interest Income, Total
+  //    Revenue, Net Income — from the threaded bank facts / filings (same source as §4/§5). ──────────
+  const bankMode = isBankDeal(target, acquirer);
+  // Restaurant deals: drop the gross-profit contribution row (its false ~74%/65% margin skews the split) —
+  // run the split on Revenue / Operating Income / FCF only. Single source: isRestaurant (Fix B).
+  const restaurantDeal = isRestaurant(target) || isRestaurant(acquirer);
+  const aNII = parseFloat(acquirer.netInterestIncome) || 0;
+  const bNII = parseFloat(target.netInterestIncome) || 0;
+  const aNI  = parseFloat(acquirer.netIncome) || 0;
+  const bNI  = parseFloat(target.netIncome) || 0;
 
-  const sourceLine = fcfFromProxy
-    ? 'Revenue from SEC EDGAR; gross profit, operating income and free cash flow are estimates (per transaction assumptions). Ownership per deal structure.'
-    : 'Revenue and free cash flow from SEC EDGAR (cash-flow statements); gross profit and operating income are estimates (per transaction assumptions). Ownership per deal structure.';
+  // ── Metric rows ─────────────────────────────────────────────────────────────
+  // CONTRIBUTION metrics only. Ownership (the equity split) is a DIFFERENT concept and lives on §H as a
+  // donut — it is deliberately NOT a bar here (contribution ≠ ownership; do not conflate the two).
+  const metrics = bankMode ? [
+    { label: 'Net Interest Income', isMoney: true, ...splitContribution(aNII, bNII) },
+    { label: 'Total Revenue',       isMoney: true, ...splitContribution(aRev, bRev) },
+    { label: 'Net Income',          isMoney: true, ...splitContribution(aNI, bNI) },
+  ] : [
+    { label: 'Revenue', isMoney: true, ...splitContribution(aRev, bRev) },
+    // Restaurant deals: omit gross profit (false ~74%/65% margin) — never feed it into the split.
+    restaurantDeal ? null : { label: gpIsEst ? 'Gross Profit (est.)' : 'Gross Profit', isMoney: true, ...splitContribution(aGP, bGP) },
+    { label: `Operating Income (${oiNonGaap ? 'Non-GAAP' : 'GAAP'})`, isMoney: true, ...splitContribution(aOI, bOI) },
+    { label: fcfLabel, isMoney: true, ...splitContribution(aFCF, bFCF) },
+  ].filter(Boolean);
+
+  // Thesis sentence (spec §2 Slide 11): "{Acquirer} acquires 100% of {Target}, which contributes
+  // X–Y% of pro forma financials, for Z% of combined equity." Range = target's contribution across
+  // the meaningful $ metrics; Z = target ownership. All inputs already computed above.
+  // Uniform table scale: pick ONE unit from all money values across both companies so the underlying-
+  // values table never mixes $B and $M (fmtMoneyTable auto-switched per value at $10B). Stays in $M when
+  // a small target value is present, so it never collapses to "$0.xB" and loses the target's signal.
+  const moneyScale = pickScale(metrics.filter((m) => m.isMoney).flatMap((m) => [m.aVal, m.bVal]));
+  const moneyScaleLabel = moneyScale === 'B' ? '$B' : '$M';
+
+  const moneyPcts = metrics.filter(m => m.isMoney && !m.nm && m.bPct != null).map(m => m.bPct);
+  const thesis = (moneyPcts.length && !ownNm)
+    ? `${aName} acquires 100% of ${bName}, which contributes ${Math.round(Math.min(...moneyPcts))}–${Math.round(Math.max(...moneyPcts))}% of pro forma financials, for ${fmtPctFloor(tgtOwnPct, 0)} of combined equity.`
+    : null;
+
+  const gpPhrase = gpIsEst
+    ? 'gross profit estimated at 65% of revenue where a filer does not break it out'
+    : 'gross profit from SEC filings';
+  const fcfClause = fcfFromProxy ? 'free cash flow estimated (≈ net income)' : 'free cash flow from SEC EDGAR cash-flow statements';
+  const oiClause = oiNonGaap
+    ? 'operating income is reported Non-GAAP (per the fiscal year-end earnings 8-K, matching the standalone P&L)'
+    : 'operating income is GAAP (SEC filings)';
+  const sourceLine = bankMode
+    ? 'Net interest income, total revenue, and net income as reported in SEC filings (10-K / earnings release). ' +
+      'Contribution is each company’s share of the combined financials; the equity split is shown separately on the Trading Profile slide.'
+    : `Revenue from SEC EDGAR; ${restaurantDeal ? 'gross profit omitted (restaurant cost structure — food-only COGS not separately meaningful)' : gpPhrase}; ${fcfClause}; ${oiClause}. ` +
+      'Contribution is each company’s share of the combined financials; the equity split is shown separately on the Trading Profile slide.';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit I">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit L">
       <PageHeader
         title="Relative Contribution Analysis"
         subtitle={`${aName} and ${bName} — share of combined entity by metric`}
@@ -162,11 +207,44 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
               })()}
             </div>
           ))}
+
+          {/* ── Pro Forma Ownership bar (the EQUITY split) — set apart from the contribution bars above,
+              because contribution ≠ ownership; the point of the slide is comparing the two. ── */}
+          {!ownNm && (
+            <div style={{ marginTop: 4, paddingTop: 12, borderTop: `1px dashed ${GRAY_BORDER}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pro Forma Ownership (equity)</span>
+                <span style={{ fontSize: 9, fontStyle: 'italic', color: '#6B7280' }}>equity split — compare vs. contribution above</span>
+              </div>
+              <div style={{ position: 'relative', height: 26 }}>
+                <div style={{ display: 'flex', height: 26, borderRadius: 4, overflow: 'hidden', border: `1px solid ${GRAY_BORDER}` }}>
+                  <div style={{ width: `${acqOwnPct}%`, background: SF_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
+                    {acqOwnPct >= 12 && <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{fmtPct(acqOwnPct, 0)}</span>}
+                  </div>
+                  <div style={{ width: `${tgtOwnPct}%`, background: TARGET_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
+                    {tgtOwnPct >= 12 && <span style={{ fontSize: 11, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>{fmtPct(tgtOwnPct, 0)}</span>}
+                  </div>
+                </div>
+                {acqOwnPct < 12 && <span style={{ position: 'absolute', right: '100%', top: '50%', transform: 'translateY(-50%)', marginRight: 4, fontSize: 10, fontWeight: 700, color: SF_BLUE, whiteSpace: 'nowrap' }}>{fmtPctFloor(acqOwnPct, 0)}</span>}
+                {tgtOwnPct < 12 && <span style={{ position: 'absolute', left: '100%', top: '50%', transform: 'translateY(-50%)', marginLeft: 4, fontSize: 10, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>{fmtPctFloor(tgtOwnPct, 0)}</span>}
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* ── Thesis sentence (spec §2 Slide 11) ──────────────────────────────── */}
+        {thesis && (
+          <div style={{
+            margin: '0 0 16px', padding: '10px 14px', borderLeft: `3px solid ${SF_BLUE}`,
+            background: ALT_ROW, borderRadius: 4, fontSize: 12, color: NAVY, lineHeight: 1.5, fontWeight: 600,
+          }}>
+            {thesis}
+          </div>
+        )}
 
         {/* ── Underlying $ / share values table ───────────────────────────────── */}
         <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-          Underlying Values
+          Underlying Values ({moneyScaleLabel})
         </div>
         <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
           {/* Header */}
@@ -179,8 +257,8 @@ export function SectionRelativeContribution({ target, acquirer, deal, pageNum })
           </div>
 
           {metrics.map((m, i) => {
-            const aDisp = m.isMoney ? fmtMoneyTable(m.aVal) : `${(parseFloat(m.aVal) || 0).toFixed(1)}M sh`;
-            const bDisp = m.isMoney ? fmtMoneyTable(m.bVal) : `${(parseFloat(m.bVal) || 0).toFixed(1)}M sh`;
+            const aDisp = m.isMoney ? fmtScaled(m.aVal, moneyScale) : `${(parseFloat(m.aVal) || 0).toFixed(1)}M sh`;
+            const bDisp = m.isMoney ? fmtScaled(m.bVal, moneyScale) : `${(parseFloat(m.bVal) || 0).toFixed(1)}M sh`;
             const aPctDisp = m.nm ? 'n/m' : fmtPct(m.aPct, 1);
             const bPctDisp = m.nm ? 'n/m' : fmtPct(m.bPct, 1);
             return (

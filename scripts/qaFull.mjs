@@ -19,7 +19,7 @@ try {
   if (m) { await p.evaluate(v => { const el = document.querySelector('input[name="offerPricePerShare"]'); const s = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; s.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); el.blur(); }, m[1]); await sleep(400); }
   console.log(`### QA BUILD: acquirer=${AT} target=${TT} | suggested offer=$${m ? m[1] : '?'} ###`);
   await clk(/Build merger model/); await sleep(1300); await p.mouse.click(750, 400);
-  for (let idx = 0; idx <= 15; idx++) {
+  for (let idx = 0; idx <= 16; idx++) {
     if (idx > 0) { await p.mouse.click(750, 400); for (let k = 0; k < idx; k++) { await p.keyboard.press('ArrowRight'); await sleep(360); } }
     await sleep(1400);
     console.log(`\n=================== SECTION ${idx} ===================`);

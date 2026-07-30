@@ -9,7 +9,7 @@ import { SuggestionBadge } from './components/shared/SuggestionBadge';
 import { ExplainButton } from './components/shared/ExplainButton';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { CollapsibleNote } from './components/shared/CollapsibleNote';
-import { fmtMoneyDual, fmtMoney, fmtPerShare } from './components/deck/shared/deckTokens';
+import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial } from './components/deck/shared/deckTokens';
 import {
   calcSuggestedOfferPrice,
   calcSuggestedTransactionFees,
@@ -36,6 +36,53 @@ function fetchCompanyData(symbol) {
   return fetch(`http://localhost:3001/quote?symbol=${symbol}`)
     .then(r => r.json())
     .then(data => { if (data.error) throw new Error(data.error); return data; });
+}
+
+// Reported annual NON-GAAP figures (operating income / net income / diluted EPS) from the fiscal
+// year-end earnings 8-K, period-matched to the deck FY and code-reconciled server-side. Display layer
+// only — the accretion/pro-forma math still runs off GAAP. Returns the full payload (or null on any
+// failure) so the deck can fall back to GAAP and label the basis honestly; never throws.
+function fetchNonGaap(symbol) {
+  return fetch(`http://localhost:3001/api/nongaap/${symbol}`)
+    .then(r => r.json())
+    .catch(() => null);
+}
+
+// Wait-then-build timeout (#5): a hung non-GAAP fetch must never block the deck forever. After this,
+// build on whatever has settled (resolveAccretionBasis maps a missing side → GAAP, honestly).
+const BASIS_WAIT_TIMEOUT_MS = 22000;
+
+// Human "as of" stamp for the live market price the suggested offer/premium is based on, e.g.
+// "Jun 25, 2026, 2:31 PM". Explains why the suggested price drifts run-to-run (live price moves intraday).
+function fmtPriceAsOf(d) {
+  if (!d) return null;
+  const dt = d instanceof Date ? d : new Date(d);
+  if (isNaN(dt.getTime())) return null;
+  return dt.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// ── Accretion BASIS resolver (Step 3 flip — applied at input assembly, dealCalc helpers unchanged) ──
+// When BOTH companies have a fully-reconciled non-GAAP payload (incl. the filing-sourced dilutedShares),
+// override ONLY the four P&L inputs the accretion math reads — net income (both sides), and the
+// acquirer's reported EPS + diluted shares — so dealCalc.calculate() runs entirely on non-GAAP. If
+// EITHER side is missing/non-reconciling (e.g. any deal with Atlassian), the WHOLE deal stays on GAAP
+// (never a mixed basis). All other inputs (offer, cash%, target cover shares, price, debt, synergies)
+// are untouched, so financing drag and new-share dilution carry over identically. Returns {calcInputs, basis}.
+function resolveAccretionBasis(baseInputs, ngA, ngB) {
+  const usable = (p) => p && p.allReconciled && p.nonGaap
+    && p.nonGaap.operatingIncome != null && p.nonGaap.netIncome != null
+    && p.nonGaap.dilutedEPS != null && p.nonGaap.dilutedShares != null;
+  if (!usable(ngA) || !usable(ngB)) return { calcInputs: baseInputs, basis: 'GAAP' };
+  return {
+    basis: 'Non-GAAP',
+    calcInputs: {
+      ...baseInputs,
+      companyANetIncome:     ngA.nonGaap.netIncome,
+      companyAEPS:           ngA.nonGaap.dilutedEPS,
+      companyADilutedShares: ngA.nonGaap.dilutedShares,
+      companyBNetIncome:     ngB.nonGaap.netIncome,
+    },
+  };
 }
 
 // ── UI components ─────────────────────────────────────────────────────────────
@@ -292,7 +339,7 @@ function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSour
   );
 }
 
-function PremiumCaption({ offerPrice, sharePrice, showUnavailable }) {
+function PremiumCaption({ offerPrice, sharePrice, showUnavailable, asOf }) {
   const price = parseFloat(offerPrice) || 0;
   if (!price) return null;
   if (!sharePrice) {
@@ -308,10 +355,13 @@ function PremiumCaption({ offerPrice, sharePrice, showUnavailable }) {
   const color = (isNeg || premium > 75) ? '#D62B2B'
     : (premium < 20 || premium > 50) ? '#F59E0B'
     : '#10B981';
+  // Premium is computed against the LIVE market price (moves intraday) — stamp the as-of so the
+  // premium's run-to-run drift is explained.
+  const asOfStr = fmtPriceAsOf(asOf);
   return (
     <div style={{ fontSize: 11, color, marginTop: 4, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
       Implied premium: {premium >= 0 ? '+' : ''}{premium.toFixed(1)}%{' '}
-      {isNeg ? 'below' : 'above'} current price (${parseFloat(sharePrice).toFixed(2)})
+      {isNeg ? 'below' : 'above'} live price (${parseFloat(sharePrice).toFixed(2)}){asOfStr ? ` as of ${asOfStr}` : ''}
       <ExplainButton explain={() => explainPremium({ offerPrice: price, marketPrice: sharePrice })} />
     </div>
   );
@@ -376,11 +426,13 @@ const PencilIcon = () => (
 // ── Default state ─────────────────────────────────────────────────────────────
 
 const defaultInputs = {
-  companyARevenue: 0, companyAEBITDA: 0, companyANetIncome: 0,
-  companyAShares: 0, companyAEPS: 0, companyACash: 0, companyADebt: 0,
+  companyARevenue: 0, companyAEBITDA: 0, companyANetIncome: 0, companyAOperatingIncome: 0, companyAGrossProfit: null,
+  companyAShares: 0, companyADilutedShares: 0, companyAEPS: 0, companyACash: 0, companyASti: null, companyADebt: 0,
+  companyABsAsOf: null, companyABsBasis: null,
   currentSharePriceA: 0,
-  companyBRevenue: 0, companyBEBITDA: 0, companyBNetIncome: 0,
-  companyBShares: 0, companyBEPS: 0, companyBCash: 0, companyBDebt: 0,
+  companyBRevenue: 0, companyBEBITDA: 0, companyBNetIncome: 0, companyBOperatingIncome: 0, companyBGrossProfit: null,
+  companyBShares: 0, companyBDilutedShares: 0, companyBEPS: 0, companyBCash: 0, companyBSti: null, companyBDebt: 0,
+  companyBBsAsOf: null, companyBBsBasis: null,
   currentSharePriceB: 0,
   offerPricePerShare: 0, cashPercent: 60, transactionFees: 0,
   synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
@@ -418,8 +470,8 @@ function App() {
   const [showSaved, setShowSaved] = useState(false);
   const [bankFactsA, setBankFactsA] = useState(null);
   const [bankFactsB, setBankFactsB] = useState(null);
-  const [priceStatusA, setPriceStatusA] = useState({ loading: false, price: null, source: null, attempts: [] });
-  const [priceStatusB, setPriceStatusB] = useState({ loading: false, price: null, source: null, attempts: [] });
+  const [priceStatusA, setPriceStatusA] = useState({ loading: false, price: null, source: null, attempts: [], asOf: null });
+  const [priceStatusB, setPriceStatusB] = useState({ loading: false, price: null, source: null, attempts: [], asOf: null });
   const [offerPriceTouched, setOfferPriceTouched] = useState(false);
   const [expandedA, setExpandedA] = useState(false);
   const [expandedB, setExpandedB] = useState(false);
@@ -427,6 +479,23 @@ function App() {
   const [fiscalYearEndA, setFiscalYearEndA] = useState(null);
   const [fiscalYearB, setFiscalYearB] = useState(null);
   const [fiscalYearEndB, setFiscalYearEndB] = useState(null);
+  // Reported annual non-GAAP payloads from /api/nongaap. A = acquirer, B = target.
+  const [nonGaapA, setNonGaapA] = useState(null);
+  const [nonGaapB, setNonGaapB] = useState(null);
+  // Per-company non-GAAP fetch status — disambiguates "still in flight" (wait) from "settled, no usable
+  // result" (build on GAAP). nonGaapX === null is ambiguous on its own (covers both); these don't.
+  const [nonGaapLoadingA, setNonGaapLoadingA] = useState(false);
+  const [nonGaapLoadingB, setNonGaapLoadingB] = useState(false);
+  // Wait-then-build (#5): when Build is clicked while a non-GAAP fetch is still in flight, defer the
+  // build (show a "resolving basis" state) until both settle, so the deck never paints the wrong basis.
+  const [pendingBuild, setPendingBuild] = useState(false);
+  const pendingInputsRef = useRef(null);                 // effectiveInputs snapshot captured at click
+  // "useLatest" mirror so the deferred/timeout build always reads the freshest non-GAAP, never a stale closure.
+  const nonGaapRef = useRef({ a: null, b: null });
+  nonGaapRef.current = { a: nonGaapA, b: nonGaapB };
+  // Basis-resolved inputs the deck reads (non-GAAP when both reconcile, else GAAP) + the basis label.
+  const [resolvedInputs, setResolvedInputs] = useState(null);
+  const [accretionBasis, setAccretionBasis] = useState('GAAP');
 
   const handleChange = (e) => setInputs(prev => ({ ...prev, [e.target.name]: parseFloat(e.target.value) || 0 }));
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
@@ -441,7 +510,7 @@ function App() {
   }, [companyTypeA, companyTypeB, fetchedA, fetchedB]);
 
   const handleSelectA = (symbol) => {
-    setLoadingA(true); setErrorA(''); setBankFactsA(null);
+    setLoadingA(true); setErrorA(''); setBankFactsA(null); setNonGaapA(null); setNonGaapLoadingA(true);
     setPriceStatusA({ loading: true, price: null, source: null, attempts: [] });
     setInputs(prev => ({ ...prev, currentSharePriceA: 0 })); // clear stale price; live fetch resets it
     fetchCompanyData(symbol).then(data => {
@@ -450,14 +519,18 @@ function App() {
       setSicA(data.sic || null); setSicDescriptionA(data.sicDescription || null);
       setFiscalYearA(data.fiscalYear ?? null); setFiscalYearEndA(data.fiscalYearEnd ?? null);
       setInputs(prev => ({ ...prev, companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
-        companyANetIncome: data.netIncome, companyAShares: data.shares, companyAEPS: data.eps,
-        companyACash: data.cash, companyADebt: data.debt,
+        companyANetIncome: data.netIncome, companyAShares: data.shares,
+        companyAOperatingIncome: data.operatingIncome, companyAGrossProfit: data.grossProfit ?? null,
+        companyAFreeCashFlow: data.freeCashFlow ?? null,
+        companyADilutedShares: data.dilutedShares, companyAEPS: data.eps,
+        companyACash: data.cash, companyASti: data.shortTermInvestments ?? null, companyADebt: data.debt,
+        companyABsAsOf: data.balanceSheetAsOf ?? null, companyABsBasis: data.balanceSheetBasis ?? null,
         // Don't clobber a live price that the parallel /api/price fetch may have already set.
         // EDGAR (the acquirer's primary source) returns no sharePrice, so falling back to `|| 0`
         // here would overwrite the live price and force the EPS×15 proxy (0 new shares bug).
         currentSharePriceA: data.sharePrice || prev.currentSharePriceA || 0 }));
       setFetchedA(true); setLoadingA(false);
-      if (data.companyType === 'financial') {
+      if (isFinancial(data)) { // OBJECT → SIC fallback: banks /quote tags 'standard' (JPM/BAC) still get bank facts
         getBankFacts(symbol).then(facts => { if (facts) setBankFactsA(facts); });
       }
     }).catch(() => { setErrorA('Could not load company. Try another.'); setLoadingA(false); setPriceStatusA(p => ({ ...p, loading: false })); });
@@ -468,14 +541,17 @@ function App() {
       if (price != null) {
         setInputs(prev => ({ ...prev, currentSharePriceA: price }));
       }
-      setPriceStatusA({ loading: false, price, source, attempts });
+      setPriceStatusA({ loading: false, price, source, attempts, asOf: price != null ? new Date() : null });
     }).catch(() => {
-      setPriceStatusA({ loading: false, price: null, source: null, attempts: [] });
+      setPriceStatusA({ loading: false, price: null, source: null, attempts: [], asOf: null });
     });
+
+    // Reported non-GAAP (display layer) runs in parallel and never blocks the deck — null on failure.
+    fetchNonGaap(symbol).then(setNonGaapA).catch(() => setNonGaapA(null)).finally(() => setNonGaapLoadingA(false));
   };
 
   const handleSelectB = (symbol) => {
-    setLoadingB(true); setErrorB(''); setBankFactsB(null);
+    setLoadingB(true); setErrorB(''); setBankFactsB(null); setNonGaapB(null); setNonGaapLoadingB(true);
     setPriceStatusB({ loading: true, price: null, source: null, attempts: [] });
     setInputs(prev => ({ ...prev, currentSharePriceB: 0 })); // clear stale price; live fetch resets it
     fetchCompanyData(symbol).then(data => {
@@ -484,12 +560,16 @@ function App() {
       setSicB(data.sic || null); setSicDescriptionB(data.sicDescription || null);
       setFiscalYearB(data.fiscalYear ?? null); setFiscalYearEndB(data.fiscalYearEnd ?? null);
       setInputs(prev => ({ ...prev, companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
-        companyBNetIncome: data.netIncome, companyBShares: data.shares, companyBEPS: data.eps,
-        companyBCash: data.cash, companyBDebt: data.debt,
+        companyBNetIncome: data.netIncome, companyBShares: data.shares,
+        companyBOperatingIncome: data.operatingIncome, companyBGrossProfit: data.grossProfit ?? null,
+        companyBFreeCashFlow: data.freeCashFlow ?? null,
+        companyBDilutedShares: data.dilutedShares, companyBEPS: data.eps,
+        companyBCash: data.cash, companyBSti: data.shortTermInvestments ?? null, companyBDebt: data.debt,
+        companyBBsAsOf: data.balanceSheetAsOf ?? null, companyBBsBasis: data.balanceSheetBasis ?? null,
         // Preserve any live price already set by the parallel /api/price fetch (see handleSelectA).
         currentSharePriceB: data.sharePrice || prev.currentSharePriceB || 0 }));
       setFetchedB(true); setLoadingB(false);
-      if (data.companyType === 'financial') {
+      if (isFinancial(data)) { // OBJECT → SIC fallback: banks /quote tags 'standard' (JPM/BAC) still get bank facts
         getBankFacts(symbol).then(facts => { if (facts) setBankFactsB(facts); });
       }
     }).catch(() => { setErrorB('Could not load company. Try another.'); setLoadingB(false); setPriceStatusB(p => ({ ...p, loading: false })); });
@@ -499,11 +579,55 @@ function App() {
       if (price != null) {
         setInputs(prev => ({ ...prev, currentSharePriceB: price }));
       }
-      setPriceStatusB({ loading: false, price, source, attempts });
+      setPriceStatusB({ loading: false, price, source, attempts, asOf: price != null ? new Date() : null });
     }).catch(() => {
-      setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
+      setPriceStatusB({ loading: false, price: null, source: null, attempts: [], asOf: null });
     });
+
+    // Reported non-GAAP (display layer) runs in parallel and never blocks the deck — null on failure.
+    fetchNonGaap(symbol).then(setNonGaapB).catch(() => setNonGaapB(null)).finally(() => setNonGaapLoadingB(false));
   };
+
+  // Ensures exactly one build per pending cycle (settle vs timeout race; React strict-mode re-invokes).
+  const buildingRef = useRef(false);
+
+  // Build the deck once on the basis-resolved inputs. resolveAccretionBasis is UNCHANGED — this only
+  // controls WHEN it runs (after the non-GAAP fetches settle). Reads the freshest non-GAAP via the ref.
+  const runBuild = (effectiveInputs) => {
+    const { calcInputs, basis } = resolveAccretionBasis(effectiveInputs, nonGaapRef.current.a, nonGaapRef.current.b);
+    const r = calculate(calcInputs);
+    r.basis = basis;
+    setResults(r);
+    setResolvedInputs(calcInputs);
+    setAccretionBasis(basis);
+    setAnalysisRun(true);
+  };
+
+  // Deferred build (no-flicker path): fire once BOTH non-GAAP fetches have SETTLED (neither still
+  // loading) while a build is pending. The deck is held in the "resolving basis" state until then, so it
+  // is built exactly once on the final basis — never GAAP-then-jump.
+  useEffect(() => {
+    if (pendingBuild && !nonGaapLoadingA && !nonGaapLoadingB && !buildingRef.current) {
+      buildingRef.current = true;
+      runBuild(pendingInputsRef.current);
+      setPendingBuild(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingBuild, nonGaapLoadingA, nonGaapLoadingB]);
+
+  // Timeout backstop: a hung fetch must never block the build forever. After BASIS_WAIT_TIMEOUT_MS,
+  // build on whatever has settled (resolveAccretionBasis maps a missing side → GAAP).
+  useEffect(() => {
+    if (!pendingBuild) return undefined;
+    const t = setTimeout(() => {
+      if (buildingRef.current) return;
+      buildingRef.current = true;
+      runBuild(pendingInputsRef.current);
+      setPendingBuild(false);
+    }, BASIS_WAIT_TIMEOUT_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingBuild]);
 
   const handleSubmit = () => {
     const updates = {};
@@ -526,9 +650,17 @@ function App() {
       effectiveInputs = { ...inputs, ...updates };
       setInputs(effectiveInputs);
     }
-    const r = calculate(effectiveInputs);
-    setResults(r);
-    setAnalysisRun(true);
+    // Wait-then-build (#5): the accretion basis must be decided on the FINAL non-GAAP values, not a
+    // cold-cache snapshot. If either selected company's non-GAAP fetch is still in flight, defer — stash
+    // the inputs and show the "resolving basis" state; the settle/timeout effects above run the build
+    // once both settle. Warm cache: neither is loading → build immediately (unchanged behavior).
+    pendingInputsRef.current = effectiveInputs;
+    if (nonGaapLoadingA || nonGaapLoadingB) {
+      buildingRef.current = false;
+      setPendingBuild(true);
+      return;
+    }
+    runBuild(effectiveInputs);
   };
 
   const handleEditInputs = () => setAnalysisRun(false);
@@ -548,6 +680,10 @@ function App() {
     setExpandedA(false); setExpandedB(false);
     setFiscalYearA(null); setFiscalYearEndA(null);
     setFiscalYearB(null); setFiscalYearEndB(null);
+    setNonGaapA(null); setNonGaapB(null);
+    setNonGaapLoadingA(false); setNonGaapLoadingB(false);
+    setPendingBuild(false); buildingRef.current = false;
+    setResolvedInputs(null); setAccretionBasis('GAAP');
   };
 
   const handleSaveAnalysis = () => {
@@ -583,8 +719,11 @@ function App() {
     name: nameB || 'Target Company', ticker: tickerB,
     sic: sicB, sicDescription: sicDescriptionB,
     revenue: inputs.companyBRevenue, ebitda: inputs.companyBEBITDA,
+    grossProfit: inputs.companyBGrossProfit, operatingIncome: inputs.companyBOperatingIncome,
+    freeCashFlow: inputs.companyBFreeCashFlow ?? null,
     netIncome: inputs.companyBNetIncome, eps: inputs.companyBEPS,
-    shares: inputs.companyBShares, cash: inputs.companyBCash,
+    shares: inputs.companyBShares, cash: inputs.companyBCash, sti: inputs.companyBSti,
+    balanceSheetAsOf: inputs.companyBBsAsOf, balanceSheetBasis: inputs.companyBBsBasis,
     debt: inputs.companyBDebt, companyType: companyTypeB,
     sharePrice: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null,
     // Current market cap = live price × shares (real). Used for trading profile / relative contribution.
@@ -605,14 +744,20 @@ function App() {
     totalDeposits:      bankFactsB?.totalDeposits ?? null,
     fiscalYear:    fiscalYearB,
     fiscalYearEnd: fiscalYearEndB,
+    // Reported annual non-GAAP payload — drives the §4/§5/§6 display layer; the accretion flip reads it
+    // separately at input assembly (resolveAccretionBasis), so this field stays the raw display source.
+    nonGaap: nonGaapB,
   });
 
   const buildAcquirerForDeck = () => ({
     name: nameA || 'Acquirer', ticker: tickerA,
     sic: sicA, sicDescription: sicDescriptionA,
     revenue: inputs.companyARevenue, ebitda: inputs.companyAEBITDA,
+    grossProfit: inputs.companyAGrossProfit, operatingIncome: inputs.companyAOperatingIncome,
+    freeCashFlow: inputs.companyAFreeCashFlow ?? null,
     netIncome: inputs.companyANetIncome, eps: inputs.companyAEPS,
-    shares: inputs.companyAShares, cash: inputs.companyACash,
+    shares: inputs.companyAShares, cash: inputs.companyACash, sti: inputs.companyASti,
+    balanceSheetAsOf: inputs.companyABsAsOf, balanceSheetBasis: inputs.companyABsBasis,
     debt: inputs.companyADebt, companyType: companyTypeA,
     sharePrice: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null,
     // Real (live) market cap = live price × shares; null when no live price.
@@ -629,10 +774,16 @@ function App() {
     totalDeposits:      bankFactsA?.totalDeposits ?? null,
     fiscalYear:    fiscalYearA,
     fiscalYearEnd: fiscalYearEndA,
+    // Reported annual non-GAAP payload — drives the §4/§5/§6 display layer; the accretion flip reads it
+    // separately at input assembly (resolveAccretionBasis), so this field stays the raw display source.
+    nonGaap: nonGaapA,
   });
 
   const buildDealForDeck = () => ({
     offerPrice: inputs.offerPricePerShare, cashPercent: inputs.cashPercent,
+    // When the price the premium is struck against was a LIVE quote, carry its fetch timestamp so the
+    // football-field footnote can cite "live market price as of [date]" (explains run-to-run drift).
+    offerPriceAsOf: priceStatusB.asOf ? priceStatusB.asOf.toISOString() : null,
     totalPrice:      results ? parseFloat(results.totalPurchasePrice) : 0,
     transactionFees: inputs.transactionFees,
     synergiesY1: inputs.synergiesY1, synergiesY2: inputs.synergiesY2, synergiesY3: inputs.synergiesY3,
@@ -649,9 +800,12 @@ function App() {
     combinedEBITDA:  results ? parseFloat(results.combinedEBITDA) : 0,
     combinedNetIncome: results ? parseFloat(results.combinedNetIncome) : 0,
     newSharesIssued: results ? parseFloat(results.newSharesIssued) : 0,
-    // Dashboard section reads these directly
+    // Accretion basis label (Non-GAAP when both companies reconcile, else GAAP).
+    basis: (results && results.basis) || accretionBasis,
+    // Dashboard section reads these directly. _inputs carries the BASIS-RESOLVED inputs so the deck's
+    // own sensitivity helpers (calcProFormaEPS / acquirerStandaloneEPS) sit on the same basis as _results.
     _results: results,
-    _inputs:  { ...inputs },
+    _inputs:  { ...(resolvedInputs || inputs) },
     _nameA:   nameA,
     _nameB:   nameB,
   });
@@ -698,6 +852,23 @@ function App() {
   const cardStyle = { background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #E5E7EB' };
   const sectionTitle = { color: '#0F2244', fontSize: 16, marginTop: 0, marginBottom: 16 };
   const col2 = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, marginBottom: 24 };
+
+  // ── Render: wait-then-build hold state (#5) — deck is deferred until the non-GAAP basis settles, so
+  //    it is never painted on the wrong basis. Auto-advances to the deck via the settle/timeout effects. ──
+  if (pendingBuild) {
+    return (
+      <div style={{ fontFamily: 'Arial, sans-serif', minHeight: '100vh', background: 'linear-gradient(160deg, #0F2244 0%, #1D4A8A 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0 24px' }}>
+        <style>{`@keyframes ngspin { to { transform: rotate(360deg); } }`}</style>
+        <div style={{ width: 46, height: 46, borderRadius: '50%', border: '4px solid rgba(255,255,255,0.25)', borderTopColor: '#4A9FD4', animation: 'ngspin 0.9s linear infinite', marginBottom: 24 }} />
+        <div style={{ fontSize: 20, fontWeight: 700, color: '#fff', marginBottom: 10 }}>
+          Resolving reporting basis (GAAP vs non-GAAP)…
+        </div>
+        <div style={{ fontSize: 14, color: '#A8C4DC', maxWidth: 460, lineHeight: 1.5 }}>
+          Fetching reported non-GAAP figures so the deck builds on the correct basis the first time. First load of a company can take ~15–20s; cached loads are instant.
+        </div>
+      </div>
+    );
+  }
 
   // ── Render: DeckShell when analysis has run ──────────────────────────────────
 
@@ -874,12 +1045,17 @@ function App() {
                       {suggestedPrice != null && suggestedPrice > 0 && (() => {
                         const sp = inputs.currentSharePriceB;
                         const prem = sp > 0 ? Math.round(((suggestedPrice - sp) / sp) * 100) : null;
+                        // The suggested price is a 30% premium over the LIVE market price (which moves
+                        // intraday) — label the as-of stamp so its run-to-run drift is explained, not mysterious.
+                        const asOf = fmtPriceAsOf(priceStatusB.asOf);
                         return (
                           <SuggestionBadge
                             primary={prem != null
                               ? `${fmtPerShare(suggestedPrice)}/share (${prem}% premium)`
                               : `${fmtPerShare(suggestedPrice)}/share`}
-                            caption={sp > 0 ? `30% control premium over ${fmtPerShare(sp)} market price` : null}
+                            caption={sp > 0
+                              ? `30% control premium over ${fmtPerShare(sp)} live market price${asOf ? ` · as of ${asOf}` : ''}`
+                              : null}
                             tooltip={buildOfferPriceTooltip(partialTarget)}
                             onUse={() => setInputs(prev => ({ ...prev, offerPricePerShare: suggestedPrice }))}
                           />
@@ -896,7 +1072,7 @@ function App() {
                       {inputs.offerPricePerShare > 0 && (
                         <PremiumCaption offerPrice={inputs.offerPricePerShare}
                           sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null}
-                          showUnavailable={offerPriceTouched} />
+                          showUnavailable={offerPriceTouched} asOf={priceStatusB.asOf} />
                       )}
 
                       {/* Cash/Stock mix */}
@@ -950,10 +1126,10 @@ function App() {
 
                       {/* Preset buttons */}
                       {(() => {
-                        const combinedBase = bankDeal
-                          ? ((bankFactsA?.nonInterestExpense || 0) + (bankFactsB?.nonInterestExpense || 0))
-                          : (inputs.companyARevenue + inputs.companyBRevenue);
-                        if (!(combinedBase > 0)) return null;
+                        const targetBase = bankDeal
+                          ? (bankFactsB?.nonInterestExpense || 0)
+                          : (inputs.companyBRevenue || 0);
+                        if (!(targetBase > 0)) return null;
                         const rates = bankDeal ? [0.05, 0.08, 0.11] : [0.02, 0.035, 0.05];
                         const labels = ['Conservative', 'Base', 'Aggressive'];
                         return (
@@ -964,7 +1140,7 @@ function App() {
                             <div style={{ display: 'flex', gap: 8 }}>
                               {labels.map((label, idx) => {
                                 const rate = rates[idx];
-                                const y3 = Math.round(combinedBase * rate);
+                                const y3 = Math.round(targetBase * rate);
                                 const y2 = Math.round(y3 * 0.785);
                                 const y1 = Math.round(y3 * 0.57);
                                 return (
@@ -992,15 +1168,15 @@ function App() {
                       {[1, 2, 3].map(yr => {
                         const name = `synergiesY${yr}`;
                         const val = inputs[name] || 0;
-                        const combinedRev = inputs.companyARevenue + inputs.companyBRevenue;
-                        const pct = combinedRev > 0 && val > 0 ? ((val / combinedRev) * 100).toFixed(1) : null;
+                        const targetBase = bankDeal ? (bankFactsB?.nonInterestExpense || 0) : (inputs.companyBRevenue || 0);
+                        const pct = targetBase > 0 && val > 0 ? ((val / targetBase) * 100).toFixed(1) : null;
                         const label = bankDeal ? `Year ${yr} Cost Savings ($M)` : `Year ${yr} Synergies ($M)`;
                         return (
                           <div key={yr}>
                             <LargeNumericField label={label} name={name} value={inputs[name]} onChange={handleChange} placeholder="e.g., 935" />
                             {pct && (
                               <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 8, fontStyle: 'italic' }}>
-                                = {pct}% of combined revenue
+                                = {pct}% of target {bankDeal ? 'NIE' : 'revenue'}
                               </div>
                             )}
                           </div>
@@ -1061,7 +1237,7 @@ function App() {
                   <h2 style={sectionTitle}>Deal Terms</h2>
                   <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange} placeholder="e.g., 974.06" />
                   {inputs.offerPricePerShare > 0 && (
-                    <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} />
+                    <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} asOf={priceStatusB.asOf} />
                   )}
                   <CashPercentageSlider
                     value={inputs.cashPercent}

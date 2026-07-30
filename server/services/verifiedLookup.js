@@ -27,7 +27,11 @@ function setCached(ticker, result) {
 // FMP period:   { calendarYear: '2025', period: 'FY' }
 function periodsMatch(edgarPeriod, fmpPeriod) {
   if (!edgarPeriod || !fmpPeriod) return false;
-  return edgarPeriod.fy === parseInt(fmpPeriod.calendarYear, 10);
+  // Prefer the unambiguous period-END date. EDGAR labels a Jan-ending fiscal year as fy 2025 while FMP
+  // /stable labels the SAME period 2026 (off-by-one); matching fy-labels would falsely exclude FMP and
+  // strand the financials at EDGAR-only "single". Both sources now carry the end date as `period.end`.
+  if (edgarPeriod.end && fmpPeriod.end) return edgarPeriod.end === fmpPeriod.end;
+  return edgarPeriod.fy === parseInt(fmpPeriod.calendarYear, 10); // label fallback (one side lacks a date)
 }
 
 // Should a non-EDGAR source's value be EXCLUDED before comparison because its fiscal period differs
@@ -55,7 +59,7 @@ async function lookup(ticker, cik) {
   const cached = getCached(ticker);
   if (cached) return cached;
 
-  const [edgarRes, fmpRes, yahooRes, finnhubRes, cnbcRes, nasdaqRes, nasdaqAnalystRes, stockAnalystRes] =
+  const [edgarRes, fmpRes, yahooRes, finnhubRes, cnbcRes, nasdaqRes, nasdaqAnalystRes, stockAnalystRes, fmpAnalystRes] =
     await Promise.allSettled([
       cik ? edgarClient.fetchFields(cik) : Promise.resolve({}),
       fmpClient.fetchFields(ticker),
@@ -65,10 +69,16 @@ async function lookup(ticker, cik) {
       nasdaqClient.fetchFields(ticker),
       nasdaqClient.fetchAnalyst(ticker),
       stockAnalysisClient.fetchAnalyst(ticker),
+      fmpClient.fetchAnalyst(ticker), // FMP /stable price targets — THIRD analyst cross-check source
     ]);
 
   const edgar   = edgarRes.status   === 'fulfilled' ? edgarRes.value   : {};
-  const fmp     = fmpRes.status     === 'fulfilled' ? fmpRes.value     : {};
+  // FMP contributes BOTH financials (fetchFields, EDGAR-miss fallback) and analyst price targets
+  // (fetchAnalyst, /stable). Merge so the `fmp` source carries its /stable analyst fields too; the
+  // analyst values override any (now-deprecated) v4 ones from fetchFields. Financials are untouched.
+  const fmpFields  = fmpRes.status       === 'fulfilled' ? fmpRes.value : {};
+  const fmpAnalyst = fmpAnalystRes.status === 'fulfilled' && fmpAnalystRes.value ? (fmpAnalystRes.value.fields || {}) : {};
+  const fmp     = { ...fmpFields, ...fmpAnalyst };
   const yahoo   = yahooRes.status   === 'fulfilled' ? yahooRes.value   : {};
   const finnhub = finnhubRes.status === 'fulfilled' ? finnhubRes.value : {};
   const cnbc    = cnbcRes.status    === 'fulfilled' ? cnbcRes.value    : {};
@@ -124,7 +134,10 @@ async function lookup(ticker, cik) {
     fields[fieldSpec.key] = { ...rec, unit: fieldSpec.unit, sot: fieldSpec.sot, sourceMeta };
   }
 
-  const result = { ticker, asOf, fields };
+  // FX Stage 1 — surface the FMP filer's currency provenance top-level (kept OUT of `fields` so it
+  // doesn't collide with the field registry). Values above are already USD-converted at the fetch layer;
+  // this only records HOW (reportedCurrency, spot/avg rates, FY window, converted flag) for later labeling.
+  const result = { ticker, asOf, fields, fx: fmpFields._fx || null };
   setCached(ticker, result);
   return result;
 }

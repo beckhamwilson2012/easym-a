@@ -83,6 +83,18 @@ input[type='range']::-moz-range-thumb {
   -moz-appearance: textfield;
 }
 
+/* Skeleton shimmer for comparables loading state */
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #f0f0f0 25%, #e0e0e0 50%, #f0f0f0 75%);
+  background-size: 800px 100%;
+  animation: shimmer 1.4s infinite linear;
+  border-radius: 4px;
+}
+
 /* Mobile: larger thumb touch targets for cash % slider */
 @media (max-width: 767px) {
   .cash-pct-slider::-webkit-slider-thumb {

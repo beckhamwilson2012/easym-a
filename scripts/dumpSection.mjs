@@ -14,6 +14,7 @@ async function activeText(){return p.evaluate(()=>{const h=document.querySelecto
 try{
   await p.goto('http://localhost:3000',{waitUntil:'networkidle2',timeout:30000});
   await clk(/Auto-Lookup/); await load(0,AT,AN); await load(1,TT,TN);
+  await wait(/[\d.]+\s*mkt/i, 9000); await sleep(900); // wait for live target price → suggested = live×1.30
   const m=(await p.evaluate(()=>document.body.innerText)).match(/Suggested:\s*\$?([\d.]+)\/share/i);
   if(m){await p.evaluate(v=>{const el=document.querySelector('input[name="offerPricePerShare"]');const s=Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set;s.call(el,v);el.dispatchEvent(new Event('input',{bubbles:true}));el.blur()},m[1]);await sleep(400)}
   await clk(/Build merger model/); await sleep(1300); await p.mouse.click(750,400);

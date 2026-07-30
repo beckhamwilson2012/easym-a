@@ -1,12 +1,22 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
+import { useVerifiedData } from '../../../hooks/useVerifiedData';
+import { formatDeckDate } from '../../../lib/composeSourceLine';
 
 const MONTH_LABELS = ['January','February','March','April','May','June',
   'July','August','September','October','November','December'];
 
-export function SectionTitlePage({ target, acquirer }) {
+export function SectionTitlePage({ target, acquirer, model }) {
+  // DATA_DATE must be the actual data-pull date, ONE value deck-wide (spec §1.3, Defect #1) — NOT
+  // the browser's render-time date. Prefer the C1 model's dataDate, else the verified-data asOf
+  // (same source/format the footnotes use), falling back to current month only if neither loaded.
+  const { data: av } = useVerifiedData(acquirer?.ticker ?? null);
+  const { data: tv } = useVerifiedData(target?.ticker ?? null);
+  const isoDate = model?.derived?.dataDate || av?.asOf || tv?.asOf || null;
   const now = new Date();
-  const dateStr = `${MONTH_LABELS[now.getMonth()]} ${now.getFullYear()}`;
+  const dateStr = isoDate
+    ? formatDeckDate(isoDate)
+    : `${MONTH_LABELS[now.getMonth()]} ${now.getFullYear()}`;
   const acqName = acquirer?.name || 'Acquirer';
   const tgtName = target?.name || 'Target Company';
 
@@ -69,7 +79,7 @@ export function SectionTitlePage({ target, acquirer }) {
             Deal terms, synergies and projections are illustrative transaction assumptions. Not investment advice.
           </div>
           <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 11, marginBottom: 6 }}>
-            {dateStr}
+            Financial &amp; market data as of {dateStr}
           </div>
           <div style={{ fontSize: 15, fontWeight: 700, color: '#fff', letterSpacing: 0.5 }}>
             Easy<span style={{ color: 'rgba(255,255,255,0.6)' }}>M&A</span>

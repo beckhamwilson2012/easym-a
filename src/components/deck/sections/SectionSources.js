@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
-import { HEADLINE_SOURCES } from '../../../lib/composeSourceLine';
+import { HEADLINE_SOURCES, formatDeckDate } from '../../../lib/composeSourceLine';
 
 // ── Sources & Methodology — the closing page (§14) ─────────────────────────────
 // Methodology bullets are static, but the named data providers (pricing, analyst targets) are
@@ -69,54 +69,101 @@ export function SectionSources({ target, acquirer, deal, pageNum }) {
     [tv, av].forEach(v => { const f = v?.fields?.[fieldKey]; if (f?.sourceMeta) Object.keys(f.sourceMeta).forEach(x => { if (HEADLINE_SOURCES.has(x)) s.add(x); }); });
     return s;
   };
+  // Single deck-wide DATA_DATE = actual data-pull date (spec §1.3 / Defect #1). Same source the
+  // title page and per-slide footnotes use, so all "as of" dates agree.
+  const dataDate = formatDeckDate(deal?._dataDate || av?.asOf || tv?.asOf || null);
   const priceSrcSet   = collectSources('price');
-  const analystSrcSet = collectSources('analystTargetMean');
   const priceSrcLabel = labelList(priceSrcSet) || 'keyless market-data feeds';
-  const hasAnalyst    = analystSrcSet.size > 0;
-  const analystSrcLabel = labelList(analystSrcSet);
+
+  // Programmatic attribution (Pass A): name ONLY sources actually consulted for THIS deck, from the same
+  // per-figure sourceMeta §16/§2/§4/§5/§12 read. collectAll includes vendor sources (FMP) that collectSources'
+  // HEADLINE filter drops — safe here because the fundamentals/analyst field registries don't list the
+  // non-deterministic yahoo/finnhub feeds, so their sourceMeta keys are stable. Empty → a neutral generic
+  // label, never a phantom source (foreign filers with no EDGAR resolve to "Financial Modeling Prep").
+  const collectAll = (fieldKeys) => {
+    const s = new Set();
+    [tv, av].forEach(v => fieldKeys.forEach(k => { const f = v?.fields?.[k]; if (f?.sourceMeta) Object.keys(f.sourceMeta).forEach(x => s.add(x)); }));
+    return s;
+  };
+  const FUND_FIELDS    = ['revenue', 'grossProfit', 'operatingIncome', 'netIncome', 'epsDiluted', 'cash', 'totalDebt', 'totalAssets', 'totalStockholdersEquity', 'freeCashFlow', 'sharesOutstanding'];
+  const ANALYST_FIELDS = ['analystTargetMean', 'analystTargetHigh', 'analystTargetLow'];
+  const fundSrcLabel    = labelList(collectAll(FUND_FIELDS))    || 'company filings';
+  const analystSrcLabel = labelList(collectAll(ANALYST_FIELDS)) || 'sell-side analyst panels';
+  // Faculty: role labels (Buyer/Target), not company/ticker names. The subtitle anchors the mapping once.
+  const buyerRole  = 'the Buyer';
+  const targetRole = 'the Target';
+
+  // FX Stage 3 — accurate basis-of-presentation currency statement (replaces the Pass-A "NOT converted"
+  // interim caveat; values ARE now converted per Stages 1-2b). Gate on fx.converted so an all-USD deal gets
+  // the plain "as filed" form — USD filers carry avgWindow:null, so the .filter() below short-circuits BEFORE
+  // any avgWindow indexing (null-safe). Handles BOTH sides foreign (possibly different currencies): name each.
+  const rate4 = (r) => Number(r).toFixed(4);
+  const fyOf  = (win) => (win && win[0] ? win[0].slice(0, 4) : '—'); // derive FY from window, never hardcoded
+  const fxSides = [
+    { name: tgtName, fx: tv?.fx },
+    { name: acqName, fx: av?.fx },
+  ].filter((s) => s.fx?.converted);
+  let currencyStatement;
+  if (fxSides.length === 0) {
+    currencyStatement = 'All monetary figures are presented in US dollars, in millions ($M), as filed. $B is used only on market-cap, enterprise-value and deal-value summary lines.';
+  } else if (fxSides.length === 1) {
+    const s = fxSides[0];
+    currencyStatement = `All monetary figures are presented in US dollars, in millions ($M). Domestic filers report in USD and are shown as filed. Where a company reports in another currency — here ${s.name}, reported in ${s.fx.reportedCurrency} — figures are converted to USD: income-statement and cash-flow items at the fiscal-year average rate (FY${fyOf(s.fx.avgWindow)} average ${s.fx.reportedCurrency}→USD ${rate4(s.fx.avgRate)}) and balance-sheet items at the spot rate on the data date (${rate4(s.fx.spotRate)}). Share counts, and any figure already in USD (e.g. an ADR market price), are not converted. $B is used only on market-cap, enterprise-value and deal-value summary lines.`;
+  } else {
+    // Both sides foreign — possibly DIFFERENT currencies; name each with its own rates rather than assume one.
+    const clause = fxSides.map((s) => `${s.name} (${s.fx.reportedCurrency}, FY${fyOf(s.fx.avgWindow)} average ${rate4(s.fx.avgRate)}, spot ${rate4(s.fx.spotRate)})`).join(' and ');
+    currencyStatement = `All monetary figures are presented in US dollars, in millions ($M). Domestic filers report in USD and are shown as filed. Companies reporting in another currency — here ${clause} — are converted to USD: income-statement and cash-flow items at the fiscal-year average rate and balance-sheet items at the spot rate on the data date. Share counts, and any figure already in USD (e.g. an ADR market price), are not converted. $B is used only on market-cap, enterprise-value and deal-value summary lines.`;
+  }
 
   const blocks = [
     {
       label: 'Pricing & Market Data',
       bullets: [
-        `Live share prices for ${acqName} and ${tgtName} are sourced from ${priceSrcLabel} (keyless, near-real-time), captured as-of the session date and cross-checked across feeds where two agree.`,
+        `Live share prices and 52-week trading ranges for ${buyerRole} and ${targetRole} are sourced from ${priceSrcLabel} (keyless, near-real-time), captured as of ${dataDate || 'the session date'} and cross-checked across feeds where two agree.`,
         'Market capitalization shown as "current" reflects the live price multiplied by reported shares outstanding; where a live price is unavailable it is shown as "—" or "N/A".',
-        '52-week ranges and intraday quotes depend on feed availability and may be delayed or shown as illustrative where no source returns a range.',
+        'Intraday quotes and 52-week extremes depend on feed availability; where no source returns a range, an illustrative range built from monthly closes is labeled as such.',
       ],
     },
     {
-      label: 'Primary Filings',
+      label: 'Company Fundamentals — Primary Filings',
       bullets: [
-        'Company fundamentals — revenue, net income, shares outstanding, cash, and total debt — are drawn from SEC EDGAR XBRL company facts (data.sec.gov). EPS is computed as net income ÷ shares outstanding on a single consistent basis across the deck.',
-        'Figures reflect each company’s most recent annual report (Form 10-K for domestic filers, Form 20-F for foreign private issuers).',
-        'EDGAR XBRL data is audited and free; reported values are used as-is without restatement adjustments.',
+        `Company fundamentals — revenue, gross profit, net income, shares outstanding, cash, total debt, and free cash flow — are drawn from ${fundSrcLabel}: SEC EDGAR XBRL company facts (data.sec.gov) for domestic filers, with a period-matched Financial Modeling Prep value where a filer is a foreign private issuer or discontinues a concept. All are period-matched to each company’s fiscal year. EPS is the reported diluted EPS; net income ÷ weighted-average diluted shares is a labeled fallback only where a filer does not report diluted EPS.`,
+        'Figures reflect each company’s most recent annual report (Form 10-K for domestic filers, Form 20-F for foreign private issuers) and are used as-is, without restatement adjustments.',
+        'Where a filer discontinues or freezes an XBRL concept (e.g. a gross-profit or long-term-debt tag), a period-matched Financial Modeling Prep value is substituted as a labeled fallback rather than carrying a stale figure.',
       ],
     },
     {
-      label: 'Analyst Basis',
-      bullets: hasAnalyst
-        ? [
-            `Analyst price targets (mean, high, low) and buy/hold/sell counts are fetched from ${analystSrcLabel} and cross-checked between sources where both are available.`,
-            'A target is marked verified when sources agree within tolerance, or flagged when they diverge; values reflect the consensus snapshot as-of the session date.',
-          ]
-        : [
-            'Analyst price targets were not available from the keyless data stack for this pair and are omitted rather than estimated.',
-            'No broker research or paid consensus service is used.',
-          ],
+      label: 'Analyst Estimates & Price Targets',
+      bullets: [
+        'Forward revenue and EPS consensus — the FY-ahead estimate columns and the pro forma projections — are from Financial Modeling Prep analyst estimates: single-source, point-in-time, not guidance.',
+        'Per-firm price targets are from Financial Modeling Prep (price-target news and grades): the latest target per broker is kept, targets whose most recent call is over 18 months old are dropped, and statistical outliers (over 3× or under one-third of the panel median) are removed. Buy / hold / sell reflects the latest grade per firm.',
+        `An independent consensus cross-check (mean / high / low) draws on ${analystSrcLabel} where available. Price targets are sell-side FORECASTS, not guarantees.`,
+      ],
     },
     {
-      label: 'Third-Party / Estimated Data',
+      label: 'Valuation Methodologies',
       bullets: [
-        'Gross profit and operating income are ESTIMATES derived from reported figures (e.g., gross profit ≈ revenue × 65%). Free cash flow is taken from SEC EDGAR cash-flow statements where reported, falling back to a net-income proxy only when not filed.',
-        'Segment, geography, and employee mixes are ESTIMATES used for illustration and are not company-disclosed breakdowns.',
-        'Multi-year projections (synergy ramp, pro forma trajectories) are ESTIMATES generated by the model and are not guidance.',
+        'The analyst price-target range and the 52-week trading range supply market reference points. Precedent-transaction multiples are omitted deck-wide — no sourceable comparable public-deal set is available on the current data stack.',
+      ],
+    },
+    {
+      label: 'Company & Descriptive Data',
+      bullets: [
+        'Company descriptions, CEO, headquarters, employee counts, IPO date, sector / industry classification, beta, average trading volume, and company logos are from the Financial Modeling Prep company profile.',
+        'Segment, geography, and customer-mix figures, where shown, are illustrative and are not company-disclosed breakdowns.',
+        'The pro-forma forward columns use sell-side ANALYST CONSENSUS estimates (via Financial Modeling Prep) for forward revenue and EPS — these are analyst forecasts, not the app’s own model. The accretion, synergy and combination MATH applied on top of those inputs IS the app’s model. Multi-year synergy ramps are model assumptions, not guidance; forward operating expense is shown as "—" rather than estimated.',
       ],
     },
     {
       label: 'Basis of Presentation',
       bullets: [
-        'All dollar figures are in millions (USD) unless otherwise noted.',
-        `Fiscal years follow each company’s own filing calendar: ${acqName} FY${acqFY} and ${tgtName} FY${tgtFY}.`,
+        currencyStatement,
+        'Period basis: the screening comparables (Public Company Screen) and the company-profile financial snapshot are computed on a last-twelve-months (LTM) basis — latest annual plus the most recent interim year-to-date, less the prior-year interim — the standard banker screening convention; the pro-forma and accretion model is built on latest-fiscal-year actuals plus forward analyst consensus (a normalized forward basis). This split is deliberate, not an inconsistency. Foreign private issuers without SEC interim (10-Q) filings, and any filer whose interim data does not tie out, are shown on a fiscal-year basis and labeled "FY".',
+        'Calendarization: where the two companies have different fiscal year-ends, the LTM screening basis is used specifically because it aligns their measurement windows to within approximately one month — materially reducing the fiscal-year-end offset that a same-labeled "FY" comparison would carry. Full calendar-year restatement is deliberately NOT applied: it would require estimating unfiled interim quarters (interpolation of periods no filer reports), and the residual period difference on the LTM basis is immaterial (under ~2% of the affected figures). The pro-forma / accretion model, being built on latest-fiscal-year actuals + forward consensus, pairs each company’s own latest fiscal year (relative years, not a common calendar period) — stated on that slide.',
+        'Enterprise value (EV) = market capitalization + total debt − cash & marketable securities, taken from the same filing; figures for companies with active share-repurchase programs are approximate.',
+        'Profitability on the standalone P&L and comparative-profile slides — operating income, net income, diluted EPS, and operating/net margins — is shown on a Non-GAAP basis as reported in each company’s fiscal year-end earnings release (Form 8-K, Item 2.02), period-matched to the fiscal year shown and reconciled to GAAP; each line is labeled, and falls back to a GAAP-labeled figure where a reconciled non-GAAP value was unavailable. Gross profit, gross margin and operating expenses remain GAAP; EBITDA and its margins are computed (operating income + D&A); revenue and share counts are basis-neutral.',
+        'The accretion, pro forma and relative-contribution views are built on each company’s reported GAAP figures and are labeled accordingly.',
+        `Fiscal years follow each company’s own filing calendar: ${buyerRole} FY${acqFY}, ${targetRole} FY${tgtFY}.`,
         'Numbers are rounded for presentation; minor differences may arise from rounding.',
       ],
     },
@@ -131,23 +178,23 @@ export function SectionSources({ target, acquirer, deal, pageNum }) {
     {
       label: 'Disclaimer',
       bullets: [
-        `This document is an educational illustration generated by EasyM&A to model a hypothetical combination of ${acqName} and ${tgtName}.`,
-        'It is not investment advice, a recommendation, or an offer, and does not constitute a fairness opinion.',
-        'All outputs should be independently verified against primary sources (SEC filings and live market data) before any decision.',
+        `This document is an educational illustration generated by EasyM&A to model a hypothetical combination of ${buyerRole} and ${targetRole}.`,
+        'It is NOT investment, financial, legal, or tax advice, NOT a recommendation or solicitation, and NOT an offer to buy or sell any security. It does not constitute a fairness opinion and MUST NOT be relied upon for any investment, purchase, sale, or other financial decision.',
+        `All outputs are hypothetical and must be independently verified against primary sources (SEC filings and live market data) before any decision. Market data as of ${dataDate || 'the session date'}; subject to change.`,
       ],
     },
   ];
 
   const sourceLine =
-    `Sources: SEC EDGAR XBRL company facts (data.sec.gov); ${priceSrcLabel} for live pricing` +
-    `${hasAnalyst ? `; ${analystSrcLabel} for analyst targets` : ''}. ` +
+    `Sources: ${fundSrcLabel} for company fundamentals; ${priceSrcLabel} for live pricing; ${analystSrcLabel} for the consensus price-target cross-check; ` +
+    'Financial Modeling Prep for per-firm price targets, forward analyst estimates, and company profiles. ' +
     'Estimated and assumption-based figures are labeled throughout. Educational use only — not investment advice.';
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Appendix I">
       <PageHeader
         title="Sources & Methodology"
-        subtitle={`Data provenance and basis of presentation — ${acqName} / ${tgtName}`}
+        subtitle={`Data provenance and basis of presentation · Buyer: ${acqName} · Target: ${tgtName}`}
       />
 
       <div style={{ padding: '16px 20px 36px' }}>
