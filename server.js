@@ -496,15 +496,49 @@ async function fetchFromEDGAR(symbol, cik) {
   // classifier, not as the revenue source.
   const companyType = FINANCIAL_SIC.includes(sicData.sic) ? 'financial' : 'standard';
 
-  // DEI namespace covers both domestic and foreign annual filers.
-  // Atlassian (and other IFRS 20-F filers) have no CommonStockSharesOutstanding 10-K entries
-  // but DO have WeightedAverageNumberOfSharesOutstandingBasic in a 10-K filing.
-  const shares =
-    latestAnnual(gaap['CommonStockSharesOutstanding'], 'shares') ??
-    latestAnnual(dei['EntityCommonStockSharesOutstanding'], 'shares') ??
-    latestAnnual(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares') ??
-    latestAnnual(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares') ??
-    0;
+  // ── Balance-sheet anchor (2B-2) — computed HERE (before the share-count gate below) so the staleness check
+  // and the net-debt trio further down share ONE reference. computeLTM runs once and is reused (line ~590).
+  let ltmRaw; try { ltmRaw = computeLTM(facts); } catch (e) { ltmRaw = { ltm: false, reason: 'computeLTM error: ' + (e.message || 'err') }; }
+  const bsInterim = !!(ltmRaw && ltmRaw.ltm && ltmRaw.asOf);
+  const bsAnchor  = bsInterim ? ltmRaw.asOf : (revenueEntry?.end || null);
+
+  // ── Point-in-time share count — STALENESS-GATED fallthrough (mirrors selectConcept in ltmCalc) ─────────
+  // Drives market cap / equity value / EV / ownership — NOT the weighted-average diluted base used for EPS
+  // (that stays SEPARATE, below). Prefer CommonStockSharesOutstanding, then the dei cover page, then
+  // weighted-average (the Atlassian/IFRS-20-F case: no CSSO 10-K, but a WA-basic 10-K entry). The bug this
+  // fixes: a STALE non-null value under the preferred source preempted a fresh one under a fallback — WMT
+  // stopped tagging balance-sheet CSSO after 2012, so latestAnnual(CSSO) returned that 2012 count (3,418M)
+  // and the ?? chain never reached the current dei cover page (7,972M), rendering a $380B market cap for an
+  // ~$886B company deck-wide (same defect shape as ltmCalc's stale-but-present concept leg).
+  //
+  // Pure latest-INSTANT freshness is deliberately REJECTED: it would pick CRM's mis-tagged 10-Q dei (819M — a
+  // −11% single-quarter break in a 952/937/923 trend, contradicted by the 10-K's 929M) and move GOOGL off its
+  // 10-K multi-class TOTAL (12,088M) to a 10-Q (12,230M) that already ties. Freshness is the right trigger for
+  // SKIPPING dead data, the wrong rule for CHOOSING among live data. So each source keeps its latest ANNUAL
+  // (10-K/20-F) value — which also excludes CRM's 819 (a 10-Q, never a 10-K) — and we skip a source ONLY when
+  // that value is stale (instant > ~15 months before the balance-sheet anchor) or non-positive (SHOP's 0 @2015).
+  // latestAnnualEntry's Math.max over a company's one undimensioned CSSO total keeps GOOGL's 12,088 (A+B+C),
+  // never a single class.
+  const STALE_SHARE_MONTHS = 15;
+  const shareInstantStale = (end) =>
+    (end && bsAnchor) ? ((new Date(bsAnchor) - new Date(end)) / (1000 * 86400 * 30.44)) > STALE_SHARE_MONTHS : false;
+  const shareSources = [
+    ['CommonStockSharesOutstanding',                     latestAnnualEntry(gaap['CommonStockSharesOutstanding'], 'shares')],
+    ['dei:EntityCommonStockSharesOutstanding',           latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares')],
+    ['WeightedAverageNumberOfSharesOutstandingBasic',    latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares')],
+    ['WeightedAverageNumberOfDilutedSharesOutstanding',  latestAnnualEntry(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares')],
+  ];
+  let shares = null, sharesConcept = null, sharesInstant = null;
+  for (const [concept, entry] of shareSources) {
+    if (!entry || !(entry.val > 0)) continue;          // absent OR zero/negative → unresolved (SHOP's 0), skip
+    if (shareInstantStale(entry.end)) continue;         // stale under this source → fall through to the next
+    shares = entry.val; sharesConcept = concept; sharesInstant = entry.end; break;
+  }
+  // 2b (fallback sanity) is intentionally NOT auto-rejecting on a >25% jump: the only in-call cross-check is a
+  // concept's own prior annual, and a real split (WMT's 2024 3-for-1) is indistinguishable from a mis-tag on
+  // that alone — auto-rejecting would drop legitimate splits. CRM's live mis-tag (819) is already excluded by
+  // the 10-K/20-F filter. Provenance (sharesConcept/sharesInstant) is carried so any resolved value is
+  // inspectable, per STAGE 7A-1 2b's "say so and skip it rather than improvising."
 
   // Reported DILUTED EPS is the canonical per-share figure — prefer it over basic (diluted is the
   // standard EPS investors quote, and basic biases high by ignoring dilution).
@@ -533,15 +567,11 @@ async function fetchFromEDGAR(symbol, cik) {
     effectiveDiluted ??
     shares;
 
-  // ── Balance-sheet anchor (2B-2) ──────────────────────────────────────────────────────────────────
-  // The net-debt trio (cash / short-term marketable / debt) resolves at the LTM's LATEST-INTERIM instant,
-  // NOT the fiscal year end, so EV aligns with the LTM revenue window (they share the same date). The anchor
-  // is sourced from computeLTM's iEnd — the SAME notion the LTM window uses, not a parallel "latest". No
-  // interim LTM (foreign 40-F like SHOP, annual-IS-latest like MSFT, or a bank) → fall back WHOLESALE to the
-  // annual instant via pickMatched (all three items on one consistent date; never per-item / mixed-date).
-  let ltmRaw; try { ltmRaw = computeLTM(facts); } catch (e) { ltmRaw = { ltm: false, reason: 'computeLTM error: ' + (e.message || 'err') }; }
-  const bsInterim = !!(ltmRaw && ltmRaw.ltm && ltmRaw.asOf);
-  const bsAnchor  = bsInterim ? ltmRaw.asOf : (revenueEntry?.end || null);
+  // ── Balance-sheet anchor (2B-2) — ltmRaw / bsInterim / bsAnchor are computed ABOVE (before the share-count
+  // staleness gate, which references the same anchor). The net-debt trio (cash / short-term marketable / debt)
+  // resolves at the LTM's LATEST-INTERIM instant, NOT the fiscal year end, so EV aligns with the LTM revenue
+  // window (they share the same date). No interim LTM (foreign 40-F like SHOP, annual-IS-latest like MSFT, or a
+  // bank) → fall back WHOLESALE to the annual instant via pickMatched (all three on one date; never mixed-date).
   // GAAP instants: interim → pickInstantAt (value AT the anchor via fallback list, all-or-nothing, no annual
   // backfill); else annual pickMatched (wholesale). IFRS/foreign stay on the annual path unchanged.
   const bsPick = (names) => bsInterim ? pickInstantAt(gaap, names, bsAnchor) : pickMatched(gaap, names, revenueEntry?.end);
@@ -578,10 +608,10 @@ async function fetchFromEDGAR(symbol, cik) {
     : bsPick(['LongTermDebt', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations']);
 
   const revenueM = inM(revenue);
-  const sharesM  = inM(shares);
-  console.log(`[${symbol}] EDGAR extracted — revenue: ${revenueM}M (concept: ${revenueConcept}), shares: ${sharesM}M, eps: ${eps}, ebitda: ${inM(ebitda)}M, netIncome: ${inM(netIncome)}M`);
+  const sharesM  = shares == null ? null : inM(shares);   // null (not 0) when the count is unresolved/stale → renders "—"
+  console.log(`[${symbol}] EDGAR extracted — revenue: ${revenueM}M (concept: ${revenueConcept}), shares: ${sharesM}M via ${sharesConcept || 'none'}@${sharesInstant || '—'}, eps: ${eps}, ebitda: ${inM(ebitda)}M, netIncome: ${inM(netIncome)}M`);
 
-  if (revenueM === 0 && sharesM === 0) return null;
+  if (revenueM === 0 && !sharesM) return null;
 
   // ── LTM (Stage 1, ADDITIVE) ─────────────────────────────────────────────────────────────────────
   // Trailing-twelve-month, computed from the SAME `facts` fetched above (no new HTTP). Sits ALONGSIDE
@@ -626,6 +656,8 @@ async function fetchFromEDGAR(symbol, cik) {
     revenueHistory: annualSeries((useIfrs ? ifrs : gaap)[revenueConcept], 'USD', 4),
     netIncome:      inM(netIncome),
     shares:         sharesM,
+    sharesConcept:  sharesConcept,       // provenance: which concept the point-in-time count resolved from (staleness-gated)
+    sharesAsOf:     sharesInstant,        // provenance: its instant (may differ from balanceSheetAsOf by design — cover-page is as-of the filing date)
     dilutedShares:  inM(dilutedShares), // weighted-avg diluted — for EPS math only (not market cap)
     eps:            parseFloat(eps.toFixed(2)),
     cash:           cash != null ? inM(cash) : null, // null when the cash tag was stale-rejected (Fix A) → deck shows N/A
