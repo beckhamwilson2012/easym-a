@@ -522,11 +522,18 @@ async function fetchFromEDGAR(symbol, cik) {
   const STALE_SHARE_MONTHS = 15;
   const shareInstantStale = (end) =>
     (end && bsAnchor) ? ((new Date(bsAnchor) - new Date(end)) / (1000 * 86400 * 30.44)) > STALE_SHARE_MONTHS : false;
+  // Order matters: the first two are INSTANT (point-in-time) share counts — the correct basis for market cap.
+  // The two weighted-average concepts below them are a LAST RESORT before null, NOT peers of the instant
+  // concepts: a weighted average is a DURATION figure (mean shares over the period), so substituting it for a
+  // point-in-time count is only acceptable where the two bases CONVERGE (a stable share count — e.g. SHOP,
+  // ~1.3B and flat). For a filer mid-buyback or just after a large issuance the two diverge, and the WA value
+  // would misstate market cap; the provenance (sharesConcept) makes any such substitution auditable. SHOP hits
+  // this only because it tags no usable instant count (CSSO frozen at a 2015 zero, no dei cover page).
   const shareSources = [
-    ['CommonStockSharesOutstanding',                     latestAnnualEntry(gaap['CommonStockSharesOutstanding'], 'shares')],
-    ['dei:EntityCommonStockSharesOutstanding',           latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares')],
-    ['WeightedAverageNumberOfSharesOutstandingBasic',    latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares')],
-    ['WeightedAverageNumberOfDilutedSharesOutstanding',  latestAnnualEntry(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares')],
+    ['CommonStockSharesOutstanding',                     latestAnnualEntry(gaap['CommonStockSharesOutstanding'], 'shares')],   // instant
+    ['dei:EntityCommonStockSharesOutstanding',           latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares')], // instant (cover page)
+    ['WeightedAverageNumberOfSharesOutstandingBasic',    latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares')],   // WA — last resort, duration basis
+    ['WeightedAverageNumberOfDilutedSharesOutstanding',  latestAnnualEntry(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares')], // WA — last resort, duration basis
   ];
   let shares = null, sharesConcept = null, sharesInstant = null;
   for (const [concept, entry] of shareSources) {
