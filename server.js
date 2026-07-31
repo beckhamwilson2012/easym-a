@@ -1606,9 +1606,19 @@ app.get('/api/pnl/:ticker', async (req, res) => {
           revenue,
           costOfRevenue: gross != null ? revenue - gross : null,
           grossProfit: gross, grossProfitEst: true,
-          // Forward OpEx is intentionally NULL: actuals are GAAP, the forward OpInc is non-GAAP consensus,
-          // so a derived (Gross − OpInc) forward opex would mix bases into a meaningless plug. Honest "—".
-          operatingExpense: null, operatingExpenseEst: true,
+          // Forward OpEx = Gross − OpInc (7B-2). Both inputs are already DISPLAYED in this column (gross is the
+          // margin-held est., opInc is consensus), so the subtraction is forced — leaving it "—" hides a value
+          // the reader can compute by eye, which was exactly faculty's objection. It FOOTS by construction and
+          // carries the SAME `est` flag as gross profit (operatingExpenseEst:true) because it inherits the held
+          // gross-margin assumption — it is NOT presented as consensus. For ACTUAL columns the same Gross−OpInc
+          // (above) is the REPORTED operating expense by the income-statement identity: it equals us-gaap
+          // `OperatingExpenses` exactly for filers that tag it (CRM, TEAM) and `CostsAndExpenses`−COGS for those
+          // that don't (GOOGL/AMZN) — so actuals stay unflagged, forward is flagged, and the row never mixes.
+          // NOT sourced from FMP `sgaExpenseAvg`: that IS a real SG&A consensus (available here, deliberately
+          // unused) but SG&A EXCLUDES R&D, which is large for both filers — Revenue − SG&A would not reconcile to
+          // the consensus operating income in the same column (GOOGL FY26E: 495,193 − 67,311 = 427,882 vs OI
+          // 160,843), so a reader walking the column would hit a number that does not foot.
+          operatingExpense: (gross != null && opInc != null) ? gross - opInc : null, operatingExpenseEst: true,
           operatingIncome: opInc,
           nonOperatingIncome: null,   // no forward consensus for this line → "—"
           netIncome: e.netIncomeAvg != null ? inM(e.netIncomeAvg) : null,
