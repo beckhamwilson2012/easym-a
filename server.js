@@ -1606,19 +1606,20 @@ app.get('/api/pnl/:ticker', async (req, res) => {
           revenue,
           costOfRevenue: gross != null ? revenue - gross : null,
           grossProfit: gross, grossProfitEst: true,
-          // Forward OpEx = Gross − OpInc (7B-2). Both inputs are already DISPLAYED in this column (gross is the
-          // margin-held est., opInc is consensus), so the subtraction is forced — leaving it "—" hides a value
-          // the reader can compute by eye, which was exactly faculty's objection. It FOOTS by construction and
-          // carries the SAME `est` flag as gross profit (operatingExpenseEst:true) because it inherits the held
-          // gross-margin assumption — it is NOT presented as consensus. For ACTUAL columns the same Gross−OpInc
-          // (above) is the REPORTED operating expense by the income-statement identity: it equals us-gaap
-          // `OperatingExpenses` exactly for filers that tag it (CRM, TEAM) and `CostsAndExpenses`−COGS for those
-          // that don't (GOOGL/AMZN) — so actuals stay unflagged, forward is flagged, and the row never mixes.
-          // NOT sourced from FMP `sgaExpenseAvg`: that IS a real SG&A consensus (available here, deliberately
-          // unused) but SG&A EXCLUDES R&D, which is large for both filers — Revenue − SG&A would not reconcile to
-          // the consensus operating income in the same column (GOOGL FY26E: 495,193 − 67,311 = 427,882 vs OI
-          // 160,843), so a reader walking the column would hit a number that does not foot.
-          operatingExpense: (gross != null && opInc != null) ? gross - opInc : null, operatingExpenseEst: true,
+          // Forward OpEx is NULL by decision (7B-2c). A derived Gross − OpInc mixes bases: forward gross is the
+          // HELD GAAP gross margin × revenue, while forward OpInc is street CONSENSUS (its non-GAAP convention),
+          // so the residual is not a real quantity. It FOOTS by construction (it is DEFINED as the residual) —
+          // footing is NOT evidence of validity. The defect surfaced as forward OpEx falling BELOW the last actual
+          // while revenue grows (CRM 0.70×, KO 0.73×, + WMT/NOW/TEAM), and the basis mismatch exists for ALL 12
+          // companies with the row; GOOGL/AMZN only look sane because their street convention sits near GAAP —
+          // coincidence, not correctness. NO conditional suppression: Phase-1 proved the symptom does not track the
+          // cause (ADBE heavy-non-GAAP yet sane 1.08×; SHOP looks distorted yet fine), so any threshold would be
+          // tuned on these tickers and wrong for the next — the mktCapSane mistake, not repeated. FMP
+          // `sgaExpenseAvg` (a real SG&A consensus) stays available and UNUSED: it excludes R&D (large for both
+          // filers), so Revenue − SG&A would not foot to the consensus OI either. ACTUAL OpEx (above) is KEPT and
+          // is real — Gross − OpInc on reported GAAP = us-gaap `OperatingExpenses` exactly where tagged (CRM, TEAM)
+          // / `CostsAndExpenses`−COGS where not (GOOGL/AMZN). Do not re-add a forward value.
+          operatingExpense: null, operatingExpenseEst: true,
           operatingIncome: opInc,
           nonOperatingIncome: null,   // no forward consensus for this line → "—"
           netIncome: e.netIncomeAvg != null ? inM(e.netIncomeAvg) : null,

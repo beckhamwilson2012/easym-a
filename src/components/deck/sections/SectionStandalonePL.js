@@ -85,7 +85,7 @@ function MultiYearPL({ pnl, restaurantMode }) {
     { label: 'Total Revenue',      get: c => c.revenue,          fmt: fmtM,   bold: true },
     { label: 'Cost of Revenue',    get: c => c.costOfRevenue,    fmt: fmtExp, indent: true },
     { label: 'Gross Profit',       get: c => c.grossProfit,      fmt: fmtM,   bold: true, est: c => c.grossProfitEst },
-    { label: 'Operating Expense',  get: c => c.operatingExpense, fmt: fmtExp, indent: true, est: c => c.operatingExpenseEst },
+    { label: 'Operating Expense',  get: c => c.operatingExpense, fmt: fmtExp, indent: true },
     { label: 'Operating Income',   get: c => c.operatingIncome,  fmt: fmtM,   bold: true },
     { label: 'Non-operating income/(expense)', get: c => c.nonOperatingIncome, fmt: fmtM, indent: true },
     { label: 'Net Income',         get: c => c.netIncome,        fmt: fmtM,   bold: true },
@@ -266,7 +266,7 @@ function MultiYearPL({ pnl, restaurantMode }) {
         {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}
         {restaurantMode
           ? <> <sup>e</sup> Gross profit / margin omitted — restaurant cost structure (food-only COGS excludes the dominant labor &amp; occupancy costs) makes the gross split not meaningful; shown Revenue → Operating Income. Forward fully diluted shares held flat (est.).</>
-          : <> <sup>e</sup> Forward gross profit = most-recent actual gross margin held constant × consensus revenue (est.); forward fully diluted shares held flat (est.). Forward operating expense = gross profit less operating income (est.); it inherits the held gross-margin assumption and is shown — not blank — because both inputs already appear in the column. Actual operating expense is the same gross-less-operating-income identity on reported GAAP figures.</>}
+          : <> <sup>e</sup> Forward gross profit = most-recent actual gross margin held constant × consensus revenue (est.); forward fully diluted shares held flat (est.). Operating expense is shown for reported periods; it is not shown for forward years — consensus supplies operating income but not gross profit, so a derived figure would mix a held gross-margin assumption with consensus operating income.</>}
       </div>
     </div>
   );
