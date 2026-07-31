@@ -601,6 +601,21 @@ async function fetchFromEDGAR(symbol, cik) {
     ? null
     : bsPick(['MarketableSecuritiesCurrent', 'ShortTermInvestments', 'AvailableForSaleSecuritiesDebtSecuritiesCurrent']);
 
+  // Convertible-debt fallback (Stage 7A-2). Some filers report their only long-term borrowing as convertible
+  // notes tagged OUTSIDE the LongTermDebt family (SHOP tags no LongTermDebt at all). We SUM
+  // ConvertibleDebtNoncurrent + ConvertibleDebtCurrent because they are DISJOINT SIBLING buckets holding ONE
+  // instrument as it migrates over its life (SHOP's 0.125% notes: $916M NC @2023 → $918M Cur @2024 → $0 @2025
+  // after maturity) — this is NOT the parent+child double-count the LongTermDebt list guards against (MSFT's
+  // LongTermDebt 40,294 already = LTD-NC 31,067 + LTD-Cur 9,227, so summing THOSE would double). First-match
+  // over [ConvNC, ConvCur] would be WRONG: pickInstantAt/pickMatched accept $0, so it would stop on the zeroed
+  // bucket while the live amount sits in the other. Non-null only when the sum is > 0, so a retired-to-zero
+  // convert (SHOP @2025-12-31) stays null → "—", never a bare $0. It is a FALLBACK — any filer that resolves a
+  // LongTermDebt figure never reaches it.
+  const convNC  = useIfrs ? null : bsPick(['ConvertibleDebtNoncurrent']);
+  const convCur = useIfrs ? null : bsPick(['ConvertibleDebtCurrent']);
+  const convSum = (convNC || 0) + (convCur || 0);
+  const convertTotal = convSum > 0 ? convSum : null;
+
   const debt = useIfrs
     ? pickMatched(ifrs, ['LongtermBorrowings', 'Borrowings', 'NoncurrentPortionOfLongtermBorrowings'], revenueEntry?.end)
     // `LongTermDebtAndCapitalLeaseObligations` is a FALLBACK appended AFTER the primaries: some filers
@@ -612,7 +627,19 @@ async function fetchFromEDGAR(symbol, cik) {
     // NOT weaken the staleness guard. Single concept (no current-portion sum) to match the primary mechanism.
     // (2B-2: on the interim anchor the fallback still applies — GOOGL @Jun-26 has no LongTermDebt frame →
     // LongTermDebtNoncurrent 98,165 is picked; the FY LongTermDebt 49,085 is NOT backfilled.)
-    : bsPick(['LongTermDebt', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations']);
+    //
+    // KNOWN GAP, deferred deliberately (Stage 7A-2): where the TOTAL `LongTermDebt` is untagged at the anchor,
+    // first-match falls to `LongTermDebtNoncurrent` and DROPS the current portion (GOOGL LongTermDebtCurrent
+    // $1,999M, WMT $3,896M at current anchors) — those two are understated by their current portion. NOT fixed
+    // here: bundling it would move GOOGL/WMT and break this change's byte-identical proof. Tracked as its own
+    // stage; a fix must sum LTD-NC + LTD-Cur ONLY where the total `LongTermDebt` is absent (else it double-
+    // counts MSFT/AMZN, whose `LongTermDebt` already includes the current portion — same sibling-vs-parent rule).
+    //
+    // OPERATING LEASES stay OUT of net debt by deliberate convention — they are operating obligations, not
+    // borrowings (AMZN's ~$76.6B operating-lease liability is why this is STATED, not silently omitted). Note
+    // `LongTermDebtAndCapitalLeaseObligations` above is a FINANCE-lease-inclusive BORROWING concept (a different
+    // thing), used only as a last-resort long-term-debt fallback — do not add OperatingLeaseLiability* here.
+    : (bsPick(['LongTermDebt', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations']) ?? convertTotal);
 
   const revenueM = inM(revenue);
   const sharesM  = shares == null ? null : inM(shares);   // null (not 0) when the count is unresolved/stale → renders "—"
