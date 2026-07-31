@@ -66,7 +66,7 @@ function PLRow({ label, value, alt, bold, indent }) {
 }
 
 // ── Multi-year standalone P&L (slides 5/6) ──────────────────────────────────────────────────────────
-// Renders /api/pnl: 3 actual EDGAR fiscal years (GAAP) + forward analyst-consensus years (non-GAAP),
+// Renders /api/pnl: 3 actual EDGAR fiscal years (GAAP) + forward analyst-consensus years (undesignated basis),
 // with a Margins & Growth block. Approach (A): basis labeled INLINE on each column header; estimate
 // columns italic + tinted; forward OpEx "—" (basis gap unallocable); forward gross/shares are held
 // "est." (ᵉ marker). Margins computed PER COLUMN on that column's own basis.
@@ -192,8 +192,12 @@ function MultiYearPL({ pnl, restaurantMode }) {
                   borderLeft: c.isLtm ? '2px solid #E0A93A' : (divider(i) ? '2px solid #7FA8D9' : 'none'),
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 700 }}>{c.label}</div>
+                  {/* Forward basis label: FMP supplies a single UNDESIGNATED consensus series — the app cannot
+                      source a GAAP or non-GAAP claim for it, so the label asserts NEITHER. Do NOT key this off
+                      nonGaap.allReconciled: that flag describes HISTORICAL 8-K extraction (a different basis
+                      question), and the forward columns come from FMP analyst-estimates regardless of it. */}
                   <div style={{ fontSize: 7.5, fontWeight: 600, letterSpacing: 0.2, color: c.isLtm ? '#FBE3A6' : (c.actual ? '#9DB4D4' : '#FCD34D'), marginTop: 1, whiteSpace: 'nowrap' }}>
-                    {c.isLtm ? 'GAAP · TTM' : (c.actual ? 'GAAP' : 'NON-GAAP CONS.')}
+                    {c.isLtm ? 'GAAP · TTM' : (c.actual ? 'GAAP' : 'ANALYST CONSENSUS')}
                   </div>
                 </th>
               ))}
@@ -254,13 +258,13 @@ function MultiYearPL({ pnl, restaurantMode }) {
       </div>
       <div style={{ fontSize: 9, color: '#6B7280', fontStyle: 'italic', lineHeight: 1.45, marginTop: 6 }}>
         <strong style={{ color: NAVY }}>Basis: </strong>
-        Actual years (GAAP) from SEC EDGAR filings; forward years are Street <strong>analyst consensus (non-GAAP)</strong> from FMP — the step in Operating Income / Net Income / EPS at the actual→estimate boundary reflects the <strong>GAAP→non-GAAP basis change</strong>, not organic growth. Margins are computed on each column's own basis.
+        Actual years (GAAP) from SEC EDGAR filings; forward years are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>. The step in Operating Income / Net Income / EPS at the actual→estimate boundary reflects the actual→consensus transition, not organic growth. Margins are computed on each column's own basis.
         {showLtm ? <> The <strong>LTM</strong> column is the trailing twelve months (latest annual + interim YTD − prior-year YTD), a GAAP actual as of {asOfShort(L.asOf)}.{ltmDaMissing ? <> <sup>d</sup> LTM EBITDA is shown on an operating-income basis — interim D&amp;A on the same basis as the annual EBITDA is not tagged for this filer (a differently-scoped cash-flow D&amp;A is not mixed in).</> : null}</> : null}
         {noiText ? <> <strong style={{ color: NAVY }}>Non-operating income/(expense)</strong> reconciles operating income to net income. {noiText}</> : null}
         {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}
         {restaurantMode
           ? <> <sup>e</sup> Gross profit / margin omitted — restaurant cost structure (food-only COGS excludes the dominant labor &amp; occupancy costs) makes the gross split not meaningful; shown Revenue → Operating Income. Forward fully diluted shares held flat (est.).</>
-          : <> <sup>e</sup> Forward gross profit = most-recent actual gross margin held constant × consensus revenue (est.); forward fully diluted shares held flat (est.). Forward operating expense shown as "—" (the GAAP→non-GAAP gap is unallocable).</>}
+          : <> <sup>e</sup> Forward gross profit = most-recent actual gross margin held constant × consensus revenue (est.); forward fully diluted shares held flat (est.). Forward operating expense shown as "—" (gross profit is margin-held while operating income is consensus, so a derived operating expense would mix bases).</>}
       </div>
     </div>
   );
@@ -406,7 +410,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
       <PageHeader
         title={`Standalone P&L — ${role || 'Target'}: ${target.name || 'N/A'}`}
         subtitle={pnl
-          ? `${pnl.columns.length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''} · $M · actuals GAAP (SEC EDGAR), forward non-GAAP analyst consensus`
+          ? `${pnl.columns.length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''} · $M · actuals GAAP (SEC EDGAR), forward analyst consensus (FMP)`
           : `${fyLabel} · $ in millions · profitability Non-GAAP where labeled (see basis note)`}
       />
 
