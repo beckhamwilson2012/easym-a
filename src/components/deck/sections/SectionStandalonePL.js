@@ -255,6 +255,38 @@ function MultiYearPL({ pnl, restaurantMode }) {
                 })}
               </tr>
             ))}
+            {/* Forward-estimate coverage (7B-3): analyst counts for the ONLY two lines FMP counts — revenue &
+                EPS (ebit/ebitda/net income/SG&A are consensus means with NO count). The row label carries the
+                metrics so a cell "35 / 37" reads unambiguously — never a bare "35 analysts" (which would imply the
+                whole column). Rendered only for forward columns that DISCLOSE a count; a missing count is
+                omitted (never 0, never a dash that reads as "no analysts"); if no forward column has one, the
+                whole row is omitted. */}
+            {dcols.some(c => !c.actual && (c.analystsRevenue != null || c.analystsEps != null)) && (
+              <tr>
+                <td style={{ padding: '3px 8px', background: '#F8FAFC', borderTop: `2px solid ${GRAY_BORDER}`, borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 8.5, fontStyle: 'italic', color: '#6B7280' }}>
+                  Analyst estimates (revenue / EPS)
+                </td>
+                {dcols.map((c, i) => {
+                  let cell = '';
+                  if (!c.actual) {
+                    const parts = [];
+                    if (c.analystsRevenue != null) parts.push(c.analystsEps != null ? String(c.analystsRevenue) : `${c.analystsRevenue} rev`);
+                    if (c.analystsEps != null) parts.push(c.analystsRevenue != null ? String(c.analystsEps) : `${c.analystsEps} EPS`);
+                    cell = parts.join(' / ');
+                  }
+                  return (
+                    <td key={i} style={{
+                      padding: '3px 8px', textAlign: 'right', fontSize: 8.5, fontStyle: 'italic', color: '#6B7280',
+                      background: c.isLtm ? '#FEFBF0' : (c.actual ? '#fff' : '#F0F6FD'),
+                      borderTop: `2px solid ${GRAY_BORDER}`, borderBottom: `1px solid ${GRAY_BORDER}`,
+                      borderLeft: c.isLtm ? '2px solid #E0A93A' : (divider(i) ? '2px solid #C7DBF2' : 'none'),
+                    }}>
+                      {cell}
+                    </td>
+                  );
+                })}
+              </tr>
+            )}
           </tbody>
         </table>
       </div>

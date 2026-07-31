@@ -1626,6 +1626,11 @@ app.get('/api/pnl/:ticker', async (req, res) => {
           ebitda: e.ebitdaAvg != null ? inM(e.ebitdaAvg) : null,
           dilutedShares: latestSh, dilutedSharesEst: true,
           eps: e.epsAvg != null ? e.epsAvg : null,
+          // Forward-estimate DEPTH (7B-3): raw analyst counts, passed through unchanged (or null). FMP discloses
+          // a count ONLY for revenue and EPS — ebit/ebitda/netIncome/sga are consensus means with no count — so
+          // the client must label exactly which metrics these cover, never a bare "N analysts".
+          analystsRevenue: e.numAnalystsRevenue != null ? e.numAnalystsRevenue : null,
+          analystsEps:     e.numAnalystsEps     != null ? e.numAnalystsEps     : null,
         };
       });
 
