@@ -206,7 +206,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
       <PageFrame pageNum={pageNum} exhibitLabel="Exhibit G">
         <PageHeader
           title="Pro Forma Combined — Projected"
-          subtitle={`${aTk} + ${bTk} · forward analyst consensus (non-GAAP) · Acquirer | Target | Combined | Synergies | PF Total`}
+          subtitle={`${aTk} + ${bTk} · forward analyst consensus · Acquirer | Target | Combined | Synergies | PF Total`}
         />
         <div style={{ padding: '14px 20px 8px' }}>
           {!loaded ? (
@@ -220,7 +220,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
               {years.map((yr, yi) => (
                 <div key={yi}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                    {yr.label} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>($M, non-GAAP consensus)</span>
+                    {yr.label} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>($M, analyst consensus)</span>
                   </div>
                   <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
                     <div style={{ background: NAVY, display: 'flex', padding: '5px 8px' }}>
@@ -252,9 +252,9 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
         </div>
         <div style={{ padding: '6px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
           <strong style={{ color: NAVY }}>Basis: </strong>
-          Acquirer &amp; target forward legs are Street <strong>analyst consensus (non-GAAP)</strong> from FMP — the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each combined year is paired position-wise and labeled by the acquirer's fiscal year (the two companies' fiscal calendars are offset). Combined = Acquirer + Target.
+          Acquirer &amp; target forward legs are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>; the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each combined year is paired position-wise and labeled by the acquirer's fiscal year (the two companies' fiscal calendars are offset). Combined = Acquirer + Target.
           <strong> Synergies are the deal's modeled assumption</strong> (a {Math.round(COST_SYN_PCT * 100)}% cost / {Math.round(REV_SYN_PCT * 100)}% revenue ramp — {synRamp.slice(0, nYears).map((s, k) => { const cr = (aFwd[k]?.revenue ?? 0) + (bFwd[k]?.revenue ?? 0); const pc = cr > 0 ? (s / cr * 100) : null; return `${fmtM(s)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtM(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page, and reconciled on the Accretion page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion are on the next page. <strong>This model is built on latest-FY actuals + forward consensus</strong>; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
-          <sup>e</sup> Gross profit forward = most-recent actual gross margin held × consensus revenue (est.). Forward Operating Expense is "—" (the GAAP→non-GAAP gap is unallocable — same treatment as the Standalone P&amp;L slides).
+          <sup>e</sup> Gross profit forward = most-recent actual gross margin held × consensus revenue (est.). Forward Operating Expense is "—" — consensus supplies operating income but not gross profit, so a derived figure would mix a held gross-margin assumption with consensus operating income (same treatment as the Standalone P&amp;L slides).
         </div>
       </PageFrame>
     );
