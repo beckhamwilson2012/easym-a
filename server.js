@@ -646,6 +646,10 @@ async function fetchFromEDGAR(symbol, cik) {
     // in step 3 is FINANCE-lease-inclusive BORROWING (a different thing) — do not add OperatingLeaseLiability*.
     : (bsPick(['LongTermDebt']) ?? ltdSiblingSum ?? bsPick(['LongTermDebtAndCapitalLeaseObligations']) ?? convertTotal);
 
+  // Total assets at the balance-sheet anchor (7A Item 2) — resolved via bsPick, i.e. pickInstantAt at the SAME
+  // bsAnchor as cash/debt (interim) or the same annual end (annual). Same instant → no mixed-date risk on §3.
+  const totalAssets = useIfrs ? pickMatched(ifrs, ['Assets'], revenueEntry?.end) : bsPick(['Assets']);
+
   const revenueM = inM(revenue);
   const sharesM  = shares == null ? null : inM(shares);   // null (not 0) when the count is unresolved/stale → renders "—"
   console.log(`[${symbol}] EDGAR extracted — revenue: ${revenueM}M (concept: ${revenueConcept}), shares: ${sharesM}M via ${sharesConcept || 'none'}@${sharesInstant || '—'}, eps: ${eps}, ebitda: ${inM(ebitda)}M, netIncome: ${inM(netIncome)}M`);
@@ -702,6 +706,7 @@ async function fetchFromEDGAR(symbol, cik) {
     cash:           cash != null ? inM(cash) : null, // null when the cash tag was stale-rejected (Fix A) → deck shows N/A
     shortTermInvestments: shortTermInvestments != null ? inM(shortTermInvestments) : null, // short-term marketable securities (net-debt convention b); null → cash-only for this filer
     debt:           debt != null ? inM(debt) : null, // null when the debt tag was stale-rejected (Fix A) → deck shows N/A
+    totalAssets:    totalAssets != null ? inM(totalAssets) : null, // total assets at the SAME balance-sheet anchor as cash/debt (2B-2); null if untagged there
     balanceSheetAsOf: bsAnchor,            // as-of date of the net-debt trio (2B-2): LTM latest-interim end, or annual end when no interim LTM
     balanceSheetBasis: bsInterim ? 'interim' : 'annual', // provenance: which anchor was used (faculty p6 "as-of date")
     sic:            sicData.sic,

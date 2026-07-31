@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, fmtAsOf } from '../shared/deckTokens';
+import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, fmtAsOf } from '../shared/deckTokens';
 import { getCompanyProfile, PROFILES_AS_OF } from '../../../lib/companyProfiles';
 import { enterpriseValue, NET_DEBT_BASIS } from '../../../lib/netDebt';
 
@@ -12,12 +12,15 @@ const abbrevState = (hq) => (typeof hq === 'string')
   : hq;
 
 // Reference §3 — Company Profiles (qualitative).
-// Side-by-side qualitative cards for the ACQUIRER (left) and TARGET (right).
-// Curated companies (companyProfiles library, hand-compiled from disclosures) render the full 8-row
-// qualitative layout, unchanged. Companies NOT in that library are populated live from FMP via
-// /api/profile/:ticker (CEO / HQ / employees / industry / IPO date / description) — real fetched data,
-// each field shown exactly as reported or "—", never fabricated. "Public since" is the IPO date (FMP has
-// no founding-year field), so it is labeled as such and never presented as a founding year.
+// A SHARED-ROW two-column table (Field | Acquirer | Target): every attribute is one row spanning both
+// companies, so fields align horizontally regardless of prose length (fixes the prior independent-card drift
+// where variable-length Business/Customer/GTM pushed CEO/HQ out of line). The Key Financials table below uses
+// the same pattern. Curated companies (companyProfiles library, hand-compiled from disclosures) supply the full
+// qualitative field set; companies NOT in that library are populated live from FMP via /api/profile/:ticker
+// (CEO / HQ / employees / industry / IPO date / description) — real fetched data, each field shown exactly as
+// reported or "—", never fabricated. The two schemas differ, so the table renders the UNION of fields and shows
+// "—" where one company lacks a field. "Public since" is the IPO date (FMP has no founding-year field), so it is
+// labeled as such and never presented as a founding year.
 
 const clip = (s, n = 300) => {
   if (!s) return null;
@@ -71,7 +74,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
   }, [acquirerObj.ticker, targetObj.ticker]);
 
   // ── Key Financials (real data from the deck's company objects + forward growth from /api/pnl) ──
-  const buildKeyFin = (co, pnl, ltmRaw) => {
+  const buildKeyFin = (co, pnl, ltmRaw, assets) => {
     const num = (x) => x != null && x !== '' ? parseFloat(x) : null;
     const rev = num(co.revenue), gp = num(co.grossProfit), oi = num(co.operatingIncome), fcf = num(co.freeCashFlow);
     const cash = num(co.cash), debt = num(co.debt), sti = num(co.sti);
@@ -108,14 +111,16 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
       fcf: fcfL != null ? fcfL : fcf,
       marketCap: mcap,   // point-in-time — unchanged
       debt, cash,        // point-in-time balance-sheet items — shown as separate lines (EV bridge)
+      assets: assets != null ? Number(assets) : null,   // total assets at the balance-sheet anchor (7A Item 2) — from /quote, same instant as cash/debt
+
       ev,                // point-in-time (mktcap + net debt) — unchanged
       evRev: (ev != null && revA) ? ev / revA : null,   // current EV ÷ (LTM|FY) revenue
       // bank view
       ppnr, ptbv, cet1, deposits,
     };
   };
-  const acqFin = buildKeyFin(acquirerObj, acqPnl, acqQuote?.ltm);
-  const tgtFin = buildKeyFin(targetObj, tgtPnl, tgtQuote?.ltm);
+  const acqFin = buildKeyFin(acquirerObj, acqPnl, acqQuote?.ltm, acqQuote?.totalAssets);
+  const tgtFin = buildKeyFin(targetObj, tgtPnl, tgtQuote?.ltm, tgtQuote?.totalAssets);
   // Standard (non-financial) Key Financials — the original, unchanged row set.
   const STANDARD_ROWS = [
     { label: 'Revenue',              fmt: (f) => f.revenue != null ? fmtMoneyTable(f.revenue) : '—', get: (f) => f.revenue },
@@ -126,6 +131,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
     { label: 'Equity value (mkt cap)', fmt: (f) => f.marketCap != null ? fmtMoneyTable(f.marketCap) : '—', get: (f) => f.marketCap },
     { label: 'Total debt',           fmt: (f) => f.debt != null ? fmtMoneyTable(f.debt) : '—', get: (f) => f.debt },
     { label: 'Cash & equivalents',   fmt: (f) => f.cash != null ? fmtMoneyTable(f.cash) : '—', get: (f) => f.cash },
+    { label: 'Total assets',         fmt: (f) => f.assets != null ? fmtMoneyTable(f.assets) : '—', get: (f) => f.assets },
     { label: 'Enterprise value',     fmt: (f) => f.ev != null ? fmtMoneyTable(f.ev) : '—', get: (f) => f.ev },
     { label: 'EV / Revenue',         fmt: (f) => f.evRev != null ? `${f.evRev.toFixed(1)}x` : '—', get: (f) => f.evRev },
   ];
@@ -150,7 +156,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
   // table to ONE scale chosen from all money values across both columns; pickScale stays in $M unless
   // every money value reads cleanly in $B, so a small target value never collapses to "$0.xB".
   const MONEY_LABELS = new Set(['Revenue', 'Free cash flow', 'Equity value (mkt cap)', 'Total debt',
-    'Cash & equivalents', 'Enterprise value', 'Pre-provision net revenue', 'Total deposits']);
+    'Cash & equivalents', 'Total assets', 'Enterprise value', 'Pre-provision net revenue', 'Total deposits']);
   const isMoneyRow = (m) => MONEY_LABELS.has(m.label);
   const moneyScale = pickScale(KEYFIN_ROWS.filter(isMoneyRow).flatMap((m) => [m.get(acqFin), m.get(tgtFin)]));
   const scaleLabel = moneyScale === 'B' ? '$B' : '$M';
@@ -182,55 +188,80 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
   const tgtBs = fmtAsOf(tgtQuote?.balanceSheetAsOf, tgtQuote?.balanceSheetBasis);
   sourceLine += `Key Financials — revenue, margins, FCF and EV/Revenue are LTM (trailing 12 months); equity value & EV are point-in-time; a company marked "· FY" keeps the latest fiscal year (interim not tagged — foreign). ${NET_DEBT_BASIS}${acqBs && tgtBs ? ` Balance-sheet items are as of each company's latest interim balance sheet (acquirer ${acqBs}, target ${tgtBs}) — the same date as its LTM revenue.` : ''} The LTM basis aligns each company's window to within about one month${acqAsOf3 && tgtAsOf3 ? ` (acquirer LTM to ${acqAsOf3}, target LTM to ${tgtAsOf3})` : ''}, far tighter than the fiscal-year-end offset. Rounding: $ in millions ($M) unless a $B scale is noted in the header; per-share figures to 2 decimals, multiples to one decimal. Verify against latest filings.`;
 
-  // Rows rendered inside each card, in display order — schema depends on the data source.
-  const buildRows = (profile, fmp, src) => {
+  // Qualitative attributes as a label→value map per company. The shared-row table below renders the UNION of
+  // labels across both companies in FIELD_ORDER, so every field aligns horizontally regardless of prose length
+  // (fixes the independent-card drift). Curated and FMP schemas differ; a field absent for one company shows "—".
+  const profileFields = (profile, fmp, src) => {
     if (src === 'fmp') {
-      return [
-        { label: 'CEO', value: fmp.ceo },
-        { label: 'HQ', value: abbrevState(fmp.hq) },
-        { label: 'Employees', value: fmp.employees != null ? fmp.employees.toLocaleString('en-US') : null },
-        { label: 'Industry', value: fmp.industry },
-        { label: 'Public Since', value: fmp.ipoYear ? `${fmp.ipoYear} (IPO)` : null },
-        { label: 'Website', value: fmp.website ? fmp.website.replace(/^https?:\/\//, '').replace(/\/$/, '') : null },
-      ];
+      return {
+        'CEO': fmp.ceo,
+        'HQ': abbrevState(fmp.hq),
+        'Employees': fmp.employees != null ? fmp.employees.toLocaleString('en-US') : null,
+        'Industry': fmp.industry,
+        'Public Since': fmp.ipoYear ? `${fmp.ipoYear} (IPO)` : null,
+        'Website': fmp.website ? fmp.website.replace(/^https?:\/\//, '').replace(/\/$/, '') : null,
+        'Business': clip(fmp.description, 240),
+      };
     }
     // curated (full qualitative layout) and the no-data fallback share the curated/PROFILE_NA shape.
-    return [
-      { label: 'Founded', value: profile.founded },
-      { label: 'CEO', value: profile.ceo },
-      { label: 'HQ', value: abbrevState(profile.hq) },
-      { label: 'Employees', value: profile.employees },
-      { label: 'Business', value: profile.business },
-      { label: 'Customer Profile', value: profile.customers },
-      { label: 'Go-to-Market', value: profile.gtm },
-      { label: 'Core Products', value: profile.products },
-    ];
+    return {
+      'Founded': profile.founded,
+      'CEO': profile.ceo,
+      'HQ': abbrevState(profile.hq),
+      'Employees': profile.employees,
+      'Business': profile.business,
+      'Customer Profile': profile.customers,
+      'Go-to-Market': profile.gtm,
+      'Core Products': profile.products,
+    };
   };
+  // Union of qualitative fields in display order — short/aligned fields first, prose last.
+  const FIELD_ORDER = ['Founded', 'Public Since', 'CEO', 'HQ', 'Employees', 'Industry', 'Website',
+    'Business', 'Customer Profile', 'Go-to-Market', 'Core Products'];
+  const acqFields = profileFields(acqProfile, acqFmp, acqSrc);
+  const tgtFields = profileFields(tgtProfile, tgtFmp, tgtSrc);
+  const hasVal = (v) => v != null && v !== '';
+  const profileRows = FIELD_ORDER
+    .filter((l) => hasVal(acqFields[l]) || hasVal(tgtFields[l]))
+    .map((l) => ({ label: l, acq: acqFields[l], tgt: tgtFields[l] }));
+  // Header column meta (logo/name/ticker/tag/provenance) for the shared table.
+  const profileCols = [
+    { obj: acquirerObj, name: acqName, logo: acqFmp?.image || null, tag: 'Acquirer', src: acqSrc },
+    { obj: targetObj,   name: tgtName, logo: tgtFmp?.image || null, tag: 'Target',   src: tgtSrc },
+  ];
+  const srcTag = (s) => s === 'fmp' ? ' · live (FMP)' : (s === 'none' ? ' · no curated profile' : '');
 
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit B">
       <PageHeader title="Company Profiles" subtitle={subtitle} />
 
       <div style={{ padding: '14px 20px 8px' }}>
-        <div style={{ display: 'flex', gap: 14, alignItems: 'stretch' }}>
-          <ProfileCard
-            company={acquirerObj}
-            displayName={acqName}
-            logo={acqFmp?.image || null}
-            rows={buildRows(acqProfile, acqFmp, acqSrc)}
-            description={acqSrc === 'fmp' ? clip(acqFmp.description, 220) : null}
-            dataSource={acqSrc}
-            tag="Acquirer"
-          />
-          <ProfileCard
-            company={targetObj}
-            displayName={tgtName}
-            logo={tgtFmp?.image || null}
-            rows={buildRows(tgtProfile, tgtFmp, tgtSrc)}
-            description={tgtSrc === 'fmp' ? clip(tgtFmp.description, 220) : null}
-            dataSource={tgtSrc}
-            tag="Target"
-          />
+        {/* Qualitative profile — shared-row two-column table: every field aligns horizontally across both
+            companies regardless of prose length (fixes the independent-card drift). */}
+        <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+          {/* Header — company identity per column */}
+          <div style={{ background: NAVY, display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px' }}>
+            <span style={{ width: 104, flexShrink: 0, color: 'rgba(255,255,255,0.65)', fontSize: 9, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5 }}>Overview</span>
+            {profileCols.map((c, i) => (
+              <div key={i} style={{ flex: 1, minWidth: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+                <LogoChip src={c.logo} />
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ color: '#FFFFFF', fontSize: 11, fontWeight: 700, lineHeight: 1.2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>
+                  <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 8.5, fontWeight: 600, letterSpacing: 0.4 }}>
+                    {(c.obj.ticker ? String(c.obj.ticker).toUpperCase() + ' · ' : '')}{c.tag}{srcTag(c.src)}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          {/* Field rows — shared row per attribute */}
+          {profileRows.map((row, i) => (
+            <div key={row.label} style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '6px 10px', background: i % 2 ? ALT_ROW : '#FFFFFF', borderTop: `1px solid ${GRAY_BORDER}` }}>
+              <span style={{ width: 104, flexShrink: 0, fontSize: 9.5, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.4, lineHeight: 1.3, paddingTop: 1 }}>{row.label}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 10, color: '#1F2937', lineHeight: 1.4 }}>{hasVal(row.acq) ? row.acq : '—'}</span>
+              <span style={{ flex: 1, minWidth: 0, fontSize: 10, color: '#1F2937', lineHeight: 1.4 }}>{hasVal(row.tgt) ? row.tgt : '—'}</span>
+            </div>
+          ))}
         </div>
 
         {/* Key Financials — real data from the deck's company objects + forward growth (/api/pnl). */}
@@ -269,166 +300,12 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
   );
 }
 
-function ProfileCard({ company, displayName, logo, rows, description, dataSource, tag }) {
-  const ticker = (company && company.ticker) ? String(company.ticker).toUpperCase() : '';
-  const [logoOk, setLogoOk] = React.useState(true); // hide the logo chip if the image fails to load
-
+function LogoChip({ src }) {
+  const [ok, setOk] = React.useState(true); // hide the chip if the image fails to load
+  if (!src || !ok) return null;
   return (
-    <div style={{
-      flex: '1 1 0',
-      minWidth: 0,
-      border: `1px solid ${GRAY_BORDER}`,
-      borderRadius: 4,
-      overflow: 'hidden',
-      background: '#FFFFFF',
-      display: 'flex',
-      flexDirection: 'column',
-    }}>
-      {/* Card header */}
-      <div style={{
-        background: NAVY,
-        padding: '9px 12px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        gap: 8,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 9, minWidth: 0 }}>
-          {logo && logoOk && (
-            <div style={{ flexShrink: 0, width: 30, height: 30, borderRadius: 5, background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-              <img src={logo} alt="" onError={() => setLogoOk(false)} style={{ maxWidth: 26, maxHeight: 26, objectFit: 'contain' }} />
-            </div>
-          )}
-          <div style={{ minWidth: 0 }}>
-          <div style={{
-            color: '#FFFFFF',
-            fontSize: 12,
-            fontWeight: 700,
-            lineHeight: 1.2,
-            whiteSpace: 'nowrap',
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-          }}>
-            {displayName}
-          </div>
-          {ticker && (
-            <div style={{
-              color: 'rgba(255,255,255,0.6)',
-              fontSize: 9,
-              fontWeight: 600,
-              letterSpacing: 0.5,
-              marginTop: 1,
-            }}>
-              {ticker}
-            </div>
-          )}
-          </div>
-        </div>
-        <div style={{
-          flexShrink: 0,
-          background: SF_BLUE,
-          color: '#FFFFFF',
-          fontSize: 8,
-          fontWeight: 700,
-          letterSpacing: 0.6,
-          textTransform: 'uppercase',
-          padding: '3px 7px',
-          borderRadius: 3,
-        }}>
-          {tag}
-        </div>
-      </div>
-
-      {/* Provenance notice — FMP-sourced cards say so; a genuine no-data card keeps the curation notice. */}
-      {dataSource === 'fmp' && (
-        <div style={{
-          background: ALT_ROW,
-          borderBottom: `1px solid ${GRAY_BORDER}`,
-          padding: '6px 12px',
-          fontSize: 9,
-          color: '#6B7280',
-          fontStyle: 'italic',
-          lineHeight: 1.4,
-        }}>
-          Company facts &amp; description sourced live from Financial Modeling Prep.
-        </div>
-      )}
-      {dataSource === 'none' && (
-        <div style={{
-          background: ALT_ROW,
-          borderBottom: `1px solid ${GRAY_BORDER}`,
-          padding: '6px 12px',
-          fontSize: 9,
-          color: '#9CA3AF',
-          fontStyle: 'italic',
-          lineHeight: 1.4,
-        }}>
-          Curated profile not available for this company — see latest 10-K / annual report.
-        </div>
-      )}
-
-      {/* Attribute rows */}
-      <div style={{ flex: '1 1 auto' }}>
-        {rows.map((row, i) => (
-          <div
-            key={row.label}
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              gap: 8,
-              padding: '7px 12px',
-              borderBottom: i < rows.length - 1 ? `1px solid ${GRAY_BORDER}` : 'none',
-              background: i % 2 === 1 ? ALT_ROW : '#FFFFFF',
-            }}
-          >
-            <div style={{
-              flexShrink: 0,
-              width: 92,
-              fontSize: 10,
-              fontWeight: 700,
-              color: NAVY,
-              textTransform: 'uppercase',
-              letterSpacing: 0.5,
-              lineHeight: 1.3,
-              paddingTop: 1,
-            }}>
-              {row.label}
-            </div>
-            <div style={{
-              flex: '1 1 0',
-              minWidth: 0,
-              fontSize: 11,
-              color: '#1F2937',
-              lineHeight: 1.4,
-            }}>
-              {(row.value === undefined || row.value === null || row.value === '') ? '—' : row.value}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {/* Business description (FMP-sourced cards only) */}
-      {description && (
-        <div style={{
-          borderTop: `1px solid ${GRAY_BORDER}`,
-          padding: '8px 12px 10px',
-          background: '#FFFFFF',
-        }}>
-          <div style={{
-            fontSize: 9,
-            fontWeight: 700,
-            color: NAVY,
-            textTransform: 'uppercase',
-            letterSpacing: 0.5,
-            marginBottom: 3,
-          }}>
-            Business
-          </div>
-          <div style={{ fontSize: 10, color: '#374151', lineHeight: 1.45 }}>
-            {description}
-          </div>
-        </div>
-      )}
+    <div style={{ flexShrink: 0, width: 26, height: 26, borderRadius: 5, background: '#FFFFFF', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+      <img src={src} alt="" onError={() => setOk(false)} style={{ maxWidth: 22, maxHeight: 22, objectFit: 'contain' }} />
     </div>
   );
 }
