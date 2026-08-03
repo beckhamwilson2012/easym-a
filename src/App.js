@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import Select from 'react-select';
 import { DeckShell } from './components/deck/DeckShell';
+import { SectionScreening } from './components/deck/sections/SectionScreening';
 import { calculate, MIN_CASH_PCT_DEFAULT } from './utils/dealCalc';
 import { useWindowWidth } from './hooks/useWindowWidth';
 import { getBankFacts } from './services/edgarBankFacts';
@@ -471,6 +472,7 @@ function App() {
   const [sicDescriptionB, setSicDescriptionB] = useState(null);
   const [savedAnalyses, setSavedAnalyses] = useState([]);
   const [showSaved, setShowSaved] = useState(false);
+  const [screenView, setScreenView] = useState(false);   // 7G: no-deal Screening view (separate path, never sets results)
   const [bankFactsA, setBankFactsA] = useState(null);
   const [bankFactsB, setBankFactsB] = useState(null);
   const [priceStatusA, setPriceStatusA] = useState({ loading: false, price: null, source: null, attempts: [], asOf: null });
@@ -882,6 +884,12 @@ function App() {
     );
   }
 
+  // ── Render: Screening view (7G) — a SEPARATE path ahead of the deal gate. It never calls calculate()
+  //    and never sets results, so the deal flow below is untouched. ──────────────────────────────────
+  if (screenView) {
+    return <SectionScreening onBack={() => setScreenView(false)} />;
+  }
+
   // ── Render: DeckShell when analysis has run ──────────────────────────────────
 
   if (analysisRun && results) {
@@ -923,13 +931,20 @@ function App() {
           <div style={{ background: '#0F2244', borderRadius: 12, padding: '14px 24px', marginBottom: 32,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ color: '#fff', fontWeight: 'bold', fontSize: 18 }}>Easy<span style={{ color: '#4A9FD4' }}>M&A</span></div>
-            {savedAnalyses.length > 0 && (
-              <button onClick={() => setShowSaved(true)} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff',
+            <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <button onClick={() => setScreenView(true)} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff',
                 border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, padding: '6px 14px',
                 fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
-                💾 Saved ({savedAnalyses.length})
+                🔍 Screening
               </button>
-            )}
+              {savedAnalyses.length > 0 && (
+                <button onClick={() => setShowSaved(true)} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff',
+                  border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, padding: '6px 14px',
+                  fontSize: 13, cursor: 'pointer', fontWeight: 500 }}>
+                  💾 Saved ({savedAnalyses.length})
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Input screens */}

@@ -32,7 +32,8 @@ function shortName(name, ticker) {
 }
 
 // ── Per-company column data ────────────────────────────────────────────────────
-function buildCompany(ticker, data, isTarget, displayName) {
+// Exported (pure) so the Screening view reuses the SAME per-company metric machinery — one source of truth.
+export function buildCompany(ticker, data, isTarget, displayName) {
   const rev    = parseFloat(data.revenue) || 0;
   const live   = data.livePrice != null && data.livePrice > 0 ? data.livePrice : null;
   const shares = parseFloat(data.shares) || 0;

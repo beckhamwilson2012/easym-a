@@ -30,7 +30,7 @@ import { SectionDataVerificationA, SectionDataVerificationB } from './sections/S
 // in; SectionForwardAccretion retired). Dashboard is internal (non-PDF) first; the two Data Verification
 // appendices last. 17 PDF slides.
 const SECTIONS = [
-  { id: 'dashboard',    label: 'Dashboard',                   Component: SectionDashboard,            showInPdf: false },
+  { id: 'dashboard',    label: 'Deal Summary',                Component: SectionDashboard,            showInPdf: false },
   { id: 'title',        label: 'Title',                       Component: SectionTitlePage,            showInPdf: true  }, // 1
   { id: 'comparables',  label: 'Comparables',                 Component: SectionComparables,          showInPdf: true  }, // 2  · Exhibit A
   { id: 'profiles',     label: 'Company Profiles',            Component: SectionCompanyProfiles,      showInPdf: true  }, // 3  · Exhibit B

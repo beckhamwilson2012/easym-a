@@ -555,7 +555,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           ↺ New Analysis
         </button>
         <button onClick={handleExportPDF} disabled={pdfLoading} style={{ flex: '1 1 calc(50% - 5px)', minWidth: isMobile ? '100%' : 0, padding: '14px 16px', background: '#1D4A8A', color: '#fff', border: 'none', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: pdfLoading ? 'wait' : 'pointer', opacity: pdfLoading ? 0.7 : 1 }}>
-          {pdfLoading ? '⟳ Generating…' : '⬇ Export Dashboard PDF'}
+          {pdfLoading ? '⟳ Generating…' : '⬇ Export Deal Summary PDF'}
         </button>
         {onSaveAnalysis && (
           <button onClick={onSaveAnalysis} style={{ flex: '1 1 calc(50% - 5px)', minWidth: isMobile ? '100%' : 0, padding: '14px 16px', background: '#fff', color: '#1D4A8A', border: '2px solid #1D4A8A', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}>
