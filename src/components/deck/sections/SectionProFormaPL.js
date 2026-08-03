@@ -239,9 +239,9 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
                   </div>
                   <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
                     <div style={{ background: NAVY, display: 'flex', padding: '5px 8px' }}>
-                      <span style={{ flex: 1.7, color: '#fff', fontSize: 9, fontWeight: 700 }}>Line</span>
+                      <span style={{ flex: 1.7, color: '#fff', fontSize: 9.5, fontWeight: 700 }}>Line</span>
                       {['Acq.', 'Tgt.', 'Comb.', 'Syn.', 'PF Tot.'].map(h => (
-                        <span key={h} style={{ flex: 1, color: '#fff', fontSize: 9, fontWeight: 700, textAlign: 'right' }}>{h}</span>
+                        <span key={h} style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>{h}</span>
                       ))}
                     </div>
                     {yr.rows.map((r, ri) => {
@@ -249,7 +249,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
                       return (
                         <div key={r.label} style={{ display: 'flex', padding: '4px 8px', background: r.bold ? '#EFF6FF' : (ri % 2 ? ALT_ROW : '#fff'), borderBottom: `1px solid ${GRAY_BORDER}` }}>
                           <span style={{ flex: 1.7, fontSize: 9.5, color: r.bold ? NAVY : (r.fin ? '#6B7280' : '#374151'), fontWeight: r.bold ? 700 : 400, fontStyle: r.fin ? 'italic' : 'normal', paddingLeft: r.fin ? 10 : 0 }}>
-                            {r.label}{r.est ? <sup style={{ fontSize: 7, color: '#6B7280' }}> e</sup> : null}
+                            {r.label}{r.est ? <sup style={{ fontSize: 9.5, color: '#6B7280' }}> e</sup> : null}
                           </span>
                           <Cell v={r.a} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={r.bold} />
                           <Cell v={r.b} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={r.bold} />
@@ -271,18 +271,18 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
                 <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
                   Accretion / (Dilution) — Pro Forma EPS vs. {aTk} Standalone
                   {deal?.basis === 'Non-GAAP' && (
-                    <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 700, color: '#0070D2', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '1px 6px', textTransform: 'none', letterSpacing: 0 }}>Non-GAAP basis</span>
+                    <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: '#0070D2', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '1px 6px', textTransform: 'none', letterSpacing: 0 }}>Non-GAAP basis</span>
                   )}
                 </div>
                 <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
                   <div style={{ background: NAVY, display: 'flex', padding: '4px 8px' }}>
-                    <span style={{ flex: 2, color: '#fff', fontSize: 8.5, fontWeight: 700 }}>Year (basis)</span>
-                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Acq. EPS</span>
-                    <span style={{ flex: 1.15, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>PF EPS ex-syn.</span>
-                    <span style={{ flex: 1.15, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>PF EPS w/ syn.</span>
-                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Δ% ex-syn.</span>
-                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Δ% w/ syn.</span>
-                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Verdict</span>
+                    <span style={{ flex: 2, color: '#fff', fontSize: 9.5, fontWeight: 700 }}>Year (basis)</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>Acq. EPS</span>
+                    <span style={{ flex: 1.15, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>PF EPS ex-syn.</span>
+                    <span style={{ flex: 1.15, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>PF EPS w/ syn.</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>Δ% ex-syn.</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>Δ% w/ syn.</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>Verdict</span>
                   </div>
                   {accRows.map((r) => {
                     const fwd = r.basis === 'forward';
@@ -290,7 +290,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
                     const vColor = verdict === 'neutral' ? NEUTRAL_GRAY : verdict === 'accretive' ? ACC_GREEN : verdict === 'dilutive' ? DIL_RED : '#9CA3AF';
                     return (
                       <div key={r.label} style={{ display: 'flex', alignItems: 'center', padding: '3px 8px', background: fwd ? FORWARD_BG : VERIFIED_BG, borderLeft: `3px solid ${fwd ? FORWARD_BORDER : VERIFIED_BORDER}`, borderBottom: `1px solid ${GRAY_BORDER}` }}>
-                        <span style={{ flex: 2, fontSize: 9 }}><span style={{ fontWeight: 700, color: NAVY }}>{r.label}</span> <span style={{ fontSize: 8, color: fwd ? '#92400E' : '#475569', fontStyle: 'italic' }}>{r.tag}</span></span>
+                        <span style={{ flex: 2, fontSize: 9.5 }}><span style={{ fontWeight: 700, color: NAVY }}>{r.label}</span> <span style={{ fontSize: 9.5, color: fwd ? '#92400E' : '#475569', fontStyle: 'italic' }}>{r.tag}</span></span>
                         <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', color: '#374151' }}>{r.standalone != null ? fmtPerShare(r.standalone) : '—'}</span>
                         <span style={{ flex: 1.15, fontSize: 9.5, textAlign: 'right', color: '#374151' }}>{r.pfExSyn != null ? fmtPerShare(r.pfExSyn) : '—'}</span>
                         <span style={{ flex: 1.15, fontSize: 9.5, textAlign: 'right', fontWeight: 600, color: NAVY }}>{r.pf != null ? fmtPerShare(r.pf) : '—'}</span>
@@ -301,18 +301,18 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
                     );
                   })}
                 </div>
-                <div style={{ marginTop: 3, fontSize: 8, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.3 }}>
+                <div style={{ marginTop: 3, fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.3 }}>
                   Ex-syn./w-syn. exclude/include the deal's synergy ramp (same split as Combined vs PF above); Year&nbsp;1 verified, Years&nbsp;2–4 consensus. Measured on the {deal?.basis === 'Non-GAAP' ? 'non-GAAP' : 'GAAP'} standalone EPS (deck headline).
                 </div>
               </div>
             </div>
           )}
         </div>
-        <div style={{ padding: '6px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
+        <div style={{ padding: '6px 20px 16px', fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
           <strong style={{ color: NAVY }}>Basis: </strong>
           Acquirer &amp; target forward legs are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>; the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each combined year is paired position-wise and labeled by the acquirer's fiscal year (the two companies' fiscal calendars are offset). Combined = Acquirer + Target.
           <strong> Synergies are the deal's modeled assumption</strong> (the annual synergy is assumed {Math.round(REV_SYN_PCT * 100)}% revenue / {Math.round(COST_SYN_PCT * 100)}% operating — {synRamp.slice(0, nYears).map((s, k) => { const cr = (aFwd[k]?.revenue ?? 0) + (bFwd[k]?.revenue ?? 0); const pc = cr > 0 ? (s / cr * 100) : null; return `${fmtM(s)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. The operating portion is shown on a separate <em>Operating synergies</em> line below gross profit — <strong>without asserting whether it arises in cost of revenue or operating expense</strong>, since the 45/55 split is a modeling assumption, not a sourced classification — so pro-forma gross profit and margin stay on the consensus basis. Revenue synergies are shown on the revenue line with no associated gross-profit contribution, so pro-forma gross margin (gross profit ÷ pro-forma revenue) reads slightly below the combined margin, by roughly 0.3–0.5pp across the forward years. <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtM(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on latest-FY actuals + forward consensus</strong>; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
-          <sup>e</sup> Gross profit forward = most-recent actual gross margin held × consensus revenue (est.). Forward Operating Expense is "—" — consensus supplies operating income but not gross profit, so a derived figure would mix a held gross-margin assumption with consensus operating income (same treatment as the Standalone P&amp;L slides).
+          <sup style={{ fontSize: 9.5 }}>e</sup> Gross profit forward = most-recent actual gross margin held × consensus revenue (est.). Forward Operating Expense is "—" — consensus supplies operating income but not gross profit, so a derived figure would mix a held gross-margin assumption with consensus operating income (same treatment as the Standalone P&amp;L slides).
         </div>
       </PageFrame>
     );
