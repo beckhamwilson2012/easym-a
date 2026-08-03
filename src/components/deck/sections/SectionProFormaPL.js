@@ -163,7 +163,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
   const synY = [deal?.synergiesY1, deal?.synergiesY2, deal?.synergiesY3];
 
   const forwardRows = [];
-  if (!isA) {
+  { // 7E: computed for §8 too (§9 folded on) — the accretion strip lives on §8 now.
     const nFwd = loaded ? Math.min(aFwd.length, bFwd.length) : 0;
     for (let k = 0; k < nFwd; k++) {
       const a = aFwd[k], b = bFwd[k];                       // forward EPS from /api/pnl (== /api/estimates epsAvg)
@@ -186,13 +186,19 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
         standaloneEPS: a.eps,
         pfEPS: calcProFormaEPS(offer, syn, fwdInputs),
         pct: epsAccretionPct(offer, syn, fwdInputs),
+        // 7E: ex-synergy PF EPS / accretion — SAME dealCalc calls with synergies = 0 (no new path).
+        pfEPSExSyn: calcProFormaEPS(offer, 0, fwdInputs),
+        pctExSyn:   epsAccretionPct(offer, 0, fwdInputs),
         analysts,
       });
     }
   }
+  // Year-1 ex-synergy accretion — same dealCalc calls with synergies = 0 (7E); Year 1 uses the deal inputs.
+  const pfEPSY1ExSyn = offer > 0 ? calcProFormaEPS(offer, 0, inputs) : null;
+  const pctY1ExSyn   = offer > 0 ? epsAccretionPct(offer, 0, inputs) : null;
   const accRows = [
-    { label: 'Year 1', tag: 'Current actuals (verified)', basis: 'verified', standalone: standaloneY1, pf: pfEPSY1, pct: headlinePct },
-    ...forwardRows.map(r => ({ label: `Year ${r.year}`, tag: `Forward consensus (FY${r.acqFY}e) + Yr${r.synYr} synergies`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pct: r.pct, analysts: r.analysts })),
+    { label: 'Year 1', tag: 'Current actuals (verified)', basis: 'verified', standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
+    ...forwardRows.map(r => ({ label: `Year ${r.year}`, tag: `Forward consensus (FY${r.acqFY}e) + Yr${r.synYr} synergies`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pfExSyn: r.pfEPSExSyn, pct: r.pct, pctExSyn: r.pctExSyn, analysts: r.analysts })),
   ];
 
   const accretionSource = (() => {
@@ -256,117 +262,63 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
                   </div>
                 </div>
               ))}
+              {/* Accretion strip (7E — §9 folded onto §8): standalone vs PF EPS, WITH and WITHOUT synergies, per
+                  year, + verdict. Ex-synergy = the SAME dealCalc calls with synergies=0 (no new path). The P&L
+                  tables above already show the with/without-synergy build (Combined vs PF columns); the deal.basis
+                  badge (7C-3) is retained; §9's Year-1 NI bridge is NOT carried (Net Income + Less-financing rows
+                  above already show that build for all three years). */}
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+                  Accretion / (Dilution) — Pro Forma EPS vs. {aTk} Standalone
+                  {deal?.basis === 'Non-GAAP' && (
+                    <span style={{ marginLeft: 6, fontSize: 8.5, fontWeight: 700, color: '#0070D2', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '1px 6px', textTransform: 'none', letterSpacing: 0 }}>Non-GAAP basis</span>
+                  )}
+                </div>
+                <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
+                  <div style={{ background: NAVY, display: 'flex', padding: '4px 8px' }}>
+                    <span style={{ flex: 2, color: '#fff', fontSize: 8.5, fontWeight: 700 }}>Year (basis)</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Acq. EPS</span>
+                    <span style={{ flex: 1.15, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>PF EPS ex-syn.</span>
+                    <span style={{ flex: 1.15, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>PF EPS w/ syn.</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Δ% ex-syn.</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Δ% w/ syn.</span>
+                    <span style={{ flex: 1, color: '#fff', fontSize: 8.5, fontWeight: 700, textAlign: 'right' }}>Verdict</span>
+                  </div>
+                  {accRows.map((r) => {
+                    const fwd = r.basis === 'forward';
+                    const verdict = accretionVerdict(r.pct);
+                    const vColor = verdict === 'neutral' ? NEUTRAL_GRAY : verdict === 'accretive' ? ACC_GREEN : verdict === 'dilutive' ? DIL_RED : '#9CA3AF';
+                    return (
+                      <div key={r.label} style={{ display: 'flex', alignItems: 'center', padding: '3px 8px', background: fwd ? FORWARD_BG : VERIFIED_BG, borderLeft: `3px solid ${fwd ? FORWARD_BORDER : VERIFIED_BORDER}`, borderBottom: `1px solid ${GRAY_BORDER}` }}>
+                        <span style={{ flex: 2, fontSize: 9 }}><span style={{ fontWeight: 700, color: NAVY }}>{r.label}</span> <span style={{ fontSize: 8, color: fwd ? '#92400E' : '#475569', fontStyle: 'italic' }}>{r.tag}</span></span>
+                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', color: '#374151' }}>{r.standalone != null ? fmtPerShare(r.standalone) : '—'}</span>
+                        <span style={{ flex: 1.15, fontSize: 9.5, textAlign: 'right', color: '#374151' }}>{r.pfExSyn != null ? fmtPerShare(r.pfExSyn) : '—'}</span>
+                        <span style={{ flex: 1.15, fontSize: 9.5, textAlign: 'right', fontWeight: 600, color: NAVY }}>{r.pf != null ? fmtPerShare(r.pf) : '—'}</span>
+                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', color: '#6B7280' }}>{r.pctExSyn == null ? 'n/m' : fmtAcc(r.pctExSyn)}</span>
+                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', fontWeight: 700, color: vColor }}>{r.pct == null ? 'n/m' : fmtAcc(r.pct)}</span>
+                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', fontWeight: 700, color: vColor }}>{verdict == null ? '—' : verdict === 'neutral' ? 'Neutral' : verdict === 'accretive' ? 'Accretive' : 'Dilutive'}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div style={{ marginTop: 3, fontSize: 8, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.3 }}>
+                  Ex-syn./w-syn. exclude/include the deal's synergy ramp (same split as Combined vs PF above); Year&nbsp;1 verified, Years&nbsp;2–4 consensus. Measured on the {deal?.basis === 'Non-GAAP' ? 'non-GAAP' : 'GAAP'} standalone EPS (deck headline).
+                </div>
+              </div>
             </div>
           )}
         </div>
         <div style={{ padding: '6px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
           <strong style={{ color: NAVY }}>Basis: </strong>
           Acquirer &amp; target forward legs are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>; the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each combined year is paired position-wise and labeled by the acquirer's fiscal year (the two companies' fiscal calendars are offset). Combined = Acquirer + Target.
-          <strong> Synergies are the deal's modeled assumption</strong> (the annual synergy is assumed {Math.round(REV_SYN_PCT * 100)}% revenue / {Math.round(COST_SYN_PCT * 100)}% operating — {synRamp.slice(0, nYears).map((s, k) => { const cr = (aFwd[k]?.revenue ?? 0) + (bFwd[k]?.revenue ?? 0); const pc = cr > 0 ? (s / cr * 100) : null; return `${fmtM(s)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. The operating portion is shown on a separate <em>Operating synergies</em> line below gross profit — <strong>without asserting whether it arises in cost of revenue or operating expense</strong>, since the 45/55 split is a modeling assumption, not a sourced classification — so pro-forma gross profit and margin stay on the consensus basis. Revenue synergies are shown on the revenue line with no associated gross-profit contribution, so pro-forma gross margin (gross profit ÷ pro-forma revenue) reads slightly below the combined margin, by roughly 0.3–0.5pp across the forward years. <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtM(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page, and reconciled on the Accretion page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion are on the next page. <strong>This model is built on latest-FY actuals + forward consensus</strong>; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
+          <strong> Synergies are the deal's modeled assumption</strong> (the annual synergy is assumed {Math.round(REV_SYN_PCT * 100)}% revenue / {Math.round(COST_SYN_PCT * 100)}% operating — {synRamp.slice(0, nYears).map((s, k) => { const cr = (aFwd[k]?.revenue ?? 0) + (bFwd[k]?.revenue ?? 0); const pc = cr > 0 ? (s / cr * 100) : null; return `${fmtM(s)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. The operating portion is shown on a separate <em>Operating synergies</em> line below gross profit — <strong>without asserting whether it arises in cost of revenue or operating expense</strong>, since the 45/55 split is a modeling assumption, not a sourced classification — so pro-forma gross profit and margin stay on the consensus basis. Revenue synergies are shown on the revenue line with no associated gross-profit contribution, so pro-forma gross margin (gross profit ÷ pro-forma revenue) reads slightly below the combined margin, by roughly 0.3–0.5pp across the forward years. <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtM(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on latest-FY actuals + forward consensus</strong>; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
           <sup>e</sup> Gross profit forward = most-recent actual gross margin held × consensus revenue (est.). Forward Operating Expense is "—" — consensus supplies operating income but not gross profit, so a derived figure would mix a held gross-margin assumption with consensus operating income (same treatment as the Standalone P&amp;L slides).
         </div>
       </PageFrame>
     );
   }
 
-  // §6b — Accretion
-  return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit H">
-      <PageHeader
-        title="Pro Forma — Accretion / (Dilution)"
-        subtitle={`${aTk} + ${bTk} · Year 1 verified actuals → forward analyst-estimate upside · pro forma EPS vs. ${aTk} standalone`}
-      />
-      <div style={{ padding: '14px 20px 6px' }}>
-        {!loaded ? (
-          <div style={{ padding: 30, textAlign: 'center', color: '#9CA3AF', fontSize: 12, fontStyle: 'italic' }}>Loading forward analyst estimates…</div>
-        ) : (
-          <>
-            <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-              Accretion / (Dilution) Analysis — Pro Forma EPS vs. {aTk} Standalone
-              {/* Basis badge DRIVEN by deal.basis, not hardcoded (7C-3): the Year-1 anchor is the deal-basis
-                  standalone EPS (resolveAccretionBasis → 'Non-GAAP' only when BOTH companies' 8-K non-GAAP
-                  reconcile, else 'GAAP'; GOOGL/AMZN return null → GAAP), forward years are FMP consensus. So the
-                  non-GAAP claim shows ONLY where the pipeline actually delivered it; GAAP deals read basis-neutral. */}
-              {deal?.basis === 'Non-GAAP' && (
-                <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: '#0070D2', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '1px 6px', textTransform: 'none', letterSpacing: 0 }}>Non-GAAP basis</span>
-              )}
-            </div>
-            <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
-              <div style={{ background: NAVY, display: 'flex', padding: '5px 10px' }}>
-                <span style={{ flex: 2.1, color: '#fff', fontSize: 9.5, fontWeight: 700 }}>Year (basis)</span>
-                <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>Acq. EPS</span>
-                <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>PF EPS</span>
-                <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>EPS Δ$</span>
-                <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>EPS Δ%</span>
-                <span style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>Verdict</span>
-              </div>
-              {accRows.map((r) => {
-                const fwd = r.basis === 'forward';
-                const verdict = accretionVerdict(r.pct);
-                const vColor = verdict === 'neutral' ? NEUTRAL_GRAY : verdict === 'accretive' ? ACC_GREEN : verdict === 'dilutive' ? DIL_RED : '#9CA3AF';
-                const delta = (r.pf != null && r.standalone != null) ? (r.pf - r.standalone) : null;
-                return (
-                  <div key={r.label} style={{ display: 'flex', padding: '6px 10px', alignItems: 'center',
-                    background: fwd ? FORWARD_BG : VERIFIED_BG, borderLeft: `3px solid ${fwd ? FORWARD_BORDER : VERIFIED_BORDER}`,
-                    borderBottom: `1px solid ${GRAY_BORDER}` }}>
-                    <span style={{ flex: 2.1, fontSize: 10 }}>
-                      <span style={{ fontWeight: 700, color: NAVY }}>{r.label}</span>
-                      <span style={{ fontSize: 8.5, color: fwd ? '#92400E' : '#475569', fontStyle: 'italic', marginLeft: 6 }}>{r.tag}</span>
-                    </span>
-                    <span style={{ flex: 1, fontSize: 10, textAlign: 'right', color: '#374151' }}>{r.standalone != null ? fmtPerShare(r.standalone) : '—'}</span>
-                    <span style={{ flex: 1, fontSize: 10, textAlign: 'right', fontWeight: 600, color: NAVY }}>{r.pf != null ? fmtPerShare(r.pf) : '—'}</span>
-                    <span style={{ flex: 1, fontSize: 10, textAlign: 'right', color: vColor }}>{fmtD(delta)}</span>
-                    <span style={{ flex: 1, fontSize: 10, textAlign: 'right', fontWeight: 700, color: vColor }}>{r.pct == null ? 'n/m' : fmtAcc(r.pct)}</span>
-                    <span style={{ flex: 1, fontSize: 10, textAlign: 'right', fontWeight: 700, color: vColor }}>{verdict == null ? '—' : verdict === 'neutral' ? 'Neutral' : verdict === 'accretive' ? 'Accretive' : 'Dilutive'}</span>
-                  </div>
-                );
-              })}
-            </div>
-            <div style={{ display: 'flex', gap: 16, marginTop: 6, fontSize: 8.5, color: '#6B7280' }}>
-              <span><span style={{ color: VERIFIED_BORDER, fontWeight: 700 }}>▌</span> Verified (current actuals — matches dashboard)</span>
-              <span><span style={{ color: FORWARD_BORDER, fontWeight: 700 }}>▌</span> Forward (analyst consensus — FMP)</span>
-            </div>
-
-            {/* Year-1 pro-forma net-income bridge — surfaces the transaction adjustment (the after-tax
-                acquisition-financing cost) that §6a's PF Net Income now also subtracts. Built from dealCalc's
-                OWN components (_inputs NI + _results synergies/financing) so it foots EXACTLY to the verified
-                pro-forma NI that drives the Year-1 accretion — this is the number §6a is corrected to tie to. */}
-            {bridgePfNI != null && (
-              <div style={{ marginTop: 12, border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden', maxWidth: 480 }}>
-                <div style={{ background: NAVY, padding: '5px 10px', fontSize: 9.5, fontWeight: 700, color: '#fff' }}>
-                  Year-1 Pro-Forma Net Income Bridge <span style={{ fontWeight: 400, color: '#BFD4F2' }}>— transaction adjustments ($M)</span>
-                </div>
-                {[
-                  { l: 'Combined net income (Acquirer + Target, verified actuals)', v: bridgeCombNI, sign: null, bold: false },
-                  { l: '+ After-tax cost synergies (Year 1)',                       v: bridgeAtSyn,  sign: '+',  bold: false },
-                  { l: '− After-tax acquisition-financing interest',                v: -finDrag,     sign: '-',  bold: false },
-                  { l: '= Pro-forma net income (drives Year-1 accretion)',          v: bridgePfNI,   sign: null, bold: true },
-                ].map((r, i) => (
-                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 10px',
-                    background: r.bold ? '#EFF6FF' : (i % 2 ? ALT_ROW : '#fff'),
-                    borderTop: r.bold ? `2px solid ${SF_BLUE}` : 'none', borderBottom: `1px solid ${GRAY_BORDER}` }}>
-                    <span style={{ fontSize: 10, color: r.bold ? NAVY : '#374151', fontWeight: r.bold ? 700 : 400 }}>{r.l}</span>
-                    <span style={{ fontSize: 10, fontWeight: r.bold ? 700 : 600,
-                      color: r.sign === '-' ? '#DC2626' : r.sign === '+' ? '#166534' : NAVY }}>{fmtM(r.v)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            <div style={{ marginTop: 5, fontSize: 8.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
-              {deal?.basis === 'Non-GAAP'
-                ? <>Accretion is measured on <strong>non-GAAP standalone EPS</strong> ({standaloneY1 != null ? fmtPerShare(standaloneY1) : '—'} for {aTk}), consistent with the dashboard and deal model. This differs from the <strong>GAAP</strong> diluted EPS on the Standalone P&amp;L slide — a basis distinction, not a discrepancy.</>
-                : <>Accretion is measured on the deal-basis <strong>standalone EPS</strong> ({standaloneY1 != null ? fmtPerShare(standaloneY1) : '—'} for {aTk}), consistent with the dashboard and deal model — this deal's fiscal year-end non-GAAP reconciliation was not available for both companies, so the deal basis is <strong>GAAP</strong> and this figure ties to the GAAP diluted EPS on the Standalone P&amp;L slide.</>} The combined pro-forma revenue / EBIT / net income underlying these years are on the previous page. <strong>The pro-forma &amp; accretion model is built on latest-fiscal-year actuals + forward consensus estimates</strong> — the screening comparables and company profile (Exhibits A / B) use a trailing-twelve-month (LTM) basis, a deliberate methodology split (bankers screen on LTM, model accretion on a normalized forward basis).
-            </div>
-          </>
-        )}
-      </div>
-      <div style={{ padding: '6px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
-        {accretionSource}
-      </div>
-    </PageFrame>
-  );
+  return null; // §9 (part='b') folded onto §8 — accretion strip is on §8 now (7E)
 }
 
 export function SectionProFormaPLA(props) { return <ProFormaCore {...props} part="a" />; }
-export function SectionProFormaPLB(props) { return <ProFormaCore {...props} part="b" />; }

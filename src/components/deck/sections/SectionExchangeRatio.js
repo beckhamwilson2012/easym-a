@@ -190,7 +190,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
   const pctVs = (v) => (v != null && price) ? `${v - price >= 0 ? '+' : '−'}${Math.abs((v - price) / price * 100).toFixed(0)}%` : '—';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit J">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit I">
       <PageHeader
         title="Exchange Ratio & Deal Considerations"
         subtitle={`${aLabel} / ${bLabel} · illustrative transaction terms`}

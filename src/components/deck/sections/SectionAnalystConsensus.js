@@ -196,7 +196,7 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum }) {
   }
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit M">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit L">
       <PageHeader
         title="Analyst Consensus Overview"
         subtitle={`${tName}${target?.ticker ? ` (${target.ticker})` : ''} · Sell-side price targets vs. offer`}

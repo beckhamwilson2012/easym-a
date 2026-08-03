@@ -115,7 +115,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   ];
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit I">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit H">
       <PageHeader
         title="Transaction Structure — Sources & Uses"
         subtitle={`${aTk} / ${bTk} · deal funding & pro-forma capitalization · illustrative`}

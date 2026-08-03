@@ -13,7 +13,7 @@ import { SectionCompanyProfiles }  from './sections/SectionCompanyProfiles';
 import { SectionTargetOverview }    from './sections/SectionTargetOverview';
 import { SectionShareholderAnalysis } from './sections/SectionShareholderAnalysis';
 import { SectionStandalonePLAcquirer, SectionStandalonePLTarget } from './sections/SectionStandalonePL';
-import { SectionProFormaPLA, SectionProFormaPLB } from './sections/SectionProFormaPL';
+import { SectionProFormaPLA } from './sections/SectionProFormaPL';
 import { SectionTransactionStructure } from './sections/SectionTransactionStructure';
 import { SectionExchangeRatio }     from './sections/SectionExchangeRatio';
 import { SectionPricePerformance } from './sections/SectionPricePerformance';
@@ -38,13 +38,12 @@ const SECTIONS = [
   { id: 'shareholders', label: 'Shareholder Analysis',        Component: SectionShareholderAnalysis,  showInPdf: true  }, // 5  · Exhibit D  (DEF 14A beneficial ownership: self-validating parse OR FMP fallback — target-side)
   { id: 'plAcquirer',   label: 'Standalone P&L — Acquirer',   Component: SectionStandalonePLAcquirer, showInPdf: true  }, // 6  · Exhibit E
   { id: 'plTarget',     label: 'Standalone P&L — Target',     Component: SectionStandalonePLTarget,   showInPdf: true  }, // 7  · Exhibit F
-  { id: 'proforma',     label: 'Pro Forma Combined',          Component: SectionProFormaPLA,          showInPdf: true  }, // 8  · Exhibit G  (detailed per-year tables)
-  { id: 'proforma2',    label: 'Pro Forma — Accretion',       Component: SectionProFormaPLB,          showInPdf: true  }, // 9  · Exhibit H  (accretion — old §7 folded in)
-  { id: 'txnstructure', label: 'Transaction Structure',       Component: SectionTransactionStructure, showInPdf: true  }, // 10 · Exhibit I  (Sources & Uses + pro-forma cap)
-  { id: 'exchange',     label: 'Exchange Ratio & Deal Terms', Component: SectionExchangeRatio,        showInPdf: true  }, // 11 · Exhibit J
-  { id: 'equity',       label: 'Equity Performance',          Component: SectionPricePerformance,     showInPdf: true  }, // 12 · Exhibit K
-  { id: 'contribution', label: 'Relative Contribution',       Component: SectionRelativeContribution, showInPdf: true  }, // 13 · Exhibit L
-  { id: 'analyst',      label: 'Analyst Consensus',           Component: SectionAnalystConsensus,     showInPdf: true  }, // 14 · Exhibit M
+  { id: 'proforma',     label: 'Pro Forma & Accretion',       Component: SectionProFormaPLA,          showInPdf: true  }, // 8  · Exhibit G  (per-year P&L + accretion strip; §9 folded on, 7E)
+  { id: 'txnstructure', label: 'Transaction Structure',       Component: SectionTransactionStructure, showInPdf: true  }, // 9  · Exhibit H  (Sources & Uses + pro-forma cap)
+  { id: 'exchange',     label: 'Exchange Ratio & Deal Terms', Component: SectionExchangeRatio,        showInPdf: true  }, // 10 · Exhibit I
+  { id: 'equity',       label: 'Equity Performance',          Component: SectionPricePerformance,     showInPdf: true  }, // 11 · Exhibit J
+  { id: 'contribution', label: 'Relative Contribution',       Component: SectionRelativeContribution, showInPdf: true  }, // 12 · Exhibit K
+  { id: 'analyst',      label: 'Analyst Consensus',           Component: SectionAnalystConsensus,     showInPdf: true  }, // 13 · Exhibit L
   { id: 'sources',      label: 'Sources & Methodology',       Component: SectionSources,              showInPdf: true  }, // 15 · Appendix I
   { id: 'verification', label: 'Data Verification',           Component: SectionDataVerificationA,    showInPdf: true  }, // 16 · Appendix II  (Market/Shares/Income)
   { id: 'verification2',label: 'Data Verification (cont.)',   Component: SectionDataVerificationB,    showInPdf: true  }, // 17 · Appendix III (Balance/CashFlow/Analyst/Ratings)
@@ -94,11 +93,16 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
           scale: 1.5, backgroundColor: '#ffffff', useCORS: true, logging: false,
         });
         const imgData = canvas.toDataURL('image/jpeg', 0.85);
-        const imgW = pageW;
-        const imgH = (canvas.height / canvas.width) * pageW;
-        const yOffset = imgH < pageH ? (pageH - imgH) / 2 : 0;
+        // Fit-to-page: a section taller than the page scales down UNIFORMLY (aspect ratio preserved,
+        // centered with side margins) instead of being squished vertically. Only bites when the natural
+        // height exceeds the page (the dense §8 pro-forma page today); every shorter page is unchanged.
+        let drawW = pageW;
+        let drawH = (canvas.height / canvas.width) * pageW;
+        if (drawH > pageH) { const s = pageH / drawH; drawW *= s; drawH = pageH; }
+        const xOffset = (pageW - drawW) / 2;
+        const yOffset = (pageH - drawH) / 2;
         if (i > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, yOffset, imgW, Math.min(imgH, pageH));
+        pdf.addImage(imgData, 'JPEG', xOffset, yOffset, drawW, drawH);
       }
 
       const ticker = target.ticker || target.name || 'Target';
