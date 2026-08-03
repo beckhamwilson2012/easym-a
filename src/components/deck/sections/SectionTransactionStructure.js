@@ -131,7 +131,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Min cash of PF co </span><strong style={{ color: NAVY }}>{minCashRetained != null ? dash(minCashRetained) : (bankFin ? 'n/a (bank)' : '—')}</strong>{minCashPct != null ? <span style={{ color: '#9CA3AF', fontSize: 9.5 }}> ({(minCashPct * 100).toFixed(1)}% PF LTM rev)</span> : null}</span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Equity value </span><strong style={{ color: NAVY }}>{dash(equityPurchase)}</strong></span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>EV </span><strong style={{ color: NAVY }}>{dash(txnEV)}</strong></span>
-          <span style={{ fontSize: 9, color: '#9CA3AF' }}>Exchange ratio &amp; sensitivity: <strong style={{ color: SF_BLUE }}>Exhibit J</strong>.</span>
+          <span style={{ fontSize: 9, color: '#9CA3AF' }}>Exchange ratio &amp; sensitivity: <strong style={{ color: SF_BLUE }}>Exhibit I</strong>; historical implied ratio: <strong style={{ color: SF_BLUE }}>Exhibit J</strong>.</span>
         </div>
 
         {/* Block 1 — Sources & Uses (must foot) */}

@@ -16,6 +16,7 @@ import { SectionStandalonePLAcquirer, SectionStandalonePLTarget } from './sectio
 import { SectionProFormaPLA } from './sections/SectionProFormaPL';
 import { SectionTransactionStructure } from './sections/SectionTransactionStructure';
 import { SectionExchangeRatio }     from './sections/SectionExchangeRatio';
+import { SectionExchangeRatioAnalysis } from './sections/SectionExchangeRatioAnalysis';
 import { SectionPricePerformance } from './sections/SectionPricePerformance';
 import { SectionRelativeContribution } from './sections/SectionRelativeContribution';
 import { SectionAnalystConsensus } from './sections/SectionAnalystConsensus';
@@ -41,9 +42,10 @@ const SECTIONS = [
   { id: 'proforma',     label: 'Pro Forma & Accretion',       Component: SectionProFormaPLA,          showInPdf: true  }, // 8  · Exhibit G  (per-year P&L + accretion strip; §9 folded on, 7E)
   { id: 'txnstructure', label: 'Transaction Structure',       Component: SectionTransactionStructure, showInPdf: true  }, // 9  · Exhibit H  (Sources & Uses + pro-forma cap)
   { id: 'exchange',     label: 'Exchange Ratio & Deal Terms', Component: SectionExchangeRatio,        showInPdf: true  }, // 10 · Exhibit I
-  { id: 'equity',       label: 'Equity Performance',          Component: SectionPricePerformance,     showInPdf: true  }, // 11 · Exhibit J
-  { id: 'contribution', label: 'Relative Contribution',       Component: SectionRelativeContribution, showInPdf: true  }, // 12 · Exhibit K
-  { id: 'analyst',      label: 'Analyst Consensus',           Component: SectionAnalystConsensus,     showInPdf: true  }, // 13 · Exhibit L
+  { id: 'exchangeratio',label: 'Exchange Ratio Analysis',     Component: SectionExchangeRatioAnalysis,showInPdf: true  }, // 11 · Exhibit J  (7H — historical implied ratio, adjacent to §11)
+  { id: 'equity',       label: 'Equity Performance',          Component: SectionPricePerformance,     showInPdf: true  }, // 12 · Exhibit K
+  { id: 'contribution', label: 'Relative Contribution',       Component: SectionRelativeContribution, showInPdf: true  }, // 13 · Exhibit L
+  { id: 'analyst',      label: 'Analyst Consensus',           Component: SectionAnalystConsensus,     showInPdf: true  }, // 14 · Exhibit M
   { id: 'sources',      label: 'Sources & Methodology',       Component: SectionSources,              showInPdf: true  }, // 15 · Appendix I
   { id: 'verification', label: 'Data Verification',           Component: SectionDataVerificationA,    showInPdf: true  }, // 16 · Appendix II  (Market/Shares/Income)
   { id: 'verification2',label: 'Data Verification (cont.)',   Component: SectionDataVerificationB,    showInPdf: true  }, // 17 · Appendix III (Balance/CashFlow/Analyst/Ratings)

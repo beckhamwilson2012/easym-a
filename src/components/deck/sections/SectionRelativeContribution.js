@@ -129,7 +129,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
       'Contribution is each company’s share of the combined financials; the equity split is shown separately on the Trading Profile slide.';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit K">
+    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit L">
       <PageHeader
         title="Relative Contribution Analysis"
         subtitle={`${aName} and ${bName} — share of combined entity by metric`}
