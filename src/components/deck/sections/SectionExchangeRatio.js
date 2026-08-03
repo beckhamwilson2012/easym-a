@@ -48,7 +48,7 @@ function KVTable({ title, rows }) {
 // Premium sensitivity matrix — its own table (NAVY header, alt rows), full width below the KV tables.
 const PREMS = [0, 0.10, 0.20, 0.30, 0.40];
 
-export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
+export function SectionExchangeRatio({ target, acquirer, model, pageNum, exhibitLabel }) {
   // Short "Name (TICKER)" form — consistent with §2's shortName ("Atlassian Corp" → "Atlassian"), so the
   // subtitle doesn't read the raw legal name while the tables use the ticker. The separator before a suffix
   // is a REQUIRED comma/space ([,\s]+, not ,?\s*) so "SE" inside "CHASE" isn't stripped as a German-SE suffix;
@@ -190,7 +190,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum }) {
   const pctVs = (v) => (v != null && price) ? `${v - price >= 0 ? '+' : '−'}${Math.abs((v - price) / price * 100).toFixed(0)}%` : '—';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit I">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title="Exchange Ratio & Deal Considerations"
         subtitle={`${aLabel} / ${bLabel} · illustrative transaction terms`}

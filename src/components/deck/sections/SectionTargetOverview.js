@@ -4,6 +4,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, DONUT_COLORS, fmtMoney, fmtAsOf } from '../shared/deckTokens';
 import { getCompanyProfile } from '../../../lib/companyProfiles';
 import { getCustomerMetrics } from '../../../lib/customerMetrics';
+import { pageNumOf } from '../deckRegistry';
 
 // Customer & net-retention metrics — CITED curated callouts for SaaS issuers that DISCLOSE them (10-K /
 // 20-F / earnings letters, not XBRL). Each figure carries its OWN definition + as-of + source; the block
@@ -92,7 +93,7 @@ function SegBox({ title, seg }) {
 
 const pct = (v, dp = 1) => (v == null ? '—' : `${(v * 100).toFixed(dp)}%`);
 
-export function SectionTargetOverview({ target, pageNum }) {
+export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
   const tk = target?.ticker;
   const [prod, setProd] = useState(null);
   const [geo, setGeo]   = useState(null);
@@ -149,7 +150,7 @@ export function SectionTargetOverview({ target, pageNum }) {
   const bsAsOf = fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis);
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit C">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title={`Target Profile — ${target?.name || 'Target'}`}
         subtitle={`${tk ? tk + ' · ' : ''}${fyStr} · segment mix, operating metrics & revenue trend (real reported data)`}
@@ -160,7 +161,7 @@ export function SectionTargetOverview({ target, pageNum }) {
         <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 5, letterSpacing: 0.5, textTransform: 'uppercase' }}>Business Overview</div>
         <div style={{ background: '#F9FAFB', border: `1px solid ${GRAY_BORDER}`, borderLeft: `4px solid ${SF_BLUE}`, borderRadius: 4, padding: '8px 12px', fontSize: 10.5, color: '#374151', lineHeight: 1.55, marginBottom: 12 }}>
           {overview || '—'}
-          <span style={{ display: 'block', marginTop: 4, fontSize: 9, color: '#9CA3AF', fontStyle: 'italic' }}>Company facts (CEO / HQ / employees) &amp; the side-by-side profile: see Company Profiles (§3).</span>
+          <span style={{ display: 'block', marginTop: 4, fontSize: 9, color: '#9CA3AF', fontStyle: 'italic' }}>Company facts (CEO / HQ / employees) &amp; the side-by-side profile: see Company Profiles (§{pageNumOf('profiles')}).</span>
         </div>
 
         {/* Segment mix — product (left) + geographic (right), real FMP or "not reported" */}
@@ -198,7 +199,7 @@ export function SectionTargetOverview({ target, pageNum }) {
                       </div>
                     ))}
                   </div>
-                  <div style={{ fontSize: 9, color: '#6B7280', marginTop: 6 }}>Reported annual revenue. Full multi-year P&amp;L (margins, EPS): <strong style={{ color: SF_BLUE }}>see Standalone P&amp;L — Target (§5)</strong>.</div>
+                  <div style={{ fontSize: 9, color: '#6B7280', marginTop: 6 }}>Reported annual revenue. Full multi-year P&amp;L (margins, EPS): <strong style={{ color: SF_BLUE }}>see Standalone P&amp;L — Target (§{pageNumOf('plTarget')})</strong>.</div>
                 </>
               ) : <NotReported label="Multi-year revenue" />}
             </div>

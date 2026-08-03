@@ -52,7 +52,7 @@ function SourceBlock({ label, bullets }) {
   );
 }
 
-export function SectionSources({ target, acquirer, deal, pageNum }) {
+export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const acqName = (acquirer && acquirer.name) || 'Acquirer';
   const tgtName = (target && target.name) || 'Target';
   const acqFY   = (acquirer && acquirer.fiscalYear) || '—';
@@ -191,7 +191,7 @@ export function SectionSources({ target, acquirer, deal, pageNum }) {
     'Estimated and assumption-based figures are labeled throughout. Educational use only — not investment advice.';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Appendix I">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title="Sources & Methodology"
         subtitle={`Data provenance and basis of presentation · Buyer: ${acqName} · Target: ${tgtName}`}

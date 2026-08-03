@@ -28,7 +28,7 @@ const clip = (s, n = 300) => {
   return t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + '…' : t;
 };
 
-export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
+export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const acquirerObj = acquirer || {};
   const targetObj = target || {};
 
@@ -232,7 +232,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum }) {
   const srcTag = (s) => s === 'fmp' ? ' · live (FMP)' : (s === 'none' ? ' · no curated profile' : '');
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit B">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader title="Company Profiles" subtitle={subtitle} />
 
       <div style={{ padding: '14px 20px 8px' }}>

@@ -110,7 +110,7 @@ function SourceCell({ meta, unit, isSot, bg }) {
 
 // Shared core — `part` selects which row group + which chrome renders. Both parts call useVerifiedData
 // (memCached, single fetch); only part 'b' fetches /api/analyst-targets (reconcile + ratings).
-function DataVerificationCore({ target, pageNum, part }) {
+function DataVerificationCore({ target, pageNum, part, exhibitLabel }) {
   const { data, loading } = useVerifiedData(target?.ticker ?? null);
 
   // Deck analyst headline + FMP ratings — ONLY needed on §16b (reconcile callout + ratings row).
@@ -205,7 +205,7 @@ function DataVerificationCore({ target, pageNum, part }) {
 
   const isA = part === 'a';
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel={isA ? 'Appendix II' : 'Appendix III'}>
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title={`Data Verification — ${ticker}${isA ? '' : ' (continued)'}`}
         subtitle={`Source reconciliation as of ${asOf} · ★ = source of truth · page ${isA ? '1' : '2'} of 2`}

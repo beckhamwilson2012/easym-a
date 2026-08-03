@@ -6,6 +6,7 @@ import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
 import { epsAccretionPct } from '../../../utils/dealCalc';
 import { enterpriseValue, cashBucket, netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { exhibitLabelOf, pageNumOf } from '../deckRegistry';
 
 // Fields whose runtime source tags drive the footnote (EDGAR fundamentals + CNBC live price).
 const USED_FIELDS = ['revenue', 'operatingIncome', 'freeCashFlow', 'sharesOutstanding', 'price'];
@@ -179,7 +180,7 @@ function EditPeersModal({ autoPeers, customPeers, onSave, onClose }) {
 }
 
 // ── Main component — transposed public-company screening table ──────────────────
-export function SectionComparables({ target, acquirer, deal, pageNum }) {
+export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const bankMode      = isBankDeal(target, acquirer);
   const targetTicker  = target?.ticker;
   const acquirerTicker = acquirer?.ticker && acquirer.ticker !== targetTicker ? acquirer.ticker : null;
@@ -386,7 +387,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum }) {
   const labelW = 132;
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit A">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader title="Public Company Screen" subtitle={subtitle} />
 
       <div style={{ padding: '6px 22px 0', display: 'flex', justifyContent: 'flex-end' }}>
@@ -482,7 +483,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum }) {
       {(sourceLine || peerProvenance) && (
         <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}
-          Revenue growth and Op Margin/Income (NTM) are forward analyst consensus from FMP (a single provider series whose basis is not designated as GAAP or non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile (Exhibit C) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§6/§7). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
+          Revenue growth and Op Margin/Income (NTM) are forward analyst consensus from FMP (a single provider series whose basis is not designated as GAAP or non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile ({exhibitLabelOf('targetprofile')}) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§{pageNumOf('plAcquirer')}/§{pageNumOf('plTarget')}). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
         </div>
       )}
     </PageFrame>

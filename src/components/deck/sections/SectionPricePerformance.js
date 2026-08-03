@@ -130,7 +130,7 @@ function buildIllustrativeMonths() {
   return months;
 }
 
-export function SectionPricePerformance({ target, acquirer, pageNum }) {
+export function SectionPricePerformance({ target, acquirer, pageNum, exhibitLabel }) {
   const { data: verifiedData } = useVerifiedData(target?.ticker ?? null);
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState([]);
@@ -256,7 +256,7 @@ export function SectionPricePerformance({ target, acquirer, pageNum }) {
   const periodLabel = win ? `${win.start} – ${win.end}` : 'trailing twelve months';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit K">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title="Stock Performance"
         subtitle={`${target.ticker || target.name} · ${periodLabel} · indexed to 100 at ${win ? win.start : 'start of period'}`}

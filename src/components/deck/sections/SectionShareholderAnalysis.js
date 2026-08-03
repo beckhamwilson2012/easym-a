@@ -19,7 +19,7 @@ function RoleBadge({ section }) {
   return <span style={{ fontSize: 8, fontWeight: 700, color: roleColor(section), background: '#F3F4F6', border: `1px solid ${GRAY_BORDER}`, borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{roleLabel(section)}</span>;
 }
 
-export function SectionShareholderAnalysis({ target, pageNum }) {
+export function SectionShareholderAnalysis({ target, pageNum, exhibitLabel }) {
   const tk = target?.ticker;
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(!!tk);
@@ -54,7 +54,7 @@ export function SectionShareholderAnalysis({ target, pageNum }) {
     : '';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit D">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title={`Shareholder Analysis — ${name}`}
         subtitle={trusted

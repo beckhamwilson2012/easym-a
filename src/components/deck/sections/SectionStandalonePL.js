@@ -307,16 +307,16 @@ function MultiYearPL({ pnl, restaurantMode }) {
 // Thin wrappers so the deck can show a standalone P&L for EITHER side (reference §4 Acquirer,
 // §5 Target). The acquirer instance hides deal-specific (premium / financing) commentary, which
 // only makes sense for the target being acquired.
-export function SectionStandalonePLTarget({ target, deal, pageNum }) {
+export function SectionStandalonePLTarget({ target, deal, pageNum, exhibitLabel }) {
   // Standalone P&Ls are pre-deal GAAP company views (spec §2 Slides 4/5); deal terms (premium,
   // financing, mix) belong on the Exchange Ratio & Deal Considerations slide, not here. So the
   // target standalone shows margin/scale commentary like the acquirer, not deal commentary.
-  return <StandalonePLBody company={target} deal={deal} dealBasis={deal?.basis} pageNum={pageNum} role="Target" showDealCommentary={false} exhibitLabel="Exhibit F" />;
+  return <StandalonePLBody company={target} deal={deal} dealBasis={deal?.basis} pageNum={pageNum} role="Target" showDealCommentary={false} exhibitLabel={exhibitLabel} />;
 }
-export function SectionStandalonePLAcquirer({ acquirer, deal, pageNum }) {
+export function SectionStandalonePLAcquirer({ acquirer, deal, pageNum, exhibitLabel }) {
   // deal is kept null for commentary (no premium/financing on the acquirer slide), but the deal-level
   // BASIS still drives display so the whole deck reads on one basis (see resolveAccretionBasis).
-  return <StandalonePLBody company={acquirer} deal={null} dealBasis={deal?.basis} pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel="Exhibit E" />;
+  return <StandalonePLBody company={acquirer} deal={null} dealBasis={deal?.basis} pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel={exhibitLabel} />;
 }
 // Back-compat alias (original single-target usage).
 export function SectionStandalonePL({ target, deal, pageNum }) {

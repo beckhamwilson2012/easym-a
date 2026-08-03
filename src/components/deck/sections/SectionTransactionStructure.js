@@ -4,6 +4,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf } from '../shared/deckTokens';
 import { cashBucket, netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
 import { epsAccretionPct } from '../../../utils/dealCalc';
+import { exhibitLabelOf } from '../deckRegistry';
 
 // Transaction Structure — Sources & Uses + pro-forma capitalization. The FUNDING / balance-sheet view of the
 // deal. Stated inputs (offer / premium / mix / Min Cash of PF Co) sit up top per faculty's note. The
@@ -38,7 +39,7 @@ function SUTable({ title, rows, total, totalLabel, accent }) {
   );
 }
 
-export function SectionTransactionStructure({ target, acquirer, deal, model, pageNum }) {
+export function SectionTransactionStructure({ target, acquirer, deal, model, pageNum, exhibitLabel }) {
   const aTk = acquirer?.ticker || acquirer?.name || 'Acquirer';
   const bTk = target?.ticker || target?.name || 'Target';
   const d = model?.derived || {};
@@ -115,7 +116,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   ];
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit H">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title="Transaction Structure — Sources & Uses"
         subtitle={`${aTk} / ${bTk} · deal funding & pro-forma capitalization · illustrative`}
@@ -131,7 +132,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Min cash of PF co </span><strong style={{ color: NAVY }}>{minCashRetained != null ? dash(minCashRetained) : (bankFin ? 'n/a (bank)' : '—')}</strong>{minCashPct != null ? <span style={{ color: '#9CA3AF', fontSize: 9.5 }}> ({(minCashPct * 100).toFixed(1)}% PF LTM rev)</span> : null}</span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Equity value </span><strong style={{ color: NAVY }}>{dash(equityPurchase)}</strong></span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>EV </span><strong style={{ color: NAVY }}>{dash(txnEV)}</strong></span>
-          <span style={{ fontSize: 9, color: '#9CA3AF' }}>Exchange ratio &amp; sensitivity: <strong style={{ color: SF_BLUE }}>Exhibit I</strong>; historical implied ratio: <strong style={{ color: SF_BLUE }}>Exhibit J</strong>.</span>
+          <span style={{ fontSize: 9, color: '#9CA3AF' }}>Exchange ratio &amp; sensitivity: <strong style={{ color: SF_BLUE }}>{exhibitLabelOf('exchange')}</strong>; historical implied ratio: <strong style={{ color: SF_BLUE }}>{exhibitLabelOf('exchangeratio')}</strong>.</span>
         </div>
 
         {/* Block 1 — Sources & Uses (must foot) */}

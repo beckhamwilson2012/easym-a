@@ -4,6 +4,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { getMonthlyPrices } from '../../../services/priceHistory';
+import { exhibitLabelOf } from '../deckRegistry';
 
 // ── §Exchange Ratio Analysis (7H) ────────────────────────────────────────────────────────────────────────
 // The HISTORICAL implied exchange ratio: target price ÷ acquirer price over the same monthly window §12 uses,
@@ -18,7 +19,7 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 const fmtMonth = (m) => { const p = (m || '').split('-'); return p.length === 2 ? `${MONTHS[(+p[1]) - 1]} '${p[0].slice(2)}` : m; };
 const fmt4 = (v) => (v == null || !Number.isFinite(v) ? '—' : v.toFixed(4));
 
-export function SectionExchangeRatioAnalysis({ target, acquirer, model, pageNum }) {
+export function SectionExchangeRatioAnalysis({ target, acquirer, model, pageNum, exhibitLabel }) {
   const d  = model?.derived || {};
   const da = model?.dealAssumptions || {};
   const aTk = acquirer?.ticker || 'Acquirer';
@@ -89,7 +90,7 @@ export function SectionExchangeRatioAnalysis({ target, acquirer, model, pageNum 
   ];
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit J">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title="Exchange Ratio Analysis"
         subtitle={`${aTk} / ${bTk} · implied exchange ratio (${bTk} share price ÷ ${aTk} share price) over time`}
@@ -137,7 +138,7 @@ export function SectionExchangeRatioAnalysis({ target, acquirer, model, pageNum 
             {/* Footnote (2d) — basis difference (required) + adjustment basis */}
             <div style={{ marginTop: 8, fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
               <strong style={{ color: NAVY }}>Basis: </strong>
-              The <strong>offer-implied ratio</strong> ({fmt4(offerImplied)}) is what the {offer != null ? `$${offer.toFixed(2)}` : ''} offer implies <strong>if the whole consideration were paid in {aTk} stock</strong>. The shares actually issued in this {cashPct != null ? `${cashPct}% cash / ${stockPct}% stock` : 'cash-and-stock'} deal follow the <strong>stock-leg</strong> exchange ratio on <strong>Exhibit I</strong> — {fmt4(struckStockLeg)} {aTk} per {bTk} share — because only the {stockPct != null ? `${stockPct}%` : 'stock'} portion is exchanged for equity. Both are correct on different bases: this page is the full <em>price</em> ratio; Exhibit I is the actual <em>share issuance</em>.
+              The <strong>offer-implied ratio</strong> ({fmt4(offerImplied)}) is what the {offer != null ? `$${offer.toFixed(2)}` : ''} offer implies <strong>if the whole consideration were paid in {aTk} stock</strong>. The shares actually issued in this {cashPct != null ? `${cashPct}% cash / ${stockPct}% stock` : 'cash-and-stock'} deal follow the <strong>stock-leg</strong> exchange ratio on <strong>{exhibitLabelOf('exchange')}</strong> — {fmt4(struckStockLeg)} {aTk} per {bTk} share — because only the {stockPct != null ? `${stockPct}%` : 'stock'} portion is exchanged for equity. Both are correct on different bases: this page is the full <em>price</em> ratio; Exhibit I is the actual <em>share issuance</em>.
               {' '}Series are provider end-of-day closes (FMP <code>price</code> for these tickers, Yahoo adjusted-close fallback), reconstructed to dollars from the deck's indexed monthly series anchored to the current quote ({fmtMonth(lastMonth)} — the last bucket coincides with the live quote, so no anchor gap). Neither company split during the window and dividends are immaterial to the ratio, so it is effectively split/dividend-neutral. Illustrative — not investment advice.
             </div>
           </>

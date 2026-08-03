@@ -58,7 +58,7 @@ const Cell = ({ v, kind, bold, color }) => (
   </span>
 );
 
-function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
+function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const aTk = acquirer?.ticker || acquirer?.name || 'Acquirer';
   const bTk = target?.ticker || target?.name || 'Target';
   const isA = part === 'a';
@@ -218,7 +218,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
   // ══════════════════════════ RENDER ════════════════════════════════════════════════════════════════════
   if (isA) {
     return (
-      <PageFrame pageNum={pageNum} exhibitLabel="Exhibit G">
+      <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
         <PageHeader
           title="Pro Forma Combined — Projected"
           subtitle={`${aTk} + ${bTk} · forward analyst consensus · Acquirer | Target | Combined | Synergies | PF Total`}

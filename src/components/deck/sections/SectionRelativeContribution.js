@@ -22,7 +22,7 @@ function splitContribution(a, b) {
   return { aVal: aNum, bVal: bNum, aPct: (aNum / total) * 100, bPct: (bNum / total) * 100, nm: false };
 }
 
-export function SectionRelativeContribution({ target, acquirer, deal, model, pageNum }) {
+export function SectionRelativeContribution({ target, acquirer, deal, model, pageNum, exhibitLabel }) {
   const aName = acquirer.name || acquirer.ticker || 'Acquirer';
   const bName = target.name || target.ticker || 'Target';
 
@@ -129,7 +129,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
       'Contribution is each company’s share of the combined financials; the equity split is shown separately on the Trading Profile slide.';
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit L">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title="Relative Contribution Analysis"
         subtitle={`${aName} and ${bName} — share of combined entity by metric`}

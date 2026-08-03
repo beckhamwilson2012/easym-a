@@ -22,6 +22,7 @@ import { SectionRelativeContribution } from './sections/SectionRelativeContribut
 import { SectionAnalystConsensus } from './sections/SectionAnalystConsensus';
 import { SectionSources }          from './sections/SectionSources';
 import { SectionDataVerificationA, SectionDataVerificationB } from './sections/SectionDataVerification';
+import { DECK_ORDER, exhibitLabelOf } from './deckRegistry';
 
 // Order: §10 Trading Profile dropped; old §12 Football Field + §14 Valuation Matrix were merged into one
 // Valuation Summary (Exhibit N), which has since been REMOVED — the app-built DCF and sector-median
@@ -30,26 +31,18 @@ import { SectionDataVerificationA, SectionDataVerificationB } from './sections/S
 // split across two pages — E (detailed per-year tables) + F (accretion, the old §7 Forward Accretion folded
 // in; SectionForwardAccretion retired). Dashboard is internal (non-PDF) first; the two Data Verification
 // appendices last. 17 PDF slides.
-const SECTIONS = [
-  { id: 'dashboard',    label: 'Deal Summary',                Component: SectionDashboard,            showInPdf: false },
-  { id: 'title',        label: 'Title',                       Component: SectionTitlePage,            showInPdf: true  }, // 1
-  { id: 'comparables',  label: 'Comparables',                 Component: SectionComparables,          showInPdf: true  }, // 2  · Exhibit A
-  { id: 'profiles',     label: 'Company Profiles',            Component: SectionCompanyProfiles,      showInPdf: true  }, // 3  · Exhibit B
-  { id: 'targetprofile',label: 'Target Profile',              Component: SectionTargetOverview,       showInPdf: true  }, // 4  · Exhibit C  (data-driven target deep-dive: segments/metrics/trend — any ticker, real data)
-  { id: 'shareholders', label: 'Shareholder Analysis',        Component: SectionShareholderAnalysis,  showInPdf: true  }, // 5  · Exhibit D  (DEF 14A beneficial ownership: self-validating parse OR FMP fallback — target-side)
-  { id: 'plAcquirer',   label: 'Standalone P&L — Acquirer',   Component: SectionStandalonePLAcquirer, showInPdf: true  }, // 6  · Exhibit E
-  { id: 'plTarget',     label: 'Standalone P&L — Target',     Component: SectionStandalonePLTarget,   showInPdf: true  }, // 7  · Exhibit F
-  { id: 'proforma',     label: 'Pro Forma & Accretion',       Component: SectionProFormaPLA,          showInPdf: true  }, // 8  · Exhibit G  (per-year P&L + accretion strip; §9 folded on, 7E)
-  { id: 'txnstructure', label: 'Transaction Structure',       Component: SectionTransactionStructure, showInPdf: true  }, // 9  · Exhibit H  (Sources & Uses + pro-forma cap)
-  { id: 'exchange',     label: 'Exchange Ratio & Deal Terms', Component: SectionExchangeRatio,        showInPdf: true  }, // 10 · Exhibit I
-  { id: 'exchangeratio',label: 'Exchange Ratio Analysis',     Component: SectionExchangeRatioAnalysis,showInPdf: true  }, // 11 · Exhibit J  (7H — historical implied ratio, adjacent to §11)
-  { id: 'equity',       label: 'Equity Performance',          Component: SectionPricePerformance,     showInPdf: true  }, // 12 · Exhibit K
-  { id: 'contribution', label: 'Relative Contribution',       Component: SectionRelativeContribution, showInPdf: true  }, // 13 · Exhibit L
-  { id: 'analyst',      label: 'Analyst Consensus',           Component: SectionAnalystConsensus,     showInPdf: true  }, // 14 · Exhibit M
-  { id: 'sources',      label: 'Sources & Methodology',       Component: SectionSources,              showInPdf: true  }, // 15 · Appendix I
-  { id: 'verification', label: 'Data Verification',           Component: SectionDataVerificationA,    showInPdf: true  }, // 16 · Appendix II  (Market/Shares/Income)
-  { id: 'verification2',label: 'Data Verification (cont.)',   Component: SectionDataVerificationB,    showInPdf: true  }, // 17 · Appendix III (Balance/CashFlow/Analyst/Ratings)
-];
+// Component wiring — the ORDER, kind, labels + derived exhibit letters / page numbers all live in
+// deckRegistry (single source; it holds NO Component refs so section files can import exhibitLabelOf/
+// pageNumOf without a cycle). Here we only attach each id's Component to the registry order.
+const COMPONENTS = {
+  dashboard: SectionDashboard, title: SectionTitlePage, comparables: SectionComparables,
+  profiles: SectionCompanyProfiles, targetprofile: SectionTargetOverview, shareholders: SectionShareholderAnalysis,
+  plAcquirer: SectionStandalonePLAcquirer, plTarget: SectionStandalonePLTarget, proforma: SectionProFormaPLA,
+  txnstructure: SectionTransactionStructure, exchange: SectionExchangeRatio, exchangeratio: SectionExchangeRatioAnalysis,
+  equity: SectionPricePerformance, contribution: SectionRelativeContribution, analyst: SectionAnalystConsensus,
+  sources: SectionSources, verification: SectionDataVerificationA, verification2: SectionDataVerificationB,
+};
+const SECTIONS = DECK_ORDER.map(s => ({ ...s, Component: COMPONENTS[s.id] }));
 
 // pageNum for each showInPdf section (1-indexed)
 const PDF_SECTIONS = SECTIONS.filter(s => s.showInPdf);
@@ -193,7 +186,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
           <div style={{ display: 'flex', justifyContent: 'center' }}>
             {isDash ? (
               <div style={{ width: '100%', maxWidth: 1200 }}>
-                <ActiveComponent {...sectionProps} pageNum={activePdfPageNum} />
+                <ActiveComponent {...sectionProps} pageNum={activePdfPageNum} exhibitLabel={exhibitLabelOf(activeSection.id)} />
               </div>
             ) : (
               // The layout box reserves the SCALED footprint (width & height) so the transform never clips or
@@ -201,7 +194,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
               // PDF tree is a SEPARATE, un-scaled render — PageFrame stays 850 for capture (PDF unchanged).
               <div style={{ width: 850 * scale, height: slideH ? slideH * scale : undefined, flexShrink: 0 }}>
                 <div ref={slideRef} style={{ width: 850, margin: '0 auto', transform: `scale(${scale})`, transformOrigin: 'top center' }}>
-                  <ActiveComponent {...sectionProps} pageNum={activePdfPageNum} />
+                  <ActiveComponent {...sectionProps} pageNum={activePdfPageNum} exhibitLabel={exhibitLabelOf(activeSection.id)} />
                 </div>
               </div>
             )}
@@ -246,7 +239,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
       >
         {PDF_SECTIONS.map((section, i) => (
           <div key={section.id} data-section-id={section.id} style={{ marginBottom: 4 }}>
-            <section.Component {...sectionProps} pageNum={i + 1} />
+            <section.Component {...sectionProps} pageNum={i + 1} exhibitLabel={exhibitLabelOf(section.id)} />
           </div>
         ))}
       </div>

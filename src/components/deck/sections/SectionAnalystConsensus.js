@@ -41,7 +41,7 @@ function Stat({ label, value, accent, bg }) {
   );
 }
 
-export function SectionAnalystConsensus({ target, acquirer, deal, pageNum }) {
+export function SectionAnalystConsensus({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const { data } = useVerifiedData(target?.ticker ?? null);
   const fields = data?.fields || {};
 
@@ -196,7 +196,7 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum }) {
   }
 
   return (
-    <PageFrame pageNum={pageNum} exhibitLabel="Exhibit M">
+    <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader
         title="Analyst Consensus Overview"
         subtitle={`${tName}${target?.ticker ? ` (${target.ticker})` : ''} · Sell-side price targets vs. offer`}
