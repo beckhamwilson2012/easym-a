@@ -43,9 +43,16 @@ export function SectionTitlePage({ target, acquirer, model }) {
 
         <div style={{
           fontSize: 11, color: 'rgba(255,255,255,0.65)',
-          letterSpacing: 3, textTransform: 'uppercase', marginBottom: 20, fontWeight: 600,
+          letterSpacing: 3, textTransform: 'uppercase', marginBottom: 5, fontWeight: 600,
         }}>
           M&amp;A Advisory
+        </div>
+        {/* Faculty: label the section (7D-1) */}
+        <div style={{
+          fontSize: 10, color: 'rgba(255,255,255,0.5)',
+          letterSpacing: 2.5, textTransform: 'uppercase', marginBottom: 20, fontWeight: 600,
+        }}>
+          Single Company Analysis
         </div>
 
         <div style={{

@@ -150,24 +150,33 @@ export function SectionShareholderAnalysis({ target, pageNum }) {
             <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>Recent Insider Activity <span style={{ fontWeight: 400, color: '#9CA3AF', textTransform: 'none' }}>(SEC Form 4 — not a complete roster)</span></div>
             {Array.isArray(data?.insiders) && data.insiders.length ? (
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead><tr><th style={th('left')}>Insider</th><th style={th('left')}>Role</th><th style={th('left')}>Last txn</th><th style={th()}>Shares owned</th><th style={th('left')}>Date</th></tr></thead>
+                {/* Faculty (7D-4a): raw share counts span orders of magnitude (e.g. a founder's ~880M vs a
+                    director's ~4K) — add % of shares outstanding alongside the raw count so holdings are
+                    comparable. New DERIVED column (holding ÷ current S/O); no existing value moves. */}
+                <thead><tr><th style={th('left')}>Insider</th><th style={th('left')}>Role</th><th style={th('left')}>Last txn</th><th style={th()}>Shares owned</th><th style={th()}>% of S/O</th><th style={th('left')}>Date</th></tr></thead>
                 <tbody>
-                  {data.insiders.slice(0, 10).map((ins, i) => (
+                  {data.insiders.slice(0, 10).map((ins, i) => {
+                    const so = data.float?.outstandingShares != null ? Number(data.float.outstandingShares) : null;
+                    const pctSO = (ins.owned != null && so > 0) ? (Number(ins.owned) / so) * 100 : null;
+                    return (
                     <tr key={i} style={{ background: i % 2 ? ALT_ROW : '#fff' }}>
                       <td style={{ ...td('left'), background: 'inherit' }}>{cleanName(ins.name)}</td>
                       <td style={{ ...td('left'), background: 'inherit', fontSize: 9, color: '#6B7280' }}>{(ins.role || '').slice(0, 28)}</td>
                       <td style={{ ...td('left'), background: 'inherit', fontSize: 9 }}>{(ins.type || '').replace(/^[A-Z]-/, '')}</td>
                       <td style={{ ...td(), background: 'inherit' }}>{ins.owned != null ? Number(ins.owned).toLocaleString() : '—'}</td>
+                      <td style={{ ...td(), background: 'inherit', color: '#6B7280' }}>{pctSO != null ? `${pctSO < 0.01 ? '<0.01' : pctSO.toFixed(2)}%` : '—'}</td>
                       <td style={{ ...td('left'), background: 'inherit', fontSize: 9, color: '#9CA3AF' }}>{ins.date || '—'}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             ) : (
               <div style={{ padding: '14px', textAlign: 'center', fontSize: 10, color: '#9CA3AF', fontStyle: 'italic' }}>No recent insider Form-4 activity reported.</div>
             )}
+            {/* Faculty (7D-4b): disclose the list's BASIS to §16's provenance standard — source, as-of, inclusion rule. */}
             <div style={{ marginTop: 8, fontSize: 8.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
-              Free float from SEC-reported shares outstanding (Financial Modeling Prep); insider activity from SEC Form-4 filings. A full 13F/beneficial-ownership top-holder roster is not available for this filer on the current data source.
+              <strong>Insider list basis:</strong> the 10 most recent SEC Form-4 filers (§16 officers, directors &amp; 10% owners). <strong>Shares owned</strong> is each insider's beneficial holding reported on their latest Form 4, as of the <strong>Date</strong> shown; <strong>% of S/O</strong> is that holding ÷ current shares outstanding — approximate, since the holdings are reported on differing dates. This is recent insider <em>transaction</em> activity (Form 4), not a complete beneficial-ownership roster (a full DEF 14A / 13F top-holder table is not available for this filer). Free float &amp; shares outstanding from SEC-reported filings (Financial Modeling Prep).
             </div>
           </>
         )}

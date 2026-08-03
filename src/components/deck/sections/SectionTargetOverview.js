@@ -129,15 +129,18 @@ export function SectionTargetOverview({ target, pageNum }) {
 
   // Key operating metrics (TTM ratios — currency-neutral). EV/EBITDA & negatives that read absurd → n/m.
   const evEbitda = (km?.evToEBITDA != null && km.evToEBITDA > 0 && km.evToEBITDA < 100) ? `${km.evToEBITDA.toFixed(1)}x` : (km?.ok ? 'n/m' : '—');
+  // Faculty (7D-5): every ratio carries an explicit period, consistent with the rest of the deck (LTM / FY).
+  // The four return/yield ratios are trailing-twelve-month (FMP key-metrics-ttm) — labeled LTM; the balance-
+  // sheet AS-OF instant for the return denominators is in the footnote. TTM→LTM to match §2/§3/§6/§7 wording.
   const metrics = [
-    { k: 'Return on equity',           v: pct(km?.returnOnEquity) },
-    { k: 'Return on invested capital', v: pct(km?.returnOnInvestedCapital) },
-    { k: 'Return on assets',           v: pct(km?.returnOnAssets) },
-    { k: 'Free cash flow yield',       v: pct(km?.freeCashFlowYield) },
+    { k: 'Return on equity (LTM)',           v: pct(km?.returnOnEquity) },
+    { k: 'Return on invested capital (LTM)', v: pct(km?.returnOnInvestedCapital) },
+    { k: 'Return on assets (LTM)',           v: pct(km?.returnOnAssets) },
+    { k: 'Free cash flow yield (LTM)',       v: pct(km?.freeCashFlowYield) },
     { k: 'Gross margin (FY)',          v: pct(grossMargin) },
     { k: 'Operating margin (FY)',      v: pct(opMargin) },
     { k: `Revenue CAGR (${actuals.length}yr)`, v: pct(revCAGR) },
-    { k: 'EV / EBITDA (TTM)',          v: evEbitda },
+    { k: 'EV / EBITDA (LTM)',          v: evEbitda },
   ];
 
   const fyStr = target?.fiscalYear ? `FY${target.fiscalYear}` : 'most recent annual';

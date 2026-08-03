@@ -249,11 +249,17 @@ export function SectionPricePerformance({ target, acquirer, pageNum }) {
     );
   };
 
+  // Faculty (7D-2): the period is DATA-DRIVEN, not a hardcoded "LTM" — first/last month of the real merged
+  // series (sorted ascending in mergeSeries). Renders in the subtitle and as an x-axis caption; falls back to
+  // a generic label only before data loads. Purely a label off existing month keys — no computed value moves.
+  const win = data.length ? { start: labelMonth(data[0].month), end: labelMonth(data[data.length - 1].month) } : null;
+  const periodLabel = win ? `${win.start} – ${win.end}` : 'trailing twelve months';
+
   return (
     <PageFrame pageNum={pageNum} exhibitLabel="Exhibit K">
       <PageHeader
-        title="Last Twelve Months Stock Performance"
-        subtitle={`${target.ticker || target.name} · Indexed to 100 at start of period`}
+        title="Stock Performance"
+        subtitle={`${target.ticker || target.name} · ${periodLabel} · indexed to 100 at ${win ? win.start : 'start of period'}`}
       />
 
       <div style={{ padding: '20px 24px 16px' }}>
@@ -336,6 +342,13 @@ export function SectionPricePerformance({ target, acquirer, pageNum }) {
               ))}
             </LineChart>
           </ResponsiveContainer>
+        )}
+
+        {/* Faculty (7D-2): x-axis period caption — the month ticks show no year, so the window is stated here. */}
+        {!loading && win && (
+          <div style={{ textAlign: 'center', fontSize: 9, color: '#9CA3AF', marginTop: 2, fontStyle: 'italic' }}>
+            Monthly · {periodLabel}
+          </div>
         )}
 
         {/* Dated event log — keyed to the numbered markers above */}

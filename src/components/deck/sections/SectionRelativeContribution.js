@@ -70,6 +70,9 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   const tgtOwnPct = d.ownershipNewPct ?? (totalShares > 0 ? (newShares / totalShares) * 100 : 0);
   const acqOwnPct = d.ownershipExistingPct ?? (totalShares > 0 ? (acqShares / totalShares) * 100 : 0);
   const ownNm = totalShares <= 0;
+  // Faculty (7D-3a): the stock-consideration mix (X%) drives the PF-ownership label — from the deal input, NOT
+  // hardcoded. stockPercent = 100 − cashPercent; the ownership above is computed at THIS mix.
+  const stockPct = model?.dealAssumptions?.stockPercent ?? (deal?.cashPercent != null ? 100 - (parseFloat(deal.cashPercent) || 0) : null);
 
   // ── Bank deals: gross profit and operating income don't apply (and the 65%×revenue gross-profit
   //    fallback would be fabricated). Use the bank income stack instead — Net Interest Income, Total
@@ -213,7 +216,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
           {!ownNm && (
             <div style={{ marginTop: 4, paddingTop: 12, borderTop: `1px dashed ${GRAY_BORDER}` }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5 }}>Pro Forma Ownership (equity)</span>
+                <span style={{ fontSize: 10, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5 }}>{stockPct != null ? `PF ownership per the ${Math.round(stockPct)}% stock consideration offer` : 'Pro Forma Ownership (equity)'}</span>
                 <span style={{ fontSize: 9, fontStyle: 'italic', color: '#6B7280' }}>equity split — compare vs. contribution above</span>
               </div>
               <div style={{ position: 'relative', height: 26 }}>
