@@ -95,7 +95,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   // (overstating it); we now subtract it so §6a foots to §6b's accretion basis, and §6b shows the full
   // bridge. Read from _results.newInterestAfterTax (dealCalc.js:99/136) — the same value the accretion uses.
   const finDrag = parseFloat(deal?._results?.newInterestAfterTax) || 0;
-  const bridgeCombNI = (parseFloat(deal?._inputs?.companyANetIncome) || 0) + (parseFloat(deal?._inputs?.companyBNetIncome) || 0);
+  const _niA = deal?._inputs?.companyANetIncome, _niB = deal?._inputs?.companyBNetIncome;   // null-safe (dead: not rendered since the 7E §9-fold, but no ||0 coercion left behind)
+  const bridgeCombNI = (_niA != null && _niB != null) ? parseFloat(_niA) + parseFloat(_niB) : null;
   const bridgeAtSyn  = parseFloat(deal?._results?.afterTaxSynergies) || 0;
   const bridgePfNI   = deal?._results?.proFormaNetIncome != null ? parseFloat(deal._results.proFormaNetIncome) : null;
 

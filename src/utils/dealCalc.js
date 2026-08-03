@@ -136,7 +136,7 @@ export function calculate(inputs) {
   const acqBaseShares    = acqDiluted.shares;
   const totalShares      = acqBaseShares + newSharesIssued;
 
-  const combinedRevenue  = companyARevenue + companyBRevenue;
+  const combinedRevenue  = (companyARevenue != null && companyBRevenue != null) ? companyARevenue + companyBRevenue : null;
   // BOTH sides required. A null EBITDA (e.g. BMY: OperatingIncomeLoss untagged → null EBITDA) must NOT
   // coerce to 0 inside the sum and silently understate combined leverage — a partial input renders '—',
   // never a published ratio (matches the enterpriseValue / netDebt short-circuit, Fix A / 2C-2). Both-real
@@ -152,9 +152,11 @@ export function calculate(inputs) {
   // the deal — ONE construction, shared with the sensitivity grid (calcProFormaEPS) and read by §8/§9/§10/§11.
   const sources             = acquisitionNewDebt(inputs);
   const newInterestAfterTax = sources.newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE);
-  const proFormaNetIncome   = companyANetIncome + companyBNetIncome
-                              + afterTaxSynergies - newInterestAfterTax;
-  const proFormaEPS         = totalShares > 0 ? proFormaNetIncome / totalShares : 0;
+  // BOTH net incomes required — a null side must NOT coerce to 0 and understate the pro-forma net income
+  // that drives EPS and the headline accretion. Null → EPS null → accretion not meaningful → '—' / n/m.
+  const proFormaNetIncome   = (companyANetIncome != null && companyBNetIncome != null)
+    ? companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax : null;
+  const proFormaEPS         = (proFormaNetIncome != null && totalShares > 0) ? proFormaNetIncome / totalShares : null;
 
   // Accretion / dilution. A percent change is only meaningful when BOTH the standalone and the
   // pro-forma EPS are positive — a move off a non-positive base (e.g. -$0.98 → $0.00) is neither a
@@ -185,8 +187,8 @@ export function calculate(inputs) {
     isAccretive,
     accretionMeaningful,
     epsChangePct:      epsChangePct === null ? null : epsChangePct.toFixed(1),
-    proFormaEPS:       proFormaEPS.toFixed(2),
-    proFormaNetIncome: proFormaNetIncome.toFixed(0),
+    proFormaEPS:       proFormaEPS === null ? null : proFormaEPS.toFixed(2),
+    proFormaNetIncome: proFormaNetIncome === null ? null : proFormaNetIncome.toFixed(0),
     afterTaxSynergies: afterTaxSynergies.toFixed(0),
     newInterestAfterTax: newInterestAfterTax.toFixed(0),
     // ── Sources of funds (Stage 2E) — the drag above is charged on newDebt; §10 renders the build ──
@@ -209,10 +211,10 @@ export function calculate(inputs) {
     stockPortion:       stockPortion.toFixed(0),
     newSharesIssued:    newSharesIssued.toFixed(0),
     purchasePremium:    purchasePremium === null ? null : purchasePremium.toFixed(1),
-    combinedRevenue:    combinedRevenue.toFixed(0),
+    combinedRevenue:    combinedRevenue === null ? null : combinedRevenue.toFixed(0),
     combinedEBITDA:     combinedEBITDA === null ? null : combinedEBITDA.toFixed(0),
     // combinedNetIncome reflects the pro-forma recurring net income used for EPS (consistent).
-    combinedNetIncome:  proFormaNetIncome.toFixed(0),
+    combinedNetIncome:  proFormaNetIncome === null ? null : proFormaNetIncome.toFixed(0),
     synergiesY1, synergiesY2, synergiesY3,
     transactionFees,
     // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
@@ -233,6 +235,7 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const { companyANetIncome, companyBShares, companyBNetIncome, cashPercent } = inputs;
   const acqPrice = acquirerSharePrice(inputs);
   if (acqPrice === 0 || companyBShares === 0) return null;
+  if (companyANetIncome == null || companyBNetIncome == null) return null; // partial input → null (→ '—'), never a 0-coerced EPS
   const stockPercent = 100 - cashPercent;
   const totalPP      = offerPrice * companyBShares;
   const stockPortion = totalPP * (stockPercent / 100);
