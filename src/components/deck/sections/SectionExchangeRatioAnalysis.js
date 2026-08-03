@@ -61,16 +61,29 @@ export function SectionExchangeRatioAnalysis({ target, acquirer, model, pageNum 
   const firstMonth   = data.length ? data[0].month : null;
   const lastMonth    = data.length ? data[data.length - 1].month : null;
 
-  // y-domain padded around every plotted value + reference line.
-  const vals = data.map(x => x.ratio).concat([atMarket, offerImplied, periodAvg].filter(v => v != null));
-  const vMin = vals.length ? Math.min(...vals) : 0;
-  const vMax = vals.length ? Math.max(...vals) : 1;
-  const pad  = (vMax - vMin) * 0.18 || 0.1;
-  const domain = [Math.max(0, +(vMin - pad).toFixed(3)), +(vMax + pad).toFixed(3)];
+  // y-domain built from the ratio series + at-market line. The offer-implied line is included ONLY when it
+  // sits within ~1.5× the series range of an edge (a realistic premium); an EXTREME offer (e.g. a +640% test
+  // premium) must not stretch the axis and flatten the series, so it is clamped to the edge and labeled
+  // instead. No zero-clamp: a small-magnitude ratio (0.03) must fill the plot, not sit on the axis (1a/1b).
+  const seriesVals = data.map(x => x.ratio).concat(atMarket != null ? [atMarket] : []);
+  const sMin = seriesVals.length ? Math.min(...seriesVals) : 0;
+  const sMax = seriesVals.length ? Math.max(...seriesVals) : 1;
+  const band = ((sMax - sMin) || sMax * 0.5) * 1.5;   // how far past an edge the offer may reach and stay in-scale
+  let dMin = sMin, dMax = sMax;
+  if (offerImplied != null && offerImplied >= sMin - band && offerImplied <= sMax + band) {
+    dMin = Math.min(dMin, offerImplied); dMax = Math.max(dMax, offerImplied);
+  }
+  const pad = (dMax - dMin) * 0.15 || dMax * 0.1 || 0.05;
+  const domain = [+(dMin - pad).toFixed(4), +(dMax + pad).toFixed(4)];
+  const tickFmt = (v) => ((domain[1] - domain[0]) < 0.15 ? v.toFixed(3) : v.toFixed(2));
+  // Offer line: in-range (typical / included above) → drawn at value; extreme → clamped to the nearest edge
+  // (dashed) + labeled with its TRUE value and an arrow, so it shows without wrecking the scale.
+  const offerInRange = offerImplied != null && offerImplied >= domain[0] && offerImplied <= domain[1];
+  const offerY = offerImplied == null ? null : Math.min(domain[1], Math.max(domain[0], offerImplied));
 
   const KEY = [
     { c: SF_BLUE,   dash: false, label: `Implied ratio (${bTk} ÷ ${aTk}), monthly`, val: null },
-    { c: '#B45309', dash: false, label: 'Offer-implied ratio', val: offerImplied, note: premiumNote(offerImplied, atMarket) },
+    { c: '#B45309', dash: false, label: 'Offer-implied ratio', val: offerImplied, note: [premiumNote(offerImplied, atMarket), offerInRange ? null : 'off-scale'].filter(Boolean).join(' · ') || null },
     { c: NAVY,      dash: true,  label: 'At-market ratio (current)', val: atMarket },
     { c: '#9CA3AF', dash: true,  label: 'Period average', val: periodAvg },
   ];
@@ -94,14 +107,14 @@ export function SectionExchangeRatioAnalysis({ target, acquirer, model, pageNum 
               <LineChart data={data} margin={{ top: 10, right: 28, left: 4, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#EEF1F5" />
                 <XAxis dataKey="month" tickFormatter={fmtMonth} tick={{ fontSize: 10, fill: '#6B7280' }} interval="preserveStartEnd" minTickGap={24} />
-                <YAxis domain={domain} tick={{ fontSize: 10, fill: '#6B7280' }} tickFormatter={(v) => v.toFixed(2)} width={44}
+                <YAxis domain={domain} tick={{ fontSize: 10, fill: '#6B7280' }} tickFormatter={tickFmt} width={44}
                   label={{ value: `${bTk} ÷ ${aTk}`, angle: -90, position: 'insideLeft', style: { fontSize: 10, fill: '#6B7280', textAnchor: 'middle' } }} />
                 <Tooltip formatter={(v) => [fmt4(v), 'Ratio']} labelFormatter={fmtMonth}
                   contentStyle={{ fontSize: 11, borderRadius: 6, border: `1px solid ${GRAY_BORDER}` }} />
                 {periodAvg != null && <ReferenceLine y={periodAvg} stroke="#9CA3AF" strokeDasharray="2 4" strokeWidth={1} />}
                 {atMarket != null && <ReferenceLine y={atMarket} stroke={NAVY} strokeDasharray="5 3" strokeWidth={1.5} />}
-                {offerImplied != null && <ReferenceLine y={offerImplied} stroke="#B45309" strokeWidth={2}
-                  label={{ value: `offer ${fmt4(offerImplied)}`, position: 'right', fill: '#B45309', fontSize: 9, fontWeight: 700 }} />}
+                {offerY != null && <ReferenceLine y={offerY} stroke="#B45309" strokeWidth={2} strokeDasharray={offerInRange ? undefined : '4 3'}
+                  label={{ value: offerInRange ? `offer ${fmt4(offerImplied)}` : `offer ${fmt4(offerImplied)} ${offerImplied > domain[1] ? '▲' : '▼'}`, position: 'right', fill: '#B45309', fontSize: 9, fontWeight: 700 }} />}
                 <Line type="monotone" dataKey="ratio" stroke={SF_BLUE} strokeWidth={2.5} dot={{ r: 2, fill: SF_BLUE }} activeDot={{ r: 4 }} isAnimationActive={false} />
               </LineChart>
             </ResponsiveContainer>
