@@ -283,7 +283,13 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
           <>
             <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
               Accretion / (Dilution) Analysis — Pro Forma EPS vs. {aTk} Standalone
-              <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: '#0070D2', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '1px 6px', textTransform: 'none', letterSpacing: 0 }}>Non-GAAP basis</span>
+              {/* Basis badge DRIVEN by deal.basis, not hardcoded (7C-3): the Year-1 anchor is the deal-basis
+                  standalone EPS (resolveAccretionBasis → 'Non-GAAP' only when BOTH companies' 8-K non-GAAP
+                  reconcile, else 'GAAP'; GOOGL/AMZN return null → GAAP), forward years are FMP consensus. So the
+                  non-GAAP claim shows ONLY where the pipeline actually delivered it; GAAP deals read basis-neutral. */}
+              {deal?.basis === 'Non-GAAP' && (
+                <span style={{ marginLeft: 6, fontSize: 9, fontWeight: 700, color: '#0070D2', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '1px 6px', textTransform: 'none', letterSpacing: 0 }}>Non-GAAP basis</span>
+              )}
             </div>
             <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
               <div style={{ background: NAVY, display: 'flex', padding: '5px 10px' }}>
@@ -348,7 +354,9 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part }) {
             )}
 
             <div style={{ marginTop: 5, fontSize: 8.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
-              Accretion is measured on <strong>non-GAAP standalone EPS</strong> ({standaloneY1 != null ? fmtPerShare(standaloneY1) : '—'} for {aTk}), consistent with the dashboard and deal model. This differs from the <strong>GAAP</strong> diluted EPS on the Standalone P&amp;L slide — a basis distinction, not a discrepancy. The combined pro-forma revenue / EBIT / net income underlying these years are on the previous page. <strong>The pro-forma &amp; accretion model is built on latest-fiscal-year actuals + forward consensus estimates</strong> — the screening comparables and company profile (Exhibits A / B) use a trailing-twelve-month (LTM) basis, a deliberate methodology split (bankers screen on LTM, model accretion on a normalized forward basis).
+              {deal?.basis === 'Non-GAAP'
+                ? <>Accretion is measured on <strong>non-GAAP standalone EPS</strong> ({standaloneY1 != null ? fmtPerShare(standaloneY1) : '—'} for {aTk}), consistent with the dashboard and deal model. This differs from the <strong>GAAP</strong> diluted EPS on the Standalone P&amp;L slide — a basis distinction, not a discrepancy.</>
+                : <>Accretion is measured on the deal-basis <strong>standalone EPS</strong> ({standaloneY1 != null ? fmtPerShare(standaloneY1) : '—'} for {aTk}), consistent with the dashboard and deal model — this deal's fiscal year-end non-GAAP reconciliation was not available for both companies, so the deal basis is <strong>GAAP</strong> and this figure ties to the GAAP diluted EPS on the Standalone P&amp;L slide.</>} The combined pro-forma revenue / EBIT / net income underlying these years are on the previous page. <strong>The pro-forma &amp; accretion model is built on latest-fiscal-year actuals + forward consensus estimates</strong> — the screening comparables and company profile (Exhibits A / B) use a trailing-twelve-month (LTM) basis, a deliberate methodology split (bankers screen on LTM, model accretion on a normalized forward basis).
             </div>
           </>
         )}
