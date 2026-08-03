@@ -137,7 +137,12 @@ export function calculate(inputs) {
   const totalShares      = acqBaseShares + newSharesIssued;
 
   const combinedRevenue  = companyARevenue + companyBRevenue;
-  const combinedEBITDA   = companyAEBITDA + companyBEBITDA + synergiesY1; // synergies pre-tax
+  // BOTH sides required. A null EBITDA (e.g. BMY: OperatingIncomeLoss untagged → null EBITDA) must NOT
+  // coerce to 0 inside the sum and silently understate combined leverage — a partial input renders '—',
+  // never a published ratio (matches the enterpriseValue / netDebt short-circuit, Fix A / 2C-2). Both-real
+  // deals are unchanged.
+  const combinedEBITDA   = (companyAEBITDA != null && companyBEBITDA != null)
+    ? companyAEBITDA + companyBEBITDA + synergiesY1 : null; // synergies pre-tax
 
   // Pro-forma RECURRING net income: combine both companies, add after-tax synergies, subtract the
   // after-tax interest cost of debt-funding the cash portion. One-time transaction fees do NOT
@@ -205,7 +210,7 @@ export function calculate(inputs) {
     newSharesIssued:    newSharesIssued.toFixed(0),
     purchasePremium:    purchasePremium === null ? null : purchasePremium.toFixed(1),
     combinedRevenue:    combinedRevenue.toFixed(0),
-    combinedEBITDA:     combinedEBITDA.toFixed(0),
+    combinedEBITDA:     combinedEBITDA === null ? null : combinedEBITDA.toFixed(0),
     // combinedNetIncome reflects the pro-forma recurring net income used for EPS (consistent).
     combinedNetIncome:  proFormaNetIncome.toFixed(0),
     synergiesY1, synergiesY2, synergiesY3,
