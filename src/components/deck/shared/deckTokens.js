@@ -427,7 +427,7 @@ export function buildBankNarrative(results, inputs, target, acquirer, nameA, nam
 
   let text;
   if (pct === null || isNaN(pct)) {
-    text = `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total) would be ${direction}, moving pro forma EPS from ${fmtPerShare(results?.companyAEPS)} to ${fmtPerShare(results?.proFormaEPS)} (percentage change not meaningful from a negative base).`;
+    text = `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total) moves pro forma EPS from ${fmtPerShare(results?.companyAEPS)} to ${fmtPerShare(results?.proFormaEPS)} — accretion/(dilution) is not meaningful from a non-positive EPS base.`;
   } else {
     const epsDir = results?.isAccretive ? 'increasing' : 'decreasing';
     text = `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total) would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from ${fmtPerShare(results?.companyAEPS)} to ${fmtPerShare(results?.proFormaEPS)}.`;

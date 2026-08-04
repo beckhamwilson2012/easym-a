@@ -189,16 +189,20 @@ export function explainSynergies({ synY1, synY2, synY3, targetRevenue, isBank, t
 export function explainEpsChange({ acquirerEPS, proFormaEPS, changePct, acquirerName }) {
   const a = parseFloat(acquirerEPS) || 0;
   const pf = parseFloat(proFormaEPS) || 0;
-  const pct = parseFloat(changePct) || 0;
-  const direction = pct >= 0 ? 'accretive' : 'dilutive';
+  // Accretion is only meaningful from a positive EPS base. dealCalc nulls changePct in that case; a null/
+  // NaN changePct must render 'not meaningful', NOT default to 0 → "accretive" (the bug for a loss-making
+  // acquirer). Positive-base deals are unchanged.
+  const meaningful = changePct != null && changePct !== '' && Number.isFinite(parseFloat(changePct));
+  const pct = meaningful ? parseFloat(changePct) : null;
+  const direction = !meaningful ? 'not meaningful' : pct >= 0 ? 'accretive' : 'dilutive';
   return {
     formula: 'Pro Forma EPS = (Combined Net Income + After-Tax Synergies − After-Tax Financing Cost) ÷ (Diluted Acquirer Shares + New Shares Issued)',
     inputs: [
       { label: `${acquirerName || 'Acquirer'} standalone EPS`, value: fmtPerShare(a) },
       { label: 'Pro forma EPS', value: fmtPerShare(pf) },
-      { label: 'Change', value: `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%` },
+      { label: 'Change', value: meaningful ? `${pct >= 0 ? '+' : ''}${pct.toFixed(1)}%` : 'n/m (non-positive EPS base)' },
     ],
-    result: `Deal is ${direction}`,
+    result: meaningful ? `Deal is ${direction}` : 'Accretion/(dilution) is not meaningful — the acquirer or pro-forma EPS is non-positive',
     notes: 'EPS accretion/dilution is the primary internal metric buyers use to evaluate deals. Management teams typically target 5%+ accretion within 2 years. Dilution beyond −5% in Year 1 requires a compelling strategic narrative.',
   };
 }

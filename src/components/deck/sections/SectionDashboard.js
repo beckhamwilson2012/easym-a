@@ -45,6 +45,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     : buildNarrative(results, inputs, nameA, nameB, flags);
   const scoreColor   = dealScore >= 7 ? '#16A34A' : dealScore >= 4 ? '#D97706' : '#DC2626';
   const scoreBg      = dealScore >= 7 ? '#DCFCE7'  : dealScore >= 4 ? '#FEF3C7' : '#FEE2E2';
+  // Third state for undefined accretion: a non-positive EPS base makes accretive/(dilutive) meaningless.
+  // Drive the verdict off accretionMeaningful (NOT isAccretive being falsy) so an EPS IMPROVEMENT off a
+  // negative base (e.g. -$0.37 → -$0.18) never reads "Dilutive". Positive-base deals are unchanged.
+  const accOK       = results.accretionMeaningful;
+  const verdictTxt  = !accOK ? 'n/m' : results.isAccretive ? '✓ Accretive' : '✗ Dilutive';
+  const accColor    = !accOK ? '#6B7280' : results.isAccretive ? '#16A34A' : '#DC2626'; // dark green / red
+  const accColorL   = !accOK ? '#9CA3AF' : results.isAccretive ? '#4ADE80' : '#F87171'; // light (on navy)
   const cardStyle    = { background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #E5E7EB' };
   const col2         = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, marginBottom: 24 };
 
@@ -165,7 +172,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           <div>
             <div style={{ color: '#A8C4DC', fontSize: 13 }}>Deal verdict</div>
             <div style={{ color: '#fff', fontSize: isMobile ? 22 : 28, fontWeight: 'bold' }}>
-              {results.isAccretive ? '✓ Accretive' : '✗ Dilutive'}
+              {verdictTxt}
             </div>
             {bankMode && (
               <div style={{ marginTop: 6, display: 'inline-block', background: '#1B4B8A', border: '1px solid #3B82F6', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700, color: '#93C5FD', letterSpacing: 0.3 }}>
@@ -179,8 +186,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 EPS Impact
                 <ExplainButton explain={() => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA })} />
               </div>
-              <div style={{ color: results.isAccretive ? '#4ADE80' : '#F87171', fontSize: 22, fontWeight: 'bold' }}>
-                {fmtPctSigned(parseFloat(results.epsChangePct))}
+              <div style={{ color: accColorL, fontSize: 22, fontWeight: 'bold' }}>
+                {accOK ? fmtPctSigned(parseFloat(results.epsChangePct)) : 'n/m'}
               </div>
             </div>
             <div style={{ background: scoreBg, borderRadius: 10, padding: '10px 16px', textAlign: 'center' }}>
@@ -289,13 +296,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               <div style={{ fontSize: 24, color: '#6B7280', alignSelf: 'center' }}>→</div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>After</div>
-                <div style={{ fontSize: 24, fontWeight: 'bold', color: results.isAccretive ? '#16A34A' : '#DC2626' }}>
+                <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
                   {fmtPerShare(results.proFormaEPS)}
                 </div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Change</div>
-                <div style={{ fontSize: 24, fontWeight: 'bold', color: results.isAccretive ? '#16A34A' : '#DC2626' }}>
+                <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
                   {fmtPctSigned(parseFloat(results.epsChangePct))}
                 </div>
               </div>
@@ -378,7 +385,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 16px', lineHeight: 1.6 }}>
             Pro forma EPS at varying premium levels (rows) and synergy realization (columns).<br />
             {breakevenEPS > 0 && <>Breakeven: <strong style={{ color: '#374151' }}>${breakevenEPS.toFixed(2)}</strong> (acquirer standalone EPS).<br /></>}
-            Cells above breakeven are accretive; below are dilutive.
+            {breakevenEPS > 0
+              ? 'Cells above breakeven are accretive; below are dilutive.'
+              : 'Cells shaded green sit above the current acquirer EPS (a smaller loss); accretion/(dilution) is not meaningful from a non-positive EPS base.'}
           </p>
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 460 }}>
@@ -459,7 +468,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         <div style={{ ...cardStyle, marginBottom: 24 }}>
           <h3 style={{ color: '#0F2244', marginTop: 0, marginBottom: 4 }}>Cash Structure Sensitivity</h3>
           <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 12px' }}>
-            Pro Forma EPS at different cash/stock splits (offer price and synergies held constant). Green = accretive vs. current acquirer EPS.
+            Pro Forma EPS at different cash/stock splits (offer price and synergies held constant). Green = {breakevenEPS > 0 ? 'accretive vs. current acquirer EPS.' : 'above (better than) the current acquirer EPS; accretion/(dilution) is not meaningful from a non-positive base.'}
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
             {cashSensitivity.map(({ cashPct, eps }) => {
