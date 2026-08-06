@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -39,14 +40,14 @@ const fyeMonth = (fye) => (typeof fye === 'string' && fye.length >= 7) ? (MONTHS
 const _pnlCache = {}, _estCache = {};
 function pnlFetch(ticker) {
   if (!_pnlCache[ticker]) {
-    _pnlCache[ticker] = fetch(`http://localhost:3001/api/pnl/${encodeURIComponent(ticker)}`)
+    _pnlCache[ticker] = fetch(apiUrl(`/api/pnl/${encodeURIComponent(ticker)}`))
       .then(r => r.json()).then(j => (j && j.ok && Array.isArray(j.columns)) ? j : null).catch(() => null);
   }
   return _pnlCache[ticker];
 }
 function estFetch(ticker) {
   if (!_estCache[ticker]) {
-    _estCache[ticker] = fetch(`http://localhost:3001/api/estimates/${encodeURIComponent(ticker)}`)
+    _estCache[ticker] = fetch(apiUrl(`/api/estimates/${encodeURIComponent(ticker)}`))
       .then(r => r.json()).then(d => Array.isArray(d.estimates) ? d.estimates : []).catch(() => []);
   }
   return _estCache[ticker];

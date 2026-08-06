@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -82,7 +83,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum, exhibit
     let cancel = false;
     const t = target?.ticker;
     if (!t) { setTgtPnl(null); return; }
-    fetch(`http://localhost:3001/api/pnl/${encodeURIComponent(t)}`)
+    fetch(apiUrl(`/api/pnl/${encodeURIComponent(t)}`))
       .then(r => r.json())
       .then(j => { if (!cancel) setTgtPnl(j && j.ok && Array.isArray(j.columns) ? j : null); })
       .catch(() => { if (!cancel) setTgtPnl(null); });
@@ -95,7 +96,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum, exhibit
     let cancel = false;
     const t = target?.ticker;
     if (!t) { setLtmRev(null); return; }
-    fetch(`http://localhost:3001/quote?symbol=${encodeURIComponent(t)}`)
+    fetch(apiUrl(`/quote?symbol=${encodeURIComponent(t)}`))
       .then(r => r.json())
       .then(j => { if (!cancel) setLtmRev(j?.ltm?.trusted && j.ltm.revenue != null ? j.ltm.revenue : null); })
       .catch(() => { if (!cancel) setLtmRev(null); });

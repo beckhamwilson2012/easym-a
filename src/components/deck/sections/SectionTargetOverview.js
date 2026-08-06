@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -48,7 +49,7 @@ function CustomerRetentionBlock({ cm }) {
 // (curated-or-FMP-description, no generation) and points to §3; the trend is compact and points to §5.
 
 const clip = (t, n) => { if (!t) return null; t = t.trim(); return t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + '…' : t; };
-const j = (t) => fetch(`http://localhost:3001${t}`).then(r => r.json()).catch(() => null);
+const j = (t) => fetch(apiUrl(t)).then(r => r.json()).catch(() => null);
 
 // $-magnitude bars (NOT % — FMP geo tiers can overlap, so a % mix would be distorted; magnitudes are honest).
 function SegmentBars({ rows }) {

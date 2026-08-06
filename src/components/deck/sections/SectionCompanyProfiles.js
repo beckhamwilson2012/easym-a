@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -51,17 +52,17 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     let cancel = false;
     const loadProfile = (ticker, set) => {
       if (!ticker) { set(null); return; }
-      fetch(`http://localhost:3001/api/profile/${encodeURIComponent(ticker)}`)
+      fetch(apiUrl(`/api/profile/${encodeURIComponent(ticker)}`))
         .then(r => r.json()).then(j => { if (!cancel) set(j && j.ok ? j : null); }).catch(() => { if (!cancel) set(null); });
     };
     const loadPnl = (ticker, set) => {
       if (!ticker) { set(null); return; }
-      fetch(`http://localhost:3001/api/pnl/${encodeURIComponent(ticker)}`)
+      fetch(apiUrl(`/api/pnl/${encodeURIComponent(ticker)}`))
         .then(r => r.json()).then(j => { if (!cancel) set(j && j.ok && Array.isArray(j.columns) ? j : null); }).catch(() => { if (!cancel) set(null); });
     };
     const loadQuote = (ticker, set) => {
       if (!ticker) { set(null); return; }
-      fetch(`http://localhost:3001/quote?symbol=${encodeURIComponent(ticker)}`)
+      fetch(apiUrl(`/quote?symbol=${encodeURIComponent(ticker)}`))
         .then(r => r.json()).then(j => { if (!cancel) set(j || null); }).catch(() => { if (!cancel) set(null); });
     };
     loadProfile(acquirerObj.ticker, setAcqFmp);

@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -204,7 +205,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   useEffect(() => {
     if (!targetTicker) { setPeersLoading(false); return; }
     setPeersLoading(true);
-    fetch(`http://localhost:3001/api/peers/${targetTicker}`)
+    fetch(apiUrl(`/api/peers/${targetTicker}`))
       .then(r => r.json())
       .then(d => { setAutoPeers(d.peers || []); setPeerSource(d.source || null); setPeerTrust(d.trust || null); })
       .catch(() => { setAutoPeers([]); setPeerSource(null); setPeerTrust(null); })
@@ -216,17 +217,17 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
     if (fetchingRef.current.has(ticker)) return;
     fetchingRef.current.add(ticker);
     setPeerData(prev => ({ ...prev, [ticker]: 'loading' }));
-    fetch(`http://localhost:3001/quote?symbol=${ticker}`)
+    fetch(apiUrl(`/quote?symbol=${ticker}`))
       .then(r => r.json())
       .then(async (quoteData) => {
         let merged = quoteData || {};
         try {
-          const pr = await (await fetch(`http://localhost:3001/api/price/${ticker}`)).json();
+          const pr = await (await fetch(apiUrl(`/api/price/${ticker}`))).json();
           merged = { ...merged, livePrice: pr && pr.price != null ? pr.price : null };
         } catch { merged = { ...merged, livePrice: null }; }
         if (quoteData?.companyType === 'financial') {
           try {
-            const bf = await (await fetch(`http://localhost:3001/api/bank-facts/${ticker}`)).json();
+            const bf = await (await fetch(apiUrl(`/api/bank-facts/${ticker}`))).json();
             if (bf) merged = { ...merged, ...bf, revenue: quoteData.revenue };
           } catch { /* ignore */ }
         }
@@ -234,8 +235,8 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
         // op income) + employees (/api/profile). Best-effort — null where a company lacks coverage → "—".
         try {
           const [pnlR, profR] = await Promise.all([
-            fetch(`http://localhost:3001/api/pnl/${ticker}`).then(r => r.json()).catch(() => null),
-            fetch(`http://localhost:3001/api/profile/${ticker}`).then(r => r.json()).catch(() => null),
+            fetch(apiUrl(`/api/pnl/${ticker}`)).then(r => r.json()).catch(() => null),
+            fetch(apiUrl(`/api/profile/${ticker}`)).then(r => r.json()).catch(() => null),
           ]);
           merged = { ...merged, pnl: pnlR && pnlR.ok ? pnlR : null, profile: profR && profR.ok ? profR : null };
         } catch { /* ignore */ }

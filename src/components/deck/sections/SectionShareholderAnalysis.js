@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -27,7 +28,7 @@ export function SectionShareholderAnalysis({ target, pageNum, exhibitLabel }) {
     let cancel = false;
     if (!tk) { setLoading(false); return; }
     setLoading(true);
-    fetch(`http://localhost:3001/api/shareholder/${encodeURIComponent(tk)}`)
+    fetch(apiUrl(`/api/shareholder/${encodeURIComponent(tk)}`))
       .then(r => r.json()).then(d => { if (!cancel) { setData(d); setLoading(false); } })
       .catch(() => { if (!cancel) { setData({ trusted: false, reason: 'fetch failed' }); setLoading(false); } });
     return () => { cancel = true; };

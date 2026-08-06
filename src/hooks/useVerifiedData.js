@@ -1,3 +1,4 @@
+import { apiUrl } from '../api';
 import { useState, useEffect, useRef } from 'react';
 
 // Fetches /api/verified/:ticker once per ticker; caches in memory across re-renders.
@@ -20,7 +21,7 @@ export function useVerifiedData(ticker) {
     setLoading(true);
     setError(null);
 
-    fetch(`http://localhost:3001/api/verified/${ticker}`, { signal: ctrl.signal })
+    fetch(apiUrl(`/api/verified/${ticker}`), { signal: ctrl.signal })
       .then(r => r.json())
       .then(d => {
         memCache[ticker] = d;

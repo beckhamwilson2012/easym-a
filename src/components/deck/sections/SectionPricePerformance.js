@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ReferenceLine, ReferenceDot, ResponsiveContainer,
@@ -189,7 +190,7 @@ export function SectionPricePerformance({ target, acquirer, pageNum, exhibitLabe
   useEffect(() => {
     if (!target?.ticker) { setEarnings([]); return undefined; }
     let cancelled = false;
-    fetch(`http://localhost:3001/api/earnings/${target.ticker}`)
+    fetch(apiUrl(`/api/earnings/${target.ticker}`))
       .then(r => r.json())
       .then(d => { if (!cancelled) setEarnings(Array.isArray(d.earnings) ? d.earnings : []); })
       .catch(() => { if (!cancelled) setEarnings([]); });

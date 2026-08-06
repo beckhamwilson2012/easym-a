@@ -5,9 +5,10 @@ const https = require('https');
 const zlib = require('zlib');
 const fs   = require('fs');
 const path = require('path');
+const os   = require('os');
 const { PEER_OVERRIDES } = require('./peerOverrides');
 const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deckTokens.isFinancial — one SIC source
-const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
+const { resolveFmpRates, getPeriodAverageRate, getSpotRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue); getSpotRate added for Stage 9C EDGAR currency-awareness
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
@@ -15,7 +16,49 @@ const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliab
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
 const app = express();
-app.use(cors());
+
+// ── CORS: locked to same-origin by default ──────────────────────────────────────
+// Single-service production serves the client same-origin, so no cross-origin access
+// is needed. Same-origin requests send NO Origin header, so origin:false is a no-op for
+// the app itself — it only blocks cross-origin browsers. Set ALLOWED_ORIGIN (comma-
+// separated) to explicitly permit specific external origins.
+const ALLOWED = (process.env.ALLOWED_ORIGIN || '').split(',')
+  .map(s => s.trim()).filter(Boolean);
+app.use(cors({
+  origin: ALLOWED.length ? ALLOWED : false,
+  credentials: false
+}));
+
+// ── Rate limiting — tiered, so public routes can't drain FMP/Anthropic quota ─────
+// Registered AFTER cors and BEFORE the first route so every /api, /quote, /search hit is
+// counted. Every matching app.use runs, so LLM routes are guarded by BOTH general + llm.
+// NOT applied to express.static or the catch-all (static assets must never 429).
+const rateLimit = require('express-rate-limit');
+
+// General: sized so one user — or a NATed shared campus/corporate network — building
+// decks never trips it. One CRM/TEAM build ≈ 83 requests; 500 ≈ 6 builds / 15 min per IP.
+const general = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests. Try again shortly.' }
+});
+
+// LLM: each request costs money. Far tighter.
+const llm = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Analysis limit reached. Try again in an hour.' }
+});
+
+app.use('/api', general);
+app.use('/quote', general);
+app.use('/search', general);
+app.use('/api/nongaap', llm);
+app.use('/api/eightk', llm);
 
 const FMP_KEY          = process.env.FMP_KEY          || '';
 const FINNHUB_KEY      = process.env.FINNHUB_KEY      || '';
@@ -102,7 +145,7 @@ function setEdgarFactsCache(cik, facts) {
 
 // SIC cache — lazy, populated as tickers are analyzed; persisted to disk across restarts
 const sicCache = new Map();
-const SIC_CACHE_FILE = path.join(__dirname, 'sic-cache.json');
+const SIC_CACHE_FILE = path.join(os.tmpdir(), 'sic-cache.json'); // ephemeral hosts wipe __dirname writes between deploys
 try {
   const raw = fs.readFileSync(SIC_CACHE_FILE, 'utf8');
   for (const [cik, entry] of Object.entries(JSON.parse(raw))) {
@@ -419,45 +462,93 @@ async function fetchFromEDGAR(symbol, cik) {
   const useIfrs = ifrsCount > 0 && gaapCount === 0;
   console.log(`[${symbol}] EDGAR using ${useIfrs ? 'IFRS (20-F filer)' : 'US-GAAP (10-K filer)'}`);
 
+  // ── STAGE 9C — currency-aware EDGAR selection (GATED: USD filers keep the ORIGINAL path byte-for-byte) ──
+  // THIRD instance of one shape — a NON-NULL STALE VALUE beating a working fallback. GOOGL's frozen
+  // RevenueFromContractWithCustomerExcludingAssessedTax blocked the fresh `Revenues` tag; WMT's 2012
+  // CommonStockSharesOutstanding blocked the dei fallback; now pick()'s hard unit='USD' returns a decade-old
+  // USD tag (SAP tags EUR@2025 + a frozen USD@2017; TM tags JPY@2025 but a legacy us-gaap USD@2013 flips
+  // useIfrs) so the fresh home-currency figure is never seen and the null-only FMP+FX fallback never fires.
+  // FIX: infer the reporting currency from the FRESHEST-END unit across BOTH namespaces. dei carries no
+  // reporting-currency ISO tag and FMP profile.currency returns "USD" for every ADR (SAP/TM/TSM alike), so
+  // NEITHER may be used to detect currency — do NOT reintroduce them. Filer-provided USD wins an end-tie
+  // (TSM tags TWD+USD @2024 — never re-convert an already-USD figure). When the freshest unit is USD the
+  // EXISTING pick() path runs unchanged (byte-identical); only a home-currency freshest triggers conversion
+  // via the EXISTING engine (flows→getPeriodAverageRate, instants→getSpotRate — no new FX code).
+  const REV_IFRS = ['Revenue', 'RevenueFromContractsWithCustomers', 'OtherRevenue', 'RevenueAndOtherIncome'];
+  const REV_GAAP = ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense', 'InterestAndFeeIncomeLoansAndLeases'];
+  const freshestCA = (spec) => {                          // spec = { ifrs:[...], gaap:[...] } → freshest annual entry across BOTH namespaces & ALL units, USD winning an end-tie
+    let best = null;
+    const order = useIfrs ? [[ifrs, spec.ifrs || []], [gaap, spec.gaap || []]] : [[gaap, spec.gaap || []], [ifrs, spec.ifrs || []]];
+    for (const [ns, names] of order) {
+      for (const name of names) {
+        const units = ns[name]?.units; if (!units) continue;
+        for (const [unit, arr] of Object.entries(units)) {
+          const ann = arr.filter((e) => e.form === '10-K' || e.form === '20-F');
+          if (!ann.length) continue;
+          const le = ann.reduce((a, e) => ((e.end > a.end) || (e.end === a.end && e.val > a.val)) ? e : a, ann[0]); // latest end, max val at end (== latestAnnualEntry)
+          const usdTie = best && le.end === best.end && unit === 'USD' && best.unit !== 'USD';
+          if (!best || le.end > best.end || usdTie) best = { val: le.val, end: le.end, start: le.start || null, unit, concept: name };
+        }
+      }
+    }
+    return best;
+  };
+  const revCA = freshestCA({ ifrs: REV_IFRS, gaap: REV_GAAP });
+  const reportedCcy = (revCA && revCA.unit && revCA.unit.replace('/shares', '') !== 'USD') ? revCA.unit : 'USD';
+  let fxAvg = 1, fxSpot = 1, fxConverted = false, filerFreshEnd = null;
+  if (reportedCcy !== 'USD') {
+    const a = await getPeriodAverageRate(reportedCcy, 'USD', revCA.start, revCA.end);
+    const s = await getSpotRate(reportedCcy, 'USD', revCA.end);
+    if (a && a.rate && s && s.rate) { fxAvg = a.rate; fxSpot = s.rate; fxConverted = true; filerFreshEnd = revCA.end; }
+    console.log(`[${symbol}] EDGAR reporting currency ${reportedCcy} (freshest unit @${revCA && revCA.end}) → USD avg=${fxAvg} spot=${fxSpot} converted=${fxConverted}`);
+  }
+  const CA_STALE_MS = 455 * 86400000;                     // ~15 months
+  const conv = (entry, kind) => {                          // kind 'flow' → period-avg; 'instant' → spot. Returns USD value, or null to DEGRADE (→ FMP fallback)
+    if (!entry) return null;
+    if (filerFreshEnd && Date.parse(entry.end) < Date.parse(filerFreshEnd) - CA_STALE_MS) return null;   // 2f staleness guard: >15mo behind the current period → degrade, don't render
+    if (entry.unit.replace('/shares', '') === 'USD') return entry.val;                                    // filer-provided USD used as-is (never re-converted)
+    if (!fxConverted) return null;
+    return entry.val * (kind === 'flow' ? fxAvg : fxSpot);
+  };
+
   let revenue, revenueConcept;
   let revenueEntry = null;
-  if (useIfrs) {
-    ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(ifrs, [
-      'Revenue',
-      'RevenueFromContractsWithCustomers',
-      'OtherRevenue',
-      'RevenueAndOtherIncome',
-    ]));
-  } else {
-    ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(gaap, [
-      'RevenueFromContractWithCustomerExcludingAssessedTax',
-      'Revenues',
-      'SalesRevenueNet',
-      'RevenueFromContractWithCustomerIncludingAssessedTax',
-      'RevenuesNetOfInterestExpense',
-      'InterestAndFeeIncomeLoansAndLeases',
-    ]));
+  if (reportedCcy === 'USD') {                             // ── USD filers: ORIGINAL path, byte-for-byte ──
+    if (useIfrs) {
+      ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(ifrs, REV_IFRS));
+    } else {
+      ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(gaap, REV_GAAP));
+    }
+  } else {                                                 // ── non-USD filers: freshest-unit, converted ──
+    revenue = conv(revCA, 'flow') ?? 0;
+    revenueConcept = revCA ? revCA.concept : null;
+    revenueEntry = revCA ? { end: revCA.end } : null;      // anchor = the freshest (current) end
   }
 
-  const netIncome = useIfrs
-    ? pick(ifrs, ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'])
-    : pick(gaap, ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic']);
+  const netIncome = reportedCcy === 'USD'
+    ? (useIfrs
+        ? pick(ifrs, ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'])
+        : pick(gaap, ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic']))
+    : (conv(freshestCA({ ifrs: ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'], gaap: ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'] }), 'flow') ?? 0);
 
-  // IFRS filers often don't tag operating income separately; ProfitLossBeforeTax
-  // is the closest proxy (before finance items + tax → approximates EBIT).
-  const operatingIncome = useIfrs
-    ? pickOrNull(ifrs, ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'])
-    : pickOrNull(gaap, ['OperatingIncomeLoss']);
+  // IFRS filers often don't tag operating income separately; ProfitLossBeforeTax is the closest proxy.
+  const operatingIncome = reportedCcy === 'USD'
+    ? (useIfrs
+        ? pickOrNull(ifrs, ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'])
+        : pickOrNull(gaap, ['OperatingIncomeLoss']))
+    : conv(freshestCA({ ifrs: ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'], gaap: ['OperatingIncomeLoss'] }), 'flow');
 
-  const da = useIfrs
-    ? pick(ifrs, [
-        'DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss',
-        'AdjustmentsForDepreciationAndAmortisationExpenseAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss',
-        'DepreciationAndAmortisationExpense',
-        'DepreciationAmortisationAndImpairmentLoss',
-        'DepreciationAndAmortisation',
-      ])
-    : pick(gaap, ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization']);
+  const da = reportedCcy === 'USD'
+    ? (useIfrs
+        ? pick(ifrs, [
+            'DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss',
+            'AdjustmentsForDepreciationAndAmortisationExpenseAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss',
+            'DepreciationAndAmortisationExpense',
+            'DepreciationAmortisationAndImpairmentLoss',
+            'DepreciationAndAmortisation',
+          ])
+        : pick(gaap, ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization']))
+    : (conv(freshestCA({ ifrs: ['DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss', 'AdjustmentsForDepreciationAndAmortisationExpenseAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss', 'DepreciationAndAmortisationExpense', 'DepreciationAmortisationAndImpairmentLoss', 'DepreciationAndAmortisation'], gaap: ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'] }), 'flow') ?? 0);
 
   const ebitda = operatingIncome == null ? null : (operatingIncome === 0 ? 0 : operatingIncome + da);
 
@@ -549,13 +640,15 @@ async function fetchFromEDGAR(symbol, cik) {
 
   // Reported DILUTED EPS is the canonical per-share figure — prefer it over basic (diluted is the
   // standard EPS investors quote, and basic biases high by ignoring dilution).
-  const eps = useIfrs
-    ? (latestAnnual(ifrs['DilutedEarningsLossPerShareFromContinuingOperations'], 'USD/shares') ??
-       latestAnnual(ifrs['DilutedEarningsLossPerShare'],                         'USD/shares') ??
-       latestAnnual(ifrs['BasicEarningsLossPerShareFromContinuingOperations'],   'USD/shares') ??
-       latestAnnual(ifrs['BasicEarningsLossPerShare'],                           'USD/shares') ?? 0)
-    : (latestAnnual(gaap['EarningsPerShareDiluted'], 'USD/shares') ??
-       latestAnnual(gaap['EarningsPerShareBasic'],   'USD/shares') ?? 0);
+  const eps = reportedCcy === 'USD'
+    ? (useIfrs
+        ? (latestAnnual(ifrs['DilutedEarningsLossPerShareFromContinuingOperations'], 'USD/shares') ??
+           latestAnnual(ifrs['DilutedEarningsLossPerShare'],                         'USD/shares') ??
+           latestAnnual(ifrs['BasicEarningsLossPerShareFromContinuingOperations'],   'USD/shares') ??
+           latestAnnual(ifrs['BasicEarningsLossPerShare'],                           'USD/shares') ?? 0)
+        : (latestAnnual(gaap['EarningsPerShareDiluted'], 'USD/shares') ??
+           latestAnnual(gaap['EarningsPerShareBasic'],   'USD/shares') ?? 0))
+    : (conv(freshestCA({ ifrs: ['DilutedEarningsLossPerShareFromContinuingOperations', 'DilutedEarningsLossPerShare', 'BasicEarningsLossPerShareFromContinuingOperations', 'BasicEarningsLossPerShare'], gaap: ['EarningsPerShareDiluted', 'EarningsPerShareBasic'] }), 'flow') ?? 0);   // Stage 9C: home-currency EPS (EUR/JPY per share) converted at the FY-average rate
 
   // Weighted-average DILUTED shares — the correct denominator for EPS math (fallback EPS and the
   // pro-forma accretion base). Kept SEPARATE from `shares` (the point-in-time cover-page count that
@@ -712,6 +805,13 @@ async function fetchFromEDGAR(symbol, cik) {
     sic:            sicData.sic,
     sicDescription: sicData.sicDescription,
     dataSource:     'sec_edgar',
+    // Stage 9C provenance — reporting currency + applied rates when EDGAR figures were converted from a home
+    // currency (SAP EUR→USD, TM JPY→USD) so §16 / footnotes can state them like KO/NSRGY's "CHF→USD 1.2306".
+    // USD filers: reportedCcy 'USD', converted:false (a no-op).
+    fxReportedCurrency: reportedCcy,
+    fxConverted:        fxConverted,
+    fxAvgRate:          fxConverted ? fxAvg : null,
+    fxSpotRate:         fxConverted ? fxSpot : null,
     // Fiscal period of the revenue figure — used for correct deck labels.
     // EDGAR's `fy` field is frequently empty in companyfacts, so derive the fiscal year from the
     // period-END calendar year (the standard convention: CRM FYE 2026-01-31 → FY2026,
@@ -2472,6 +2572,26 @@ console.log('[server] routes mounted. Available routes:',
     .filter(r => r.route)
     .map(r => Object.keys(r.route.methods).join(',') + ' ' + r.route.path)
 );
+
+// ── Serve the built React client — production runs same-origin as ONE service ───
+// Registered AFTER every API route + /search + /quote (last route at :2355) and
+// BEFORE app.listen, so real endpoints always win; the SPA catch-all only handles
+// paths no route/static file matched. Express 5 needs a NAMED wildcard ('/*splat') —
+// a bare '*' throws under path-to-regexp v8.
+const BUILD_DIR = path.join(__dirname, 'build');
+app.use(express.static(BUILD_DIR));
+app.get('/*splat', (req, res) => {
+  res.sendFile(path.join(BUILD_DIR, 'index.html'));
+});
+
+// ── Global error backstop — LAST middleware; catches thrown/rejected route errors ─
+// (Express 5 auto-forwards async-handler rejections here.) The process-level guard logs
+// an unhandled rejection instead of letting it crash the single server process.
+process.on('unhandledRejection', (e) => console.error('UNHANDLED', e));
+app.use((err, req, res, next) => {
+  console.error('ERR', req.path, err.message);
+  res.status(500).json({ error: 'Internal error' });
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {

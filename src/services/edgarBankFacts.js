@@ -1,7 +1,8 @@
+import { apiUrl } from '../api';
 export async function getBankFacts(ticker) {
   if (!ticker) return null;
   try {
-    const res = await fetch(`http://localhost:3001/api/bank-facts/${encodeURIComponent(ticker)}`);
+    const res = await fetch(apiUrl(`/api/bank-facts/${encodeURIComponent(ticker)}`));
     if (!res.ok) {
       console.warn(`[bankFacts] ${ticker} — server returned ${res.status}`);
       return null;

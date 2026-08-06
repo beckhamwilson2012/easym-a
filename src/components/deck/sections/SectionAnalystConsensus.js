@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -52,7 +53,7 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum, exhib
     const t = target?.ticker;
     if (!t) { setEst(null); return; }
     let cancel = false;
-    fetch(`http://localhost:3001/api/estimates/${t}`)
+    fetch(apiUrl(`/api/estimates/${t}`))
       .then(r => r.json())
       .then(d => { if (!cancel) setEst(d); })
       .catch(() => { if (!cancel) setEst(null); });
@@ -67,7 +68,7 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum, exhib
     const t = target?.ticker;
     if (!t) { setBank(null); return; }
     let cancel = false;
-    fetch(`http://localhost:3001/api/analyst-targets/${t}`)
+    fetch(apiUrl(`/api/analyst-targets/${t}`))
       .then(r => r.json())
       .then(d => { if (!cancel) setBank(d); })
       .catch(() => { if (!cancel) setBank(null); });

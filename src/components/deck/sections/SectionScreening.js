@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useCallback } from 'react';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW } from '../shared/deckTokens';
 import { epsAccretionPct } from '../../../utils/dealCalc';
@@ -14,23 +15,23 @@ const SCREEN_CASH_PCT = 100;    // all-cash-equivalent structure (disclosed on t
 
 // Stateless per-company fetch — mirrors SectionComparables.fetchOne's endpoint sequence exactly.
 async function fetchCompanyData(ticker) {
-  const quoteData = await fetch(`http://localhost:3001/quote?symbol=${ticker}`).then(r => r.json()).catch(() => null);
+  const quoteData = await fetch(apiUrl(`/quote?symbol=${ticker}`)).then(r => r.json()).catch(() => null);
   if (!quoteData) return null;
   let merged = quoteData;
   try {
-    const pr = await fetch(`http://localhost:3001/api/price/${ticker}`).then(r => r.json());
+    const pr = await fetch(apiUrl(`/api/price/${ticker}`)).then(r => r.json());
     merged = { ...merged, livePrice: pr && pr.price != null ? pr.price : null };
   } catch { merged = { ...merged, livePrice: null }; }
   if (quoteData.companyType === 'financial') {
     try {
-      const bf = await fetch(`http://localhost:3001/api/bank-facts/${ticker}`).then(r => r.json());
+      const bf = await fetch(apiUrl(`/api/bank-facts/${ticker}`)).then(r => r.json());
       if (bf) merged = { ...merged, ...bf, revenue: quoteData.revenue };
     } catch { /* ignore */ }
   }
   try {
     const [pnlR, profR] = await Promise.all([
-      fetch(`http://localhost:3001/api/pnl/${ticker}`).then(r => r.json()).catch(() => null),
-      fetch(`http://localhost:3001/api/profile/${ticker}`).then(r => r.json()).catch(() => null),
+      fetch(apiUrl(`/api/pnl/${ticker}`)).then(r => r.json()).catch(() => null),
+      fetch(apiUrl(`/api/profile/${ticker}`)).then(r => r.json()).catch(() => null),
     ]);
     merged = { ...merged, pnl: pnlR && pnlR.ok ? pnlR : null, profile: profR && profR.ok ? profR : null };
   } catch { /* ignore */ }

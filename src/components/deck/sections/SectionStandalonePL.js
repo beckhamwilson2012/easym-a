@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -337,7 +338,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
   useEffect(() => {
     let cancel = false;
     if (!target?.ticker || bankMode) { setPnl(null); return; }
-    fetch(`http://localhost:3001/api/pnl/${encodeURIComponent(target.ticker)}`)
+    fetch(apiUrl(`/api/pnl/${encodeURIComponent(target.ticker)}`))
       .then(r => r.json())
       .then(j => { if (!cancel) setPnl(j && j.ok && Array.isArray(j.columns) && j.columns.length ? j : null); })
       .catch(() => { if (!cancel) setPnl(null); });

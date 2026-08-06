@@ -1,6 +1,6 @@
+import { apiUrl } from '../api';
 import { useState, useEffect } from 'react';
 
-const API = 'http://localhost:3001';
 
 const median = (arr) => {
   const a = (arr || []).filter((v) => v != null && Number.isFinite(v)).sort((x, y) => x - y);
@@ -26,7 +26,7 @@ export function useValuationSources(ticker, canonicalShares) {
     if (!ticker) { setDcf(null); setAnalyst(null); setSector(null); return; }
     let cancel = false;
     const grab = (path, set, qs) =>
-      fetch(`${API}${path}/${ticker}${qs || ''}`)
+      fetch(apiUrl(`${path}/${ticker}${qs || ''}`))
         .then(r => r.json())
         .then(d => { if (!cancel) set(d); })
         .catch(() => { if (!cancel) set(null); });

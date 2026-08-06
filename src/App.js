@@ -1,3 +1,4 @@
+import { apiUrl } from './api';
 import { useState, useRef, useEffect } from 'react';
 import Select from 'react-select';
 import { DeckShell } from './components/deck/DeckShell';
@@ -27,14 +28,14 @@ import './App.css';
 // ── API helpers ───────────────────────────────────────────────────────────────
 
 function searchTickers(query) {
-  return fetch(`http://localhost:3001/search?q=${query}`)
+  return fetch(apiUrl(`/search?q=${query}`))
     .then(r => r.json())
     .then(data => data.map(item => ({ value: item.symbol, label: `${item.symbol} — ${item.name}` })))
     .catch(() => []);
 }
 
 function fetchCompanyData(symbol) {
-  return fetch(`http://localhost:3001/quote?symbol=${symbol}`)
+  return fetch(apiUrl(`/quote?symbol=${symbol}`))
     .then(r => r.json())
     .then(data => { if (data.error) throw new Error(data.error); return data; });
 }
@@ -44,7 +45,7 @@ function fetchCompanyData(symbol) {
 // only — the accretion/pro-forma math still runs off GAAP. Returns the full payload (or null on any
 // failure) so the deck can fall back to GAAP and label the basis honestly; never throws.
 function fetchNonGaap(symbol) {
-  return fetch(`http://localhost:3001/api/nongaap/${symbol}`)
+  return fetch(apiUrl(`/api/nongaap/${symbol}`))
     .then(r => r.json())
     .catch(() => null);
 }

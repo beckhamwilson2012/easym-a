@@ -1,3 +1,4 @@
+import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -120,7 +121,7 @@ function DataVerificationCore({ target, pageNum, part, exhibitLabel }) {
     const t = target?.ticker;
     if (!t) { setDeckAnalyst(null); return; }
     let cancel = false;
-    fetch(`http://localhost:3001/api/analyst-targets/${t}`)
+    fetch(apiUrl(`/api/analyst-targets/${t}`))
       .then(r => r.json()).then(d => { if (!cancel) setDeckAnalyst(d && d.ok ? d : null); })
       .catch(() => { if (!cancel) setDeckAnalyst(null); });
     return () => { cancel = true; };
