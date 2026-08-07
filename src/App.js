@@ -913,7 +913,14 @@ function App() {
     <div style={{ fontFamily: 'Arial, sans-serif' }}>
       {/* Hero */}
       <div style={{ height: '100vh', background: 'linear-gradient(160deg, #0F2244 0%, #1D4A8A 100%)', display: 'flex',
-        flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0 24px' }}>
+        flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0 24px', position: 'relative' }}>
+        {/* Back-to-site link — anchors to the 100vh hero (scrolls off with it; the deck view is a separate return). Same tab: nothing to lose on the splash. */}
+        <a href="https://easy-ma.netlify.app"
+          onMouseEnter={e => e.currentTarget.style.color = 'rgba(255,255,255,1)'}
+          onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.7)'}
+          style={{ position: 'absolute', top: 24, left: 24, color: 'rgba(255,255,255,0.7)', textDecoration: 'none', fontSize: 14, fontWeight: 500, letterSpacing: '0.01em' }}>
+          ← easyma.app
+        </a>
         <div style={{ fontSize: isMobile ? 56 : 80, fontWeight: 900, color: '#fff', letterSpacing: '-2px', lineHeight: 1, marginBottom: 24 }}>
           Easy<span style={{ color: '#4A9FD4' }}>M&A</span>
         </div>
