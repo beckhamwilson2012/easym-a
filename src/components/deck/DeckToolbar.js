@@ -13,9 +13,11 @@ export function DeckToolbar({ target, acquirer, onExport, exporting }) {
       position: 'sticky', top: 0, zIndex: 20,
     }}>
       {/* Left: EasyM&A wordmark */}
-      <div style={{ fontSize: 17, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px', flexShrink: 0 }}>
-        Easy<span style={{ color: '#4A9FD4' }}>M&A</span>
-      </div>
+      <a href="https://easy-ma.netlify.app" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+        <div style={{ fontSize: 17, fontWeight: 900, color: '#fff', letterSpacing: '-0.5px', flexShrink: 0 }}>
+          Easy<span style={{ color: '#4A9FD4' }}>M&A</span>
+        </div>
+      </a>
 
       {/* Bank M&A Mode badge */}
       {bankMode && (

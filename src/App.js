@@ -931,7 +931,9 @@ function App() {
         <div style={{ maxWidth: 1100, margin: '0 auto', padding: '0 16px' }}>
           <div style={{ background: '#0F2244', borderRadius: 12, padding: '14px 24px', marginBottom: 32,
             display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div style={{ color: '#fff', fontWeight: 'bold', fontSize: 18 }}>Easy<span style={{ color: '#4A9FD4' }}>M&A</span></div>
+            <a href="https://easy-ma.netlify.app" target="_blank" rel="noopener noreferrer" style={{ textDecoration: 'none', color: 'inherit' }}>
+              <div style={{ color: '#fff', fontWeight: 'bold', fontSize: 18 }}>Easy<span style={{ color: '#4A9FD4' }}>M&A</span></div>
+            </a>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <button onClick={() => setScreenView(true)} style={{ background: 'rgba(255,255,255,0.15)', color: '#fff',
                 border: '1px solid rgba(255,255,255,0.3)', borderRadius: 6, padding: '6px 14px',
