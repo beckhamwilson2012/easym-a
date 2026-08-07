@@ -919,7 +919,7 @@ function App() {
           onMouseEnter={e => e.currentTarget.style.color = 'rgba(255,255,255,1)'}
           onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.7)'}
           style={{ position: 'absolute', top: 24, left: 24, color: 'rgba(255,255,255,0.7)', textDecoration: 'none', fontSize: 14, fontWeight: 500, letterSpacing: '0.01em' }}>
-          ← easyma.app
+          ← Back to site
         </a>
         <div style={{ fontSize: isMobile ? 56 : 80, fontWeight: 900, color: '#fff', letterSpacing: '-2px', lineHeight: 1, marginBottom: 24 }}>
           Easy<span style={{ color: '#4A9FD4' }}>M&A</span>
