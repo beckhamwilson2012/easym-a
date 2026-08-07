@@ -916,9 +916,28 @@ function App() {
         flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center', padding: '0 24px', position: 'relative' }}>
         {/* Back-to-site link — anchors to the 100vh hero (scrolls off with it; the deck view is a separate return). Same tab: nothing to lose on the splash. */}
         <a href="https://easy-ma.netlify.app"
-          onMouseEnter={e => e.currentTarget.style.color = 'rgba(255,255,255,1)'}
-          onMouseLeave={e => e.currentTarget.style.color = 'rgba(255,255,255,0.7)'}
-          style={{ position: 'absolute', top: 24, left: 24, color: 'rgba(255,255,255,0.7)', textDecoration: 'none', fontSize: 14, fontWeight: 500, letterSpacing: '0.01em' }}>
+          onMouseEnter={e => {
+            e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.14)';
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.5)';
+            e.currentTarget.style.color = '#fff';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.backgroundColor = 'rgba(255,255,255,0.06)';
+            e.currentTarget.style.borderColor = 'rgba(255,255,255,0.28)';
+            e.currentTarget.style.color = 'rgba(255,255,255,0.85)';
+          }}
+          style={{
+            position: 'absolute', top: 24, left: 24,
+            display: 'inline-flex', alignItems: 'center', gap: 7,
+            padding: '9px 18px 9px 15px',
+            color: 'rgba(255,255,255,0.85)', textDecoration: 'none',
+            fontSize: 13.5, fontWeight: 600, letterSpacing: '0.01em',
+            border: '1px solid rgba(255,255,255,0.28)',
+            borderRadius: 999,
+            backgroundColor: 'rgba(255,255,255,0.06)',
+            backdropFilter: 'blur(6px)',
+            transition: 'background-color .18s, border-color .18s, color .18s'
+          }}>
           ← Back to site
         </a>
         <div style={{ fontSize: isMobile ? 56 : 80, fontWeight: 900, color: '#fff', letterSpacing: '-2px', lineHeight: 1, marginBottom: 24 }}>
