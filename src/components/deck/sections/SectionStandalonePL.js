@@ -614,7 +614,10 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
             ? `Operating income, net income, diluted EPS and their margins are Non-GAAP, as reported in ${target.name || 'the company'}’s fiscal year-end earnings release (Form 8-K, Item 2.02${ng.accession ? `, accession ${ng.accession}` : ''}), period-matched to ${fyLabel} and reconciled to GAAP. `
             : (selfNonGaap
                 ? `This deal is presented on a GAAP basis — non-GAAP is applied only when both companies’ fiscal year-end non-GAAP reconciliations are available, so operating income, net income, EPS and their margins are GAAP here. `
-                : `Non-GAAP figures were not available/reconciled for this filer from the fiscal year-end earnings 8-K, so operating income, net income, EPS and their margins are shown on a GAAP basis (labeled). `)}
+                : (['extractor_unavailable', 'extractor_error', 'extractor_bad_output'].includes(target.nonGaap?.status)
+                    // Stage 9G — SYSTEM failure (extractor unavailable / errored / unparseable output). Do NOT blame the filer.
+                    ? `Non-GAAP extraction was unavailable for this deck; figures shown are GAAP. `
+                    : `Non-GAAP figures were not available/reconciled for this filer from the fiscal year-end earnings 8-K, so operating income, net income, EPS and their margins are shown on a GAAP basis (labeled). `))}
           {restaurantMode
             ? 'Restaurant cost structure — gross profit not separately meaningful (food/beverage COGS excludes the dominant labor & occupancy costs); see operating margin. '
             : 'Gross profit, gross margin and operating expenses are GAAP. '}

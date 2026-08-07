@@ -2337,9 +2337,10 @@ function resolveUnitScale(anchorNI, quoteNI, reconciliationText) {
 // CODE (reconcileCheck), never by the model. BOTH the real /extract route and the test route call this
 // one function so the two can't drift.
 async function extractAndReconcile(reconciliationText) {
-  const result = { extractedLines: [], allReconciled: false, failedLineCount: 0, rawLlm: null, note: null };
+  const result = { extractedLines: [], allReconciled: false, failedLineCount: 0, rawLlm: null, note: null, status: null };
   if (!process.env.ANTHROPIC_API_KEY) {
     result.note = 'ANTHROPIC_API_KEY not set — add it to ma-app/.env to run Stage 2 extraction.';
+    result.status = 'extractor_unavailable';   // Stage 9G — SYSTEM failure, not a filer result
     return result;
   }
   try {
@@ -2348,6 +2349,7 @@ async function extractAndReconcile(reconciliationText) {
     result.rawLlm = (rawText || '').slice(0, 6000);
     if (!parsed || !Array.isArray(parsed.lines)) {
       result.note = 'LLM output did not parse to {lines:[...]} — returning an honest empty rather than a guess.';
+      result.status = 'extractor_bad_output';   // Stage 9G — SYSTEM failure (model returned unparseable output), not a filer result
       return result;
     }
     const extracted = [];
@@ -2373,6 +2375,7 @@ async function extractAndReconcile(reconciliationText) {
     return result;
   } catch (e) {
     result.note = `Stage 2 extraction error: ${e.message}`;
+    result.status = 'extractor_error';   // Stage 9G — SYSTEM failure (Anthropic error: credits / rate-limit / 5xx), not a filer result
     return result;
   }
 }
@@ -2424,7 +2427,7 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     ticker, fiscalYear: null, fiscalYearEnd: null, sourceAccession: null, sourceUrl: null,
     nonGaap:    { operatingIncome: null, netIncome: null, dilutedEPS: null, dilutedShares: null },
     gaapAnchor: { operatingIncome: null, netIncome: null, dilutedEPS: null },
-    allReconciled: false, cached: false, note: null,
+    allReconciled: false, cached: false, note: null, status: null,   // Stage 9G — outcome class (see enum); lets the client tell a SYSTEM failure from real filer absence
   };
 
   // Warm cache: only fully-reconciled successes are ever stored, so a hit is instant (<50ms) and
@@ -2438,14 +2441,14 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
   try {
     await loadTickers();
     const cik = cikBySymbol[ticker];
-    if (!cik) { out.note = 'No SEC CIK found for this ticker.'; return res.json(out); }
+    if (!cik) { out.note = 'No SEC CIK found for this ticker.'; out.status = 'no_8k'; return res.json(out); }
 
     // 1) Deck's latest FY + GAAP basis — the same EDGAR source /quote uses (Source 1).
     const edgar = await fetchFromEDGAR(ticker, cik);
     const fy = edgar && edgar.fiscalYear ? Number(edgar.fiscalYear) : null;
     out.fiscalYear = fy;
     out.fiscalYearEnd = edgar ? (edgar.fiscalYearEnd || null) : null;
-    if (!fy || !out.fiscalYearEnd) { out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; return res.json(out); }
+    if (!fy || !out.fiscalYearEnd) { out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; out.status = 'no_8k'; return res.json(out); }
 
     // 2) Find the fiscal-year-END earnings 8-K: the item-2.02 8-K filed 5–90 days AFTER the FY end.
     //    Quarterly 8-Ks are filed mid-fiscal-year, so they fall outside this window.
@@ -2461,14 +2464,20 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
         best = { acc: r.accessionNumber[i], date: r.filingDate[i], days: Math.round(days) };
       }
     }
-    if (!best) { out.note = `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${out.fiscalYearEnd}.`; return res.json(out); }
+    if (!best) { out.note = `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${out.fiscalYearEnd}.`; out.status = 'no_8k'; return res.json(out); }
     out.sourceAccession = best.acc;
 
     // 3) Locate + extract + reconcile via the proven path (unchanged).
     const loc = await locateReconciliation(ticker, { accession: best.acc });
     out.sourceUrl = loc.sourceUrl;
-    if (!loc.found) { out.note = `FYE 8-K ${best.acc} found but no reconciliation isolated: ${loc.note}`; return res.json(out); }
+    if (!loc.found) { out.note = `FYE 8-K ${best.acc} found but no reconciliation isolated: ${loc.note}`; out.status = 'no_recon_table'; return res.json(out); }
     const ex = await extractAndReconcile(loc.reconciliationText);
+
+    // Stage 9G — extractor SYSTEM failure (key missing / Anthropic error / unparseable output). All three
+    // return extractedLines:[], which would otherwise fall through to the "missing full-year line(s)" note
+    // below — a FALSE claim about the FILING when the extractor never ran. Surface the real reason instead,
+    // and skip the filing-claim note entirely.
+    if (ex.status) { out.status = ex.status; out.note = ex.note; return res.json(out); }
 
     // 4) Select the FULL-YEAR column whose year == deck fiscalYear (ignore the Q4 + prior-FY columns).
     const isFullYear = (p) => /(fiscal\s+year|year|twelve\s+months)\s+ended/i.test(p || '') && !/three|six|nine|quarter/i.test(p || '');
@@ -2484,6 +2493,7 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     const nonRec  = Object.entries(lines).filter(([, l]) => l && !l.reconciles).map(([k]) => k);
     if (missing.length || nonRec.length) {
       // Honest null — never return a fabricated or non-reconciling annual figure.
+      out.status = missing.length ? 'lines_missing' : 'did_not_reconcile';   // Stage 9G — genuine filer result (the extractor ran; ex.status was unset)
       out.note = `FYE 8-K ${best.acc} (FY${fy} column)` +
         (missing.length ? ` — missing full-year line(s): ${missing.join(', ')}.` : '') +
         (nonRec.length ? ` — did not reconcile: ${nonRec.join(', ')}.` : '') +
@@ -2496,6 +2506,7 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     out.nonGaap    = { operatingIncome: lines.operatingIncome.nonGaap, netIncome: lines.netIncome.nonGaap, dilutedEPS: lines.dilutedEPS.nonGaap, dilutedShares: sh.shares };
     out.gaapAnchor = { operatingIncome: lines.operatingIncome.gaap,    netIncome: lines.netIncome.gaap,    dilutedEPS: lines.dilutedEPS.gaap };
     out.allReconciled = true;
+    out.status = 'reconciled';   // Stage 9G
     out.note = `Annual non-GAAP from FYE 8-K ${best.acc} (filed ${best.date}, ${best.days}d after FYE ${out.fiscalYearEnd}); selected column "${lines.dilutedEPS.period}" == deck FY${fy}; op/ni/eps reconcile (LLM extract, code-checked); diluted shares: ${sh.note}.`;
 
     // ── Normalize dollar figures to MILLIONS (the deck's unit). Reconcile-check already ran on the raw,
