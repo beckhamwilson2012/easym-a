@@ -1,0 +1,174 @@
+// STAGE 10 sweep v2 — CAPTURE ONLY. Build each deck (Puppeteer) + fetch the raw
+// per-company oracle (/quote,/api/price) at build time, save a durable raw record
+// per pair to /tmp/sweep_v2_raw/{A}_{B}.json. Analysis is a separate pass so an
+// expensive live build is never lost. Backoff on failure; never abort the batch.
+const puppeteer = require('/Users/beckhamwilson/Desktop/EasyM&A/ma-app/node_modules/puppeteer-core');
+const http = require('http');
+const fs = require('fs');
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+const BASE = 'http://localhost:3001';
+const RAW = '/tmp/sweep_v2_raw';
+const STATUS = '/tmp/sweep_v2_status.log';
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const pairs = JSON.parse(process.argv[2]);            // [["A","B",offerOverrideOrNull],...]
+const NOISE = /Download the React DevTools|Warning: .*defaultProps|source map|\[HMR\]|webpack|Recharts/i;
+
+function get(path) {
+  return new Promise((resolve) => {
+    const req = http.get(BASE + path, { timeout: 30000 }, res => {
+      let s = ''; res.on('data', d => s += d);
+      res.on('end', () => { try { resolve({ status: res.statusCode, json: JSON.parse(s) }); }
+                            catch (e) { resolve({ status: res.statusCode, json: null, raw: s.slice(0, 200) }); } });
+    });
+    req.on('error', e => resolve({ status: 0, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ status: 0, error: 'timeout' }); });
+  });
+}
+
+// Independent oracle: the raw fundamentals endpoints the app itself maps from.
+async function oracle(t) {
+  const q = await get(`/quote?symbol=${t}`);
+  const p = await get(`/api/price/${t}`);
+  const j = q.json || {};
+  const pick = ['name','revenue','ebitda','operatingIncome','grossProfit','netIncome','shares','dilutedShares',
+    'eps','cash','shortTermInvestments','debt','totalAssets','sharePrice','companyType','sic','sicDescription',
+    'balanceSheetAsOf','fiscalYear','fiscalPeriod'];
+  const o = {}; for (const k of pick) o[k] = j[k];
+  o.ltm = j.ltm ? { trusted: j.ltm.trusted, revenue: j.ltm.revenue, ebitda: j.ltm.ebitda, netIncome: j.ltm.netIncome,
+    operatingIncome: j.ltm.operatingIncome, grossProfit: j.ltm.grossProfit, eps: j.ltm.eps,
+    dilutedShares: j.ltm.dilutedShares, asOf: j.ltm.asOf } : null;
+  o.livePrice = p.json ? p.json.price : null;
+  o.priceSource = p.json ? p.json.source : null;
+  o._quoteStatus = q.status; o._priceStatus = p.status;
+  return o;
+}
+
+async function loadTicker(page, idx, t) {
+  const ins = await page.$$('input[id^="react-select"]');
+  if (ins.length < idx + 1) throw new Error(`no react-select input ${idx}`);
+  await ins[idx].click(); await ins[idx].type(t, { delay: 15 }); await sleep(160); await page.keyboard.press('Enter');
+  await page.waitForFunction(n => (document.body.innerText.match(/ loaded/g) || []).length >= n, { timeout: 80000 }, idx + 1);
+}
+
+async function runPair(browser, A, B, offerOverride) {
+  const page = await browser.newPage();
+  await page.setViewport({ width: 1440, height: 1000 });
+  const cErr = [], cWarn = [], pErr = [];
+  page.on('console', m => { const t = m.text(); if (m.type() === 'error') cErr.push(t); else if (m.type() === 'warning' && !NOISE.test(t)) cWarn.push(t); });
+  page.on('pageerror', e => pErr.push(e.message));
+  const rec = { pair: `${A}/${B}`, A, B, offerOverride: offerOverride || null, ts: new Date().toISOString(), ok: false, stage: 'start' };
+  try {
+    await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(x => /Auto-Lookup/.test(x.textContent)), { timeout: 30000 });
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(x => /Auto-Lookup/.test(x.textContent)).click());
+    await page.waitForSelector('input[id^="react-select"]', { timeout: 30000 });
+    rec.stage = 'loadA'; await loadTicker(page, 0, A);
+    rec.stage = 'loadB'; await loadTicker(page, 1, B);
+    await sleep(1600);
+    // offer: explicit override (ground truth) OR the app's suggested 30% ("Use this")
+    if (offerOverride != null) {
+      rec.stage = 'offerOverride';
+      await page.evaluate((v) => {
+        const el = [...document.querySelectorAll('input')].find(i => /offer/i.test(i.name || '') || /offer/i.test(i.getAttribute('aria-label') || ''));
+        return null; // fallthrough: override handled below via name=offerPricePerShare
+      }, offerOverride);
+      const set = await page.evaluate((v) => {
+        const el = document.querySelector('input[name="offerPricePerShare"]');
+        if (!el) return false;
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+        setter.call(el, String(v));
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }, offerOverride);
+      rec.offerSet = set;
+    } else {
+      rec.stage = 'offer';
+      rec.suggestedOfferApplied = await page.evaluate(() => { const el = [...document.querySelectorAll('button')].find(b => /Use this/.test(b.textContent)); if (el) { el.click(); return true; } return false; });
+    }
+    rec.stage = 'buildEnable';
+    await page.waitForFunction(() => { const el = [...document.querySelectorAll('button')].find(e => /Build merger model/.test(e.textContent)); return el && !el.disabled; }, { timeout: 30000 });
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => /Build merger model/.test(e.textContent)).click());
+    rec.stage = 'deck';
+    await page.waitForSelector('[data-section-id="verification2"]', { timeout: 80000 });
+    let prev = -1, st = 0; for (let i = 0; i < 32; i++) { await sleep(1500); const n = await page.$$eval('[data-section-id="verification"] tbody tr', e => e.length).catch(() => 0); if (n === prev && n > 0) { if (++st >= 2) break; } else st = 0; prev = n; }
+    rec.stage = 'extract';
+    const data = await page.evaluate(() => {
+      const secs = {}; document.querySelectorAll('[data-section-id]').forEach(el => secs[el.getAttribute('data-section-id')] = el.innerText);
+      return { pdfPages: document.querySelectorAll('[data-section-id]').length, sections: secs, bodyText: document.body.innerText };
+    });
+    rec.pdfPages = data.pdfPages;
+    rec.sections = data.sections;
+    rec.bodyText = data.bodyText;
+    rec.ok = true; rec.stage = 'done';
+  } catch (e) {
+    rec.error = e.message;
+    try { rec.loadedCount = await page.evaluate(() => (document.body.innerText.match(/ loaded/g) || []).length); } catch (_) {}
+  } finally {
+    rec.consoleErrors = [...new Set(cErr)]; rec.consoleWarnings = [...new Set(cWarn)]; rec.pageErrors = [...new Set(pErr)];
+    await page.close();
+  }
+  // oracle right after build (minimise drift)
+  try { rec.oracleA = await oracle(A); rec.oracleB = await oracle(B); } catch (e) { rec.oracleError = e.message; }
+  fs.writeFileSync(`${RAW}/${A}_${B}.json`, JSON.stringify(rec));
+  return rec;
+}
+
+const GAP = parseInt(process.env.GAP_MS || '30000', 10);       // inter-build spacing — stay under 500/15min
+const COOLDOWN = parseInt(process.argv[3] || '0', 10);          // startup idle (ms) to let a tripped window reset
+// A capture is DIRTY unless the DECK itself is complete. A benign console-429 (the /api/nongaap LLM
+// limiter, 30/hr) is fine — the deck builds on GAAP fallback. But rate-limit stress during a build can
+// silently drop EDGAR-sourced rows (CMCSA/PARA: no Equity/EV rows, source "CNBC only") or fail prices
+// (CVS/CI: Equity/EV render "⚠"). Neither raises a pageError and cErr can be 0, so gate on the rendered
+// artifact: §2 must be EDGAR-sourced AND (non-bank) carry a numeric target Enterprise Value.
+function deckComplete(r) {
+  if (!r.ok || (r.pageErrors || []).length > 0) return false;
+  const c = (r.sections && r.sections.comparables) || '';
+  const body = r.bodyText || '';
+  if (!/EDGAR/i.test(c)) return false;                       // degraded to CNBC-only → EDGAR fetch failed
+  const isBank = /Bank M&A Mode|CET1|P ?\/ ?TBV/i.test(body);
+  if (isBank) return true;                                   // banks legitimately suppress EV leverage
+  const evLine = c.split('\n').find(l => /Enterprise Value/i.test(l) && /\t/.test(l));
+  if (!evLine) return false;
+  const p = evLine.split('\t'); const li = p.findIndex(z => /Enterprise Value/i.test(z));
+  const tgt = li >= 0 && p.length >= li + 3 ? p[li + 2].trim() : '';
+  return /\d/.test(tgt);                                     // numeric (not ⚠ / —)
+}
+const dirty = r => !deckComplete(r)
+  || !(r.oracleA && r.oracleA._quoteStatus === 200) || !(r.oracleB && r.oracleB._quoteStatus === 200);
+// resumable: a pair already captured CLEANLY is skipped, so relaunches only fill gaps
+function alreadyClean(A, B) {
+  try { const r = JSON.parse(fs.readFileSync(`${RAW}/${A}_${B}.json`, 'utf8')); return !dirty(r); } catch (e) { return false; }
+}
+
+(async () => {
+  if (COOLDOWN > 0) { process.stderr.write(`cooldown ${COOLDOWN / 1000}s...`); await sleep(COOLDOWN); }
+  const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
+  const retry = [];
+  const one = async (A, B, off, tag) => {
+    process.stderr.write(`\n>>> ${tag}${A}/${B}${off ? '@' + off : ''} ...`);
+    let r;
+    try { r = await runPair(browser, A, B, off); }
+    catch (e) { r = { pair: `${A}/${B}`, ok: false, error: 'FATAL ' + e.message, stage: 'fatal' }; fs.writeFileSync(`${RAW}/${A}_${B}.json`, JSON.stringify(r)); }
+    const d = dirty(r);
+    const line = `${r.ok ? (d ? 'DIRTY' : 'OK ') : 'FAIL'} ${tag}${r.pair.padEnd(12)} pages=${r.pdfPages ?? '-'} cErr=${(r.consoleErrors || []).length} pErr=${(r.pageErrors || []).length} dbtA=${r.oracleA ? r.oracleA.debt : '?'} dbtB=${r.oracleB ? r.oracleB.debt : '?'} ${r.error ? ('ERR@' + r.stage + ':' + r.error.slice(0, 40)) : ''}`;
+    fs.appendFileSync(STATUS, `[${new Date().toISOString()}] ${line}\n`);
+    process.stderr.write(' ' + (r.ok ? (d ? 'dirty' : 'ok') : 'FAIL ' + r.stage));
+    return { r, d };
+  };
+  for (const [A, B, off] of pairs) {
+    if (off == null && alreadyClean(A, B)) { process.stderr.write(`\n=== skip ${A}/${B} (already clean) ===`); fs.appendFileSync(STATUS, `[${new Date().toISOString()}] SKIP ${A}/${B} (already clean)\n`); continue; }
+    const { d } = await one(A, B, off, '');
+    if (d) retry.push([A, B, off]);
+    await sleep(GAP);
+  }
+  // retry-once pass — by now any window-boundary 429s have cleared
+  if (retry.length) {
+    process.stderr.write(`\n--- RETRY PASS (${retry.length}) after 90s ---`);
+    fs.appendFileSync(STATUS, `[${new Date().toISOString()}] --- RETRY PASS ${retry.length}: ${retry.map(p => p[0] + '/' + p[1]).join(' ')} ---\n`);
+    await sleep(90000);
+    for (const [A, B, off] of retry) { await one(A, B, off, 'RETRY:'); await sleep(GAP); }
+  }
+  await browser.close();
+  process.stderr.write('\nCAPTURE BATCH DONE\n');
+  fs.appendFileSync(STATUS, `[${new Date().toISOString()}] CAPTURE BATCH DONE (retry=${retry.length})\n`);
+})().catch(e => { fs.appendFileSync(STATUS, `FATAL ${e.message}\n`); process.exit(1); });
