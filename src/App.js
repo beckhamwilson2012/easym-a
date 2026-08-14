@@ -846,9 +846,7 @@ function App() {
 
   const bankDeal = companyTypeA === 'financial' && companyTypeB === 'financial';
 
-  const acquirerSharePriceForSlider = inputs.currentSharePriceA > 0
-    ? inputs.currentSharePriceA
-    : (inputs.companyAEPS > 0 ? inputs.companyAEPS * 15 : 0);
+  const acquirerSharePriceForSlider = inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null;
 
   const dealSizeForSlider = (() => {
     const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare
@@ -1280,6 +1278,7 @@ function App() {
                   <InputField label="Earnings Per Share ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
                   <LargeNumericField label="Cash on Hand ($M)" name="companyACash" value={inputs.companyACash} onChange={handleChange} />
                   <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={handleChange} />
+                  <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceA" value={inputs.currentSharePriceA} onChange={handleChange} placeholder="e.g., 749.28" />
                 </div>
                 <div style={cardStyle}>
                   <h2 style={sectionTitle}>Company B — Target</h2>
@@ -1307,7 +1306,7 @@ function App() {
                     onChange={(v) => setInputs(prev => ({ ...prev, cashPercent: v }))}
                     tooltip={buildCashPercentTooltip(false)}
                     dealSize={inputs.offerPricePerShare > 0 && inputs.companyBShares > 0 ? inputs.offerPricePerShare * inputs.companyBShares : 0}
-                    acquirerSharePrice={inputs.companyAEPS > 0 ? inputs.companyAEPS * 15 : 0}
+                    acquirerSharePrice={inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null}
                     acquirerSharesOutstanding={inputs.companyAShares}
                   />
                   {/* Divider before Transaction Fees */}

@@ -72,11 +72,16 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
     ? num(deal.totalPrice) * (dealAssumptions.stockPercent / 100) : null;
   const _newSharesPrecise = (_stockConsideration != null && A.price > 0)
     ? _stockConsideration / A.price : null;
-  const newShares      = _newSharesPrecise != null ? _newSharesPrecise : (num(deal.newSharesIssued) || 0);
+  // No acquirer price → share issuance is not derivable. Keep newShares null (→ "—"); do NOT fall to 0,
+  // which would render a fabricated "0 shares issued / 100% acquirer" split. Precise recompute and the
+  // rounded-fallback both require A.price > 0; absent that, the whole issuance chain is unknown.
+  const newShares      = _newSharesPrecise != null ? _newSharesPrecise : (A.price > 0 ? (num(deal.newSharesIssued) || 0) : null);
   const preDealShares  = A.shares || 0;
-  const proFormaShares = preDealShares + newShares;
-  const ownershipExistingPct = proFormaShares > 0 ? (preDealShares / proFormaShares) * 100 : 0;
-  const ownershipNewPct      = proFormaShares > 0 ? (newShares     / proFormaShares) * 100 : 0;
+  // proFormaShares is null when newShares is unknown: a pro-forma total that silently omits the (unknown)
+  // new shares would imply zero dilution — the same fabrication we are removing. Render "—", not preDealShares.
+  const proFormaShares = newShares != null ? preDealShares + newShares : null;
+  const ownershipExistingPct = proFormaShares > 0 ? (preDealShares / proFormaShares) * 100 : null;
+  const ownershipNewPct      = proFormaShares > 0 ? (newShares     / proFormaShares) * 100 : null;
 
   // ── Trading enterprise value (cap + debt − cash). Mirrors §2/§6 'trading EV' — distinct from
   //    the TRANSACTION EV (offer-based) used for deal multiples. Kept separate on purpose. ──

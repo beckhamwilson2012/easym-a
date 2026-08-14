@@ -26,7 +26,7 @@ export function acquirerSharePrice(inputs) {
   const live = parseFloat(inputs.currentSharePriceA) || 0;
   if (live > 0) return live;
   const eps = parseFloat(inputs.companyAEPS) || 0;
-  return eps > 0 ? eps * 15 : 0;
+  return null; // no live acquirer price → absent (was: eps × 15 proxy). Consumers must render "—", not fabricate.
 }
 
 // Acquirer standalone EPS — the accretion/dilution BASELINE. The company's REPORTED DILUTED EPS
@@ -128,7 +128,7 @@ export function calculate(inputs) {
   // New shares issued = stock consideration ÷ REAL acquirer price (non-zero whenever there is a
   // stock portion and we have a price). This is the bug that previously produced "0M new shares".
   const acqPrice         = acquirerSharePrice(inputs);
-  const newSharesIssued  = acqPrice > 0 ? stockPortion / acqPrice : 0;
+  const newSharesIssued  = acqPrice > 0 ? stockPortion / acqPrice : null;
   // EPS math uses the weighted-average DILUTED share base (falls back to companyAShares if absent),
   // so pro-forma EPS sits on the same basis as the reported-diluted standalone EPS. Ownership and
   // market cap read companyAShares (point-in-time) directly elsewhere and are unaffected by this.
@@ -202,14 +202,14 @@ export function calculate(inputs) {
     pfLtmRevenue:      sources.pfLtmRevenue  == null ? null : sources.pfLtmRevenue.toFixed(0),
     minCashPct:        sources.minCashPct,
     bankFinancing:     sources.bank,
-    acquirerSharePrice: acqPrice.toFixed(2),
+    acquirerSharePrice: acqPrice === null ? 'N/A' : acqPrice.toFixed(2),
     evEBITDA:          evEBITDA   === null ? 'N/A' : evEBITDA.toFixed(1),
     peRatio:           peRatio    === null ? 'N/A' : peRatio.toFixed(1),
     debtEBITDA:        debtEBITDA === null ? 'N/A' : debtEBITDA.toFixed(1),
     totalPurchasePrice: totalPurchasePrice.toFixed(0),
     cashPortion:        cashPortion.toFixed(0),
     stockPortion:       stockPortion.toFixed(0),
-    newSharesIssued:    newSharesIssued.toFixed(0),
+    newSharesIssued:    newSharesIssued === null ? null : newSharesIssued.toFixed(0),
     purchasePremium:    purchasePremium === null ? null : purchasePremium.toFixed(1),
     combinedRevenue:    combinedRevenue === null ? null : combinedRevenue.toFixed(0),
     combinedEBITDA:     combinedEBITDA === null ? null : combinedEBITDA.toFixed(0),
@@ -234,7 +234,7 @@ export function calculate(inputs) {
 export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const { companyANetIncome, companyBShares, companyBNetIncome, cashPercent } = inputs;
   const acqPrice = acquirerSharePrice(inputs);
-  if (acqPrice === 0 || companyBShares === 0) return null;
+  if (!(acqPrice > 0) || companyBShares === 0) return null; // !(x>0) catches null AND 0 (=== 0 missed null → NaN)
   if (companyANetIncome == null || companyBNetIncome == null) return null; // partial input → null (→ '—'), never a 0-coerced EPS
   const stockPercent = 100 - cashPercent;
   const totalPP      = offerPrice * companyBShares;

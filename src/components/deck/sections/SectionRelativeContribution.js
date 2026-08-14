@@ -64,12 +64,14 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   //    comparison that is the analytical point of a contribution slide). Ownership is NOT charted here;
   //    it is the §H donut. Same C1 source (src/lib/deckModel.js) so the thesis % matches §H. ──
   const d = model?.derived || {};
-  const acqShares = d.preDealShares  ?? (parseFloat(acquirer.shares) || 0);
-  const newShares = d.newShares      ?? (parseFloat(deal.newSharesIssued) || 0);
-  const totalShares = d.proFormaShares ?? (acqShares + newShares);
-  const tgtOwnPct = d.ownershipNewPct ?? (totalShares > 0 ? (newShares / totalShares) * 100 : 0);
-  const acqOwnPct = d.ownershipExistingPct ?? (totalShares > 0 ? (acqShares / totalShares) * 100 : 0);
-  const ownNm = totalShares <= 0;
+  // Issuance chain reads deckModel's single source ONLY — no local re-derivation (Stage 11-C). deckModel
+  // returns null for all of these when the acquirer price is absent (share issuance not derivable); that
+  // null must survive to the render as "—", never be re-derived into a fabricated 0-share / 100%-0% split.
+  const totalShares = d.proFormaShares;
+  const tgtOwnPct = d.ownershipNewPct;
+  const acqOwnPct = d.ownershipExistingPct;
+  const ownUnknown = acqOwnPct == null || tgtOwnPct == null;   // acquirer price absent → equity split not derivable → "—"
+  const ownNm = totalShares != null && totalShares <= 0;       // genuine zero/negative base — distinct from unknown
   // Faculty (7D-3a): the stock-consideration mix (X%) drives the PF-ownership label — from the deal input, NOT
   // hardcoded. stockPercent = 100 − cashPercent; the ownership above is computed at THIS mix.
   const stockPct = model?.dealAssumptions?.stockPercent ?? (deal?.cashPercent != null ? 100 - (parseFloat(deal.cashPercent) || 0) : null);
@@ -111,7 +113,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   const moneyScaleLabel = moneyScale === 'B' ? '$B' : '$M';
 
   const moneyPcts = metrics.filter(m => m.isMoney && !m.nm && m.bPct != null).map(m => m.bPct);
-  const thesis = (moneyPcts.length && !ownNm)
+  const thesis = (moneyPcts.length && !ownNm && !ownUnknown)
     ? `${aName} acquires 100% of ${bName}, which contributes ${Math.round(Math.min(...moneyPcts))}–${Math.round(Math.max(...moneyPcts))}% of pro forma financials, for ${fmtPctFloor(tgtOwnPct, 0)} of combined equity.`
     : null;
 
@@ -220,16 +222,26 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
                 <span style={{ fontSize: 9, fontStyle: 'italic', color: '#6B7280' }}>equity split — compare vs. contribution above</span>
               </div>
               <div style={{ position: 'relative', height: 26 }}>
-                <div style={{ display: 'flex', height: 26, borderRadius: 4, overflow: 'hidden', border: `1px solid ${GRAY_BORDER}` }}>
-                  <div style={{ width: `${acqOwnPct}%`, background: SF_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
-                    {acqOwnPct >= 12 && <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{fmtPct(acqOwnPct, 0)}</span>}
+                {ownUnknown ? (
+                  /* Acquirer price absent → equity split not derivable. One neutral bar reading "—",
+                     never a fabricated 100%/0% split (Stage 11-C). */
+                  <div style={{ display: 'flex', height: 26, borderRadius: 4, overflow: 'hidden', border: `1px solid ${GRAY_BORDER}`, background: ALT_ROW, alignItems: 'center', justifyContent: 'center' }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: '#6B7280', whiteSpace: 'nowrap' }}>—</span>
                   </div>
-                  <div style={{ width: `${tgtOwnPct}%`, background: TARGET_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
-                    {tgtOwnPct >= 12 && <span style={{ fontSize: 11, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>{fmtPct(tgtOwnPct, 0)}</span>}
-                  </div>
-                </div>
-                {acqOwnPct < 12 && <span style={{ position: 'absolute', right: '100%', top: '50%', transform: 'translateY(-50%)', marginRight: 4, fontSize: 10, fontWeight: 700, color: SF_BLUE, whiteSpace: 'nowrap' }}>{fmtPctFloor(acqOwnPct, 0)}</span>}
-                {tgtOwnPct < 12 && <span style={{ position: 'absolute', left: '100%', top: '50%', transform: 'translateY(-50%)', marginLeft: 4, fontSize: 10, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>{fmtPctFloor(tgtOwnPct, 0)}</span>}
+                ) : (
+                  <>
+                    <div style={{ display: 'flex', height: 26, borderRadius: 4, overflow: 'hidden', border: `1px solid ${GRAY_BORDER}` }}>
+                      <div style={{ width: `${acqOwnPct}%`, background: SF_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
+                        {acqOwnPct >= 12 && <span style={{ fontSize: 11, fontWeight: 700, color: '#fff', whiteSpace: 'nowrap' }}>{fmtPct(acqOwnPct, 0)}</span>}
+                      </div>
+                      <div style={{ width: `${tgtOwnPct}%`, background: TARGET_BLUE, display: 'flex', alignItems: 'center', justifyContent: 'center', minWidth: 0 }}>
+                        {tgtOwnPct >= 12 && <span style={{ fontSize: 11, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>{fmtPct(tgtOwnPct, 0)}</span>}
+                      </div>
+                    </div>
+                    {acqOwnPct < 12 && <span style={{ position: 'absolute', right: '100%', top: '50%', transform: 'translateY(-50%)', marginRight: 4, fontSize: 10, fontWeight: 700, color: SF_BLUE, whiteSpace: 'nowrap' }}>{fmtPctFloor(acqOwnPct, 0)}</span>}
+                    {tgtOwnPct < 12 && <span style={{ position: 'absolute', left: '100%', top: '50%', transform: 'translateY(-50%)', marginLeft: 4, fontSize: 10, fontWeight: 700, color: NAVY, whiteSpace: 'nowrap' }}>{fmtPctFloor(tgtOwnPct, 0)}</span>}
+                  </>
+                )}
               </div>
             </div>
           )}
