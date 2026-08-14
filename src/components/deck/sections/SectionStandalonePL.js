@@ -319,10 +319,6 @@ export function SectionStandalonePLAcquirer({ acquirer, deal, pageNum, exhibitLa
   // BASIS still drives display so the whole deck reads on one basis (see resolveAccretionBasis).
   return <StandalonePLBody company={acquirer} deal={null} dealBasis={deal?.basis} pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel={exhibitLabel} />;
 }
-// Back-compat alias (original single-target usage).
-export function SectionStandalonePL({ target, deal, pageNum }) {
-  return <StandalonePLBody company={target} deal={deal} dealBasis={deal?.basis} pageNum={pageNum} role="Target" showDealCommentary exhibitLabel="Exhibit F" />;
-}
 
 function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCommentary, exhibitLabel }) {
   const target = company; // body was written against `target`; keep the name internally
