@@ -1,0 +1,38 @@
+{
+  "_description": "Deterministic manual-entry input set for the Stage 11-C no-op A/B. Manual entry performs NO live fetch, so identical inputs → identical deck, immune to the price drift that made STAGE_11A_BASELINE.json (ticker path) unusable as a byte-diff target.",
+  "mode": "manual",
+  "formInputs": {
+    "companyARevenue": 50000,
+    "companyAEBITDA": 15000,
+    "companyANetIncome": 10000,
+    "companyAShares": 1000,
+    "companyAEPS": 10,
+    "companyACash": 5000,
+    "companyADebt": 2000,
+    "currentSharePriceA": 150,
+    "companyBRevenue": 10000,
+    "companyBEBITDA": 3000,
+    "companyBNetIncome": 2000,
+    "companyBShares": 500,
+    "companyBEPS": 4,
+    "companyBCash": 1000,
+    "companyBDebt": 800,
+    "currentSharePriceB": 40,
+    "offerPricePerShare": 52,
+    "synergiesY1": 600,
+    "synergiesY2": 960,
+    "synergiesY3": 1320
+  },
+  "stateDefaults_notSetByForm": {
+    "cashPercent": 60,
+    "minCashPct": 2,
+    "transactionFees": 0
+  },
+  "rationale": {
+    "currentSharePriceA=150": "THE pivot field. >0 forces every Stage 11-C-changed expression (App.js:851/1310/781, dealCalc.js:29/131/237, deckModel.js:73-84, SectionRelativeContribution.js:70-74) down the SAME branch it took before the edits. The edits only alter the price-ABSENT branch, so with a price present the whole diff is provably a no-op — any A/B drift is therefore a real defect, not data movement.",
+    "cashPercent=60 (40% stock)": "Non-zero stock consideration ($26,000M x 40% = $10,400M) so newSharesIssued, the ownership split, and the exchange ratio all actually compute (69.3M new shares -> 94%/6% split). Default state value; not a form field.",
+    "offerPricePerShare=52 vs currentSharePriceB=40": "30% premium — exercises the premium/sensitivity paths.",
+    "synergiesY1/Y2/Y3=600/960/1320": "Non-zero synergies exercise the accretion/synergy engine (set explicitly rather than relying on the line-651 auto-fill, so the input set is unambiguous and recorded).",
+    "both companies fully populated": "revenue/EBITDA/net income/shares/EPS/cash/debt on both sides so every contribution, P&L, and pro-forma section has real inputs."
+  }
+}
