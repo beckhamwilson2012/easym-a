@@ -1,0 +1,18 @@
+{
+  "_description": "Bank no-op A/B input set for Stage 11-D (Run 2). Exists solely to exercise SectionCompanyProfiles' BANK_ROWS path — which manual entry cannot reach (companyType defaults to 'standard' and there are no bank-fact inputs), so isFinancial() is false and STANDARD_ROWS render. A real bank pair is required to prove ptbvMcap is byte-identical to the old shared mcap.",
+  "mode": "auto",
+  "acquirer_ticker": "JPM",
+  "target_ticker": "BAC",
+  "offerPricePerShare": 60,
+  "rationale": {
+    "JPM / BAC": "Both are banks → the fetch tags companyType='financial' (and bank SICs), so isFinancial(acquirer) && isFinancial(target) is true and §B renders BANK_ROWS incl. 'Price / tangible book'. This is the ONLY way to route through the ptbvMcap branch; a manual pair renders STANDARD_ROWS and never exercises it.",
+    "offer 60": "> BAC's live price (~$47), so tpp > 0 and the deal builds; the offer value is immaterial to the P/TBV proof (§B P/TBV reads currentMarketCap-first via ptbvMcap).",
+    "determinism": "Auto mode is live, but /api/price has a 5-minute TTL cache and fundamentals/bank-facts cache longer. Run A (edited) and Run B (un-edited) execute back-to-back within that window (~2.5 min total), so both see identical cached data — making the A/B byte-identical for a no-op edit. This is why the bank run is auto, not the offline manual harness."
+  },
+  "result": {
+    "bankBranchFired": true,
+    "sectionPTBV_before_and_after": "BAC 2.0x (identical)",
+    "byteIdentical": "17/17 sections",
+    "note": "§B P/TBV (trading basis via currentMarketCap) and the Dashboard P/TBV (acquisition basis via calcPTBV → marketCap) disagree by construction — that is D13, expected and logged, not a regression."
+  }
+}
