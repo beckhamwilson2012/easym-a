@@ -21,8 +21,10 @@ export const REQUIRED_SIX = ['revenue', 'ebit', 'da', 'netIncome', 'cash', 'tota
 const isNumber = (v) => typeof v === 'number' && Number.isFinite(v);
 // A present value is a real number (incl 0) OR a non-empty string (qualitative fields).
 const isPresentValue = (v) => isNumber(v) || (typeof v === 'string' && v !== '');
-// A wrapper is a plain object carrying a `value` slot (the canonical field shape).
-const isWrapper = (f) => f !== null && typeof f === 'object' && !Array.isArray(f) && 'value' in f;
+// A wrapper is a plain object carrying BOTH `value` and `status` (the canonical field shape).
+// Requiring `status` too avoids treating an incidental `{ value: … }` object (e.g. a nested
+// data blob) as a field and silently collapsing it to its `value`.
+const isWrapper = (f) => f !== null && typeof f === 'object' && !Array.isArray(f) && 'value' in f && 'status' in f;
 
 // ── Wrapper factory ──────────────────────────────────────────────────────────
 // field(value, { source, page, label, confidence, status, currency, scale })
@@ -68,6 +70,21 @@ export function getProvenance(f) {
 export function isPresent(f) {
   const raw = isWrapper(f) ? f.value : f;
   return isNumber(raw);
+}
+
+// unwrapCompany(obj) → shallow copy where each WRAPPED field becomes its bare number-or-null
+// (via getValue) and every non-wrapped field (bare numbers, strings, booleans, nested objects,
+// arrays) passes through unchanged. This is the single /quote boundary that keeps the client's
+// bare-value read sites transparent while builders emit the wrapped shape internally. It is a
+// strict no-op on an all-bare company (EDGAR/FMP today), since isWrapper is false for every field.
+export function unwrapCompany(obj) {
+  if (obj === null || typeof obj !== 'object' || Array.isArray(obj)) return obj;
+  const out = {};
+  for (const k of Object.keys(obj)) {
+    const v = obj[k];
+    out[k] = isWrapper(v) ? getValue(v) : v;
+  }
+  return out;
 }
 
 // ── Field definitions (docs/SCHEMA.md §1) ────────────────────────────────────

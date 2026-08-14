@@ -2,7 +2,7 @@
 // the reason this module exists. A getValue that returns 0 for a missing field would silently
 // undo the entire Stage 11 campaign across every read site at once (D2). Guard it here.
 import {
-  field, getValue, getStatus, getProvenance, isPresent,
+  field, getValue, getStatus, getProvenance, isPresent, unwrapCompany,
   checkRequiredSix, isScaleSane, isStatusLegal,
   STATUSES, SCALES, REQUIRED_SIX,
 } from '../financialSchema';
@@ -135,5 +135,69 @@ describe('validation helpers', () => {
     expect(SCALES).toEqual(expect.arrayContaining(['millions', 'thousands', 'units']));
     expect(STATUSES).toEqual(expect.arrayContaining(['verified', 'review', 'missing', 'override']));
     expect(REQUIRED_SIX).toEqual(['revenue', 'ebit', 'da', 'netIncome', 'cash', 'totalDebt']);
+  });
+});
+
+describe('unwrapCompany() — the /quote boundary', () => {
+  it('wrapped verified number → bare number', () => {
+    expect(unwrapCompany({ revenue: field(100, { source: 'yahoo' }) })).toEqual({ revenue: 100 });
+  });
+  it('wrapped verified 0 → 0, NOT null (the case that matters)', () => {
+    const out = unwrapCompany({ cash: field(0, { source: 'yahoo' }) });
+    expect(out.cash).toBe(0);
+    expect(out.cash).not.toBe(null);
+  });
+  it('wrapped missing → null', () => {
+    expect(unwrapCompany({ debt: field(null, { source: 'yahoo', status: 'missing' }) })).toEqual({ debt: null });
+  });
+  it('bare number → unchanged; bare 0 → 0', () => {
+    expect(unwrapCompany({ revenue: 100, cash: 0 })).toEqual({ revenue: 100, cash: 0 });
+  });
+  it('bare null / undefined → unchanged', () => {
+    const out = unwrapCompany({ a: null, b: undefined });
+    expect(out.a).toBe(null);
+    expect('b' in out).toBe(true);
+    expect(out.b).toBe(undefined);
+  });
+  it('non-numeric passthrough: strings, booleans, nested objects, arrays — all unchanged', () => {
+    const ltm = { trusted: true, revenue: 1234, asOf: '2025-06-30' };
+    const hist = [10, 20, 30];
+    const out = unwrapCompany({
+      sic: '6021', dataSource: 'yahoo', reportedCurrency: 'USD',
+      fxConverted: false, ltm, revenueHistory: hist,
+    });
+    expect(out.sic).toBe('6021');
+    expect(out.dataSource).toBe('yahoo');
+    expect(out.reportedCurrency).toBe('USD');
+    expect(out.fxConverted).toBe(false);
+    expect(out.ltm).toBe(ltm);            // nested object passed through by reference (shallow)
+    expect(out.revenueHistory).toBe(hist); // array passed through
+  });
+  it('a plain nested object with a coincidental `value` key is NOT unwrapped (needs value+status)', () => {
+    const notAWrapper = { value: 5, trusted: true }; // no `status` → not a field wrapper
+    expect(unwrapCompany({ ltm: notAWrapper }).ltm).toBe(notAWrapper);
+  });
+  it('mixed object — correct per field', () => {
+    const out = unwrapCompany({
+      revenue: field(500, { source: 'yahoo' }),
+      name: 'Acme Bancorp',
+      cash: field(0, { source: 'yahoo' }),
+      debt: field(null, { source: 'yahoo', status: 'missing' }),
+      sic: '6021',
+      companyType: 'standard',
+    });
+    expect(out).toEqual({
+      revenue: 500, name: 'Acme Bancorp', cash: 0, debt: null,
+      sic: '6021', companyType: 'standard',
+    });
+  });
+  it('returns a shallow COPY, not the same object', () => {
+    const input = { revenue: field(1) };
+    expect(unwrapCompany(input)).not.toBe(input);
+  });
+  it('non-object input passes through (null / array / primitive)', () => {
+    expect(unwrapCompany(null)).toBe(null);
+    expect(unwrapCompany(42)).toBe(42);
+    const arr = [1, 2]; expect(unwrapCompany(arr)).toBe(arr);
   });
 });
