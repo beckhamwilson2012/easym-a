@@ -746,7 +746,9 @@ function App() {
     // `marketCap` is the effective acquisition price being paid (basis for bank P/TBV).
     marketCap: (() => {
       const tpp = results ? parseFloat(results.totalPurchasePrice) : 0;
-      return tpp > 0 ? tpp : (inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : inputs.companyBEPS * 15) * inputs.companyBShares;
+      if (tpp > 0) return tpp;                                                    // effective acquisition price (basis for bank P/TBV, comment above)
+      if (inputs.currentSharePriceB > 0) return inputs.currentSharePriceB * inputs.companyBShares;  // real trading cap
+      return null;  // no acquisition price and no live price → absent (was: companyBEPS × 15 proxy). Consumers must render "—", not fabricate.
     })(),
     // Bank-specific fields (null for non-financial companies)
     tangibleBookValue: bankFactsB?.tangibleBookValue ?? null,

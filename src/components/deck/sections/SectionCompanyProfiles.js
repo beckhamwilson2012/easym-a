@@ -79,8 +79,14 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     const num = (x) => x != null && x !== '' ? parseFloat(x) : null;
     const rev = num(co.revenue), gp = num(co.grossProfit), oi = num(co.operatingIncome), fcf = num(co.freeCashFlow);
     const cash = num(co.cash), debt = num(co.debt), sti = num(co.sti);
-    const mcap = num(co.currentMarketCap) ?? num(co.marketCap);
-    const ev = enterpriseValue(mcap, debt, cash, sti); // shared helper: cash bucket = cash + short-term marketable securities (b); null-aware
+    // Two market-cap bases, deliberately split (Stage 11-D). The "Equity value (mkt cap)" / EV / EV-Rev
+    // rows are a TRADING equity value (live price × shares) — they must never fall back to the
+    // acquisition-price/proxy `marketCap` (App.js:749), so they read currentMarketCap ONLY.
+    // The bank P/TBV row keeps its documented acquisition basis (comment App.js:746), so it retains the
+    // `?? num(co.marketCap)` fallback — byte-identical to pre-split behavior.
+    const tradingMcap = num(co.currentMarketCap);
+    const ptbvMcap    = num(co.currentMarketCap) ?? num(co.marketCap);
+    const ev = enterpriseValue(tradingMcap, debt, cash, sti); // shared helper: cash bucket = cash + short-term marketable securities (b); null-aware
     const cols = pnl && Array.isArray(pnl.columns) ? pnl.columns : null;
     const fwd = cols ? cols.find(c => !c.actual) : null;
     const act = cols ? [...cols].reverse().find(c => c.actual) : null;
@@ -100,7 +106,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     const nii = num(co.netInterestIncome), noni = num(co.nonInterestIncome), none = num(co.nonInterestExpense);
     const ppnr = (nii != null && noni != null && none != null) ? nii + noni - none : null;
     const tbv = num(co.tangibleBookValue);
-    const ptbv = (mcap != null && tbv != null && tbv !== 0) ? mcap / tbv : null;
+    const ptbv = (ptbvMcap != null && tbv != null && tbv !== 0) ? ptbvMcap / tbv : null;
     const cet1 = num(co.cet1Ratio);              // decimal (0.1076); rendered ×100 like §4/§5
     const deposits = num(co.totalDeposits);
     return {
@@ -110,7 +116,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
       grossMargin: (gpL != null && revL > 0) ? gpL / revL * 100 : ((gp != null && rev) ? gp / rev * 100 : null),
       opMargin:    (oiL != null && revL > 0) ? oiL / revL * 100 : ((oi != null && rev) ? oi / rev * 100 : null),
       fcf: fcfL != null ? fcfL : fcf,
-      marketCap: mcap,   // point-in-time — unchanged
+      marketCap: tradingMcap,   // trading cap only (Stage 11-D split) — never the acquisition-price/proxy field
       debt, cash,        // point-in-time balance-sheet items — shown as separate lines (EV bridge)
       assets: assets != null ? Number(assets) : null,   // total assets at the balance-sheet anchor (7A Item 2) — from /quote, same instant as cash/debt
 
