@@ -778,7 +778,7 @@ function App() {
     // Real (live) market cap = live price × shares; null when no live price.
     currentMarketCap: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA * inputs.companyAShares : null,
     // marketCap = live price × shares; fall back to a P/E proxy only if no live price.
-    marketCap: (inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : inputs.companyAEPS * 15) * inputs.companyAShares,
+    marketCap: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA * inputs.companyAShares : null,
     tangibleBookValue: bankFactsA?.tangibleBookValue ?? null,
     netInterestIncome: bankFactsA?.netInterestIncome ?? null,
     nonInterestIncome: bankFactsA?.nonInterestIncome ?? null,
