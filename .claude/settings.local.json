@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:data.sec.gov)",
+      "WebFetch(domain:www.sec.gov)",
+      "Bash(curl -s https://data.sec.gov/*)",
+      "Bash(curl -s https://www.sec.gov/*)"
+    ]
+  }
+}

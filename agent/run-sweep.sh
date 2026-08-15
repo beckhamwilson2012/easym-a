@@ -35,16 +35,19 @@ RAW="/tmp/sweep_v2_raw"                        # capture.js hardcodes this outpu
 
 # ── config (env-overridable) ────────────────────────────────────────────────────────────────────────
 MAX_ITER="${MAX_ITER:-999}"
-MAX_TURNS="${MAX_TURNS:-40}"
+MAX_TURNS="${MAX_TURNS:-60}"                   # raised 40->60: run 20260815-150838 hit the 40-turn cap mid-fix after its STEP-0 EDGAR fetch was denied
 BUDGET_USD="${BUDGET_USD:-50}"
 GAP_MS="${GAP_MS:-12000}"                      # rate-safe inter-pair spacing for capture.js
 PAIRS_LIMIT="${PAIRS_LIMIT:-0}"               # 0 = all 50; >0 caps pairs (tests)
 FROZEN_WAIT="${FROZEN_WAIT:-60}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-2700}"           # per-iteration wall-clock cap (45 min); --max-turns does NOT bound a permission-prompt hang
 BASE_URL="${BASE_URL:-http://localhost:3001}"
+APP_PORT="${BASE_URL##*:}"                      # port the app server (and capture.js) listen on — parsed from BASE_URL
 BASE_BRANCH="${BASE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 RUN_DIR="$AGENT_DIR/runs/$RUN_ID"
+SERVER_LOG="/tmp/server-$RUN_ID.log"           # the restarted app server's stdout/stderr (Part 1)
+SERVER_PID=""                                   # PID of the server WE start (kill only our own + the port holder)
 
 log()  { local l; l="$(printf '[%s] %s' "$(date +%H:%M:%S)" "$*")"; printf '%s\n' "$l"; if [[ -n "${RUN_DIR:-}" ]]; then mkdir -p "$RUN_DIR" 2>/dev/null; printf '%s\n' "$l" >> "$RUN_DIR/loop.log"; fi; }  # tee to stdout AND runs/<id>/loop.log (appended live, per call)
 die()  { printf '[FATAL] %s\n' "$*" >&2; exit 1; }
@@ -73,6 +76,37 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
   return 0
 }
 
+# ── server lifecycle: restart :APP_PORT BEFORE every capture (Part 1) ─────────────────────────────────
+# capture.js grades the persistent server at $BASE_URL. That process never reloads, so a server-side fix
+# (server.js / ltmCalc.js) is invisible to the after-capture unless we restart — the root cause of run
+# 20260815-150838 committing an unmeasurable no-op. rc 0 = up & accepting; rc 1 = failed to boot, and the
+# CALLER MUST NOT proceed to capture (a non-booting server = 0 analyzable pairs = a false defect drop).
+restart_server() {
+  [[ -n "${MOCK_CAPTURE:-}" ]] && return 0       # tests mock the capture; there is no real server to cycle
+  local i p holders
+  # 1. kill the server WE started (if any) + whatever holds the port right now (incl. one the agent spawned)
+  holders="$(lsof -ti "tcp:$APP_PORT" 2>/dev/null || true)"
+  for p in $SERVER_PID $holders; do [[ -n "$p" ]] && kill "$p" 2>/dev/null || true; done
+  # 2. verify the port is ACTUALLY free with lsof (not sleep-and-hope); escalate to -9, then give up
+  i=0
+  while [[ -n "$(lsof -ti "tcp:$APP_PORT" 2>/dev/null || true)" ]]; do
+    [[ "$i" -eq 10 ]] && for p in $(lsof -ti "tcp:$APP_PORT" 2>/dev/null); do kill -9 "$p" 2>/dev/null || true; done
+    [[ "$i" -ge 20 ]] && { log "restart_server: :$APP_PORT would not free after kill"; return 1; }
+    sleep 0.5; i=$(( i + 1 ))
+  done
+  # 3. start fresh — EVERY PATH QUOTED (the & in EasyM&A splits an unquoted path)
+  caffeinate -is nohup node "$ROOT/server.js" > "$SERVER_LOG" 2>&1 &
+  SERVER_PID=$!
+  # 4. poll until the port ACCEPTS a connection, 30s cap (bash /dev/tcp — no curl/lsof needed for readiness)
+  i=0
+  while [[ "$i" -lt 60 ]]; do
+    if (exec 3<>"/dev/tcp/127.0.0.1/$APP_PORT") 2>/dev/null; then exec 3>&- 3<&-; log "restart_server: :$APP_PORT up (pid $SERVER_PID · log $SERVER_LOG)"; return 0; fi
+    kill -0 "$SERVER_PID" 2>/dev/null || { log "restart_server: node exited during boot (see $SERVER_LOG)"; return 1; }
+    sleep 0.5; i=$(( i + 1 ))
+  done
+  log "restart_server: :$APP_PORT did not accept within 30s (see $SERVER_LOG)"; return 1
+}
+
 # ── graders ──────────────────────────────────────────────────────────────────────────────────────────
 measure_defects() {                            # $1 = snapshot dir; echoes int; rc 2 = analyzer CRASHED
   local dir="$1" flags="$RUN_DIR/flags-$$.json"
@@ -94,6 +128,25 @@ became_not_analyzable() {                       # $1 = diff json, $2 = after dir
       }
     }' "$1" "$2"
 }
+
+# ── agent verdict (Part 2) ────────────────────────────────────────────────────────────────────────────
+# The agent must return a CLEAN envelope (is_error:false) AND a status token in its OUTPUT block. A cut-off
+# or errored agent leaves real edits behind (run 20260815-150838 committed bcda19a on is_error:true, no
+# .result) — a non-empty diff is NOT a verdict. NOTE: the token set matches ITERATION_PROMPT.md:101 exactly
+# — DONE | RESOLVED_UPSTREAM | BLOCKED | FAILED — NOT PASS/FAIL, because the prompt is off-limits to edit.
+agent_verdict() {                              # $1 = agent json → "OK <TOKEN>" | "NO_VERDICT <reason>"
+  node -e '
+    const fs=require("fs"); let j;
+    try{ j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); }
+    catch(e){ process.stdout.write("NO_VERDICT unreadable-envelope"); process.exit(0); }
+    if(j.is_error===true){ process.stdout.write("NO_VERDICT error-envelope:"+(j.subtype||j.terminal_reason||"unknown")); process.exit(0); }
+    const t=(typeof j.result==="string")?j.result:"";
+    const m=t.match(/^\s*STATUS:\s*(DONE|RESOLVED_UPSTREAM|BLOCKED|FAILED)/mi);
+    if(!m){ process.stdout.write("NO_VERDICT no-status-token"); process.exit(0); }
+    process.stdout.write("OK "+m[1].toUpperCase());
+  ' "$1"
+}
+agent_changed() { [[ -n "$(gitr status --porcelain)" ]]; }   # true if the agent left uncommitted edits (runs/ is gitignored)
 
 # ── frozen-price check (empirical, not clock) ────────────────────────────────────────────────────────
 frozen_check() {                               # rc 0 = frozen (N+1 ok), 1 = moving (force 2N)
@@ -138,9 +191,9 @@ decide() {                                     # $1 = plain-English statement (n
   printf '\n- [%s · run %s · iter %s] %s\n' "$(date +%H:%M:%S)" "$RUN_ID" "${CUR_ITER:-?}" "$1" >> "$DECISIONS"
 }
 calib_hdr() { [[ -f "$CALIB" ]] || echo "run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture" > "$CALIB"; }
-finalize() {                                   # $1=status $2=marker $3=forced ; code already in desired state
+finalize() {                                   # $1=status $2=marker (x=done · ~=parked · o=leave OPEN) $3=forced
   calib_hdr
-  queue_mark "$2" "$1 run $RUN_ID" || true
+  [[ "$2" == "x" || "$2" == "~" ]] && { queue_mark "$2" "$1 run $RUN_ID" || true; }   # "o" ⇒ leave the item OPEN (Parts 2/3: NO_VERDICT/BUILD_BROKEN/UNVERIFIED/NO_CHANGE)
   printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s\n' "$RUN_ID" "$CUR_ITER" "$ITEM_TITLE" "$1" "$WALL" "$TURNS" "$COST" "$DEF_BEFORE" "$DEF_AFTER" "$CAP_MODE" "$3" >> "$CALIB"
   gitr add -A >/dev/null 2>&1
   gitr commit -q -m "sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER" >/dev/null 2>&1 || true
@@ -205,6 +258,7 @@ log "START $(date '+%Y-%m-%d %H:%M:%S')  →  PROJECTED END ~$END_HUMAN  (${SWEE
 
 log "baseline capture ($NPAIRS pairs)…"
 BASE_DIR="$RUN_DIR/cap/baseline"
+restart_server || die "server failed to boot at baseline capture (HEAD may not run) — see $SERVER_LOG"
 do_capture "$BASE_DIR" "baseline" || die "baseline capture failed"
 DEF_BEFORE="$(measure_defects "$BASE_DIR")" || die "analyzer CRASHED on baseline — aborting (a crash is not a defect)"
 log "baseline: $DEF_BEFORE defects across $NPAIRS pairs"
@@ -239,6 +293,7 @@ while :; do
   if [[ "$CAP_MODE" == "2N" || "$PENDING_FRESH_BASELINE" -eq 1 ]]; then
     [[ "$PENDING_FRESH_BASELINE" -eq 1 ]] && { FORCED=true; log "forced fresh baseline re-capture (HOLE 1: prior item reverted/indeterminate)"; }
     CUR_BEFORE_DIR="$RUN_DIR/cap/before-$CUR_ITER"
+    restart_server || die "server failed to boot before before-capture at iter $CUR_ITER — see $SERVER_LOG"
     if ! do_capture "$CUR_BEFORE_DIR" "before-$CUR_ITER"; then
       log "before-capture failed → INDETERMINATE (capture ≠ code); skip item, no fail-count"
       finalize INDETERMINATE "~" true; PENDING_FRESH_BASELINE=1; continue
@@ -274,6 +329,30 @@ while :; do
     fi
   fi
   PREV_RESULT_HASH="$RESULT_HASH"
+
+  # ── VERDICT GATE (Part 2): no clean envelope + status token ⇒ NO_VERDICT. Checked BEFORE the after-capture
+  #    so an untrustworthy agent never spends a ~10-min capture, and its edits are reverted, not measured.
+  VERDICT="$(agent_verdict "$AGENT_OUT")"; STATUS_TOKEN="${VERDICT#* }"
+  if [[ "$VERDICT" != OK\ * ]]; then
+    log "NO_VERDICT (${VERDICT#NO_VERDICT }) — untrustworthy agent result; revert, leave item OPEN, save envelope to diagnosis/"
+    mkdir -p "$AGENT_DIR/diagnosis" 2>/dev/null || true
+    cp "$AGENT_OUT" "$AGENT_DIR/diagnosis/agent-$RUN_ID-iter$CUR_ITER.json" 2>/dev/null || true
+    [[ -s "$AGENT_OUT.err" ]] && cp "$AGENT_OUT.err" "$AGENT_DIR/diagnosis/agent-$RUN_ID-iter$CUR_ITER.err" 2>/dev/null || true
+    decide "iter $CUR_ITER NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (${VERDICT#NO_VERDICT }); reverted, item left OPEN."
+    revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 )); finalize NO_VERDICT "o" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "NO_VERDICT · consecutive fail = $CONSEC_FAIL"; continue
+  fi
+  log "verdict: agent returned $STATUS_TOKEN"
+
+  # ── restart :$APP_PORT on the AGENT'S code before the after-capture (Part 1). BUILD_BROKEN is checked
+  #    HERE, before the defect comparison: a server that will not boot captures 0 analyzable pairs, which
+  #    would false-read as a defect drop and auto-commit — the reward-breakage hazard (GATE_SPEC §3).
+  if ! restart_server; then
+    log "BUILD_BROKEN: :$APP_PORT did not boot on the agent's changes → revert + HALT (never scored as an improvement)"
+    decide "iter $CUR_ITER BUILD_BROKEN: server would not boot on the agent's edits; reverted to checkpoint and halted before any defect comparison."
+    revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 )); finalize BUILD_BROKEN "o" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "HALTED (BUILD_BROKEN) · consecutive fail = $CONSEC_FAIL"; break
+  fi
 
   # after-capture (capture failure ≠ code failure → INDETERMINATE)
   AFTER_DIR="$RUN_DIR/cap/after-$CUR_ITER"
@@ -320,10 +399,26 @@ while :; do
       revert_to "$CHECKPOINT"; finalize REGRESSION "~" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
       log "REVERTED (REGRESSION) · consecutive fail = $CONSEC_FAIL"
     fi
-  else
-    log "GATE: clear (defects $DEF_BEFORE->$DEF_AFTER, no revert_signal) → COMMIT"
+  elif [[ "$DEF_AFTER" -lt "$DEF_BEFORE" ]]; then
+    # strict improvement + no revert_signal + a verdict is present (Part 2 passed) → COMMIT and CLOSE the item
+    log "GATE: defects $DEF_BEFORE->$DEF_AFTER (improved), no revert_signal, verdict $STATUS_TOKEN → COMMIT"
     finalize DONE "x" "$FORCED"; CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; CONSEC_FAIL=0
-    log "COMMITTED iter $CUR_ITER"
+    log "COMMITTED (item closed) iter $CUR_ITER"
+  elif agent_changed; then
+    # equal count + non-empty agent diff → the work MAY be correct but is UNMEASURED (e.g. a server-side fix
+    # the 5-pair window can't move). Reverting a no-op discards possibly-correct work; but an unattended loop
+    # must not fill a night with unverified commits — so commit it, mark UNVERIFIED, leave the item OPEN, and
+    # count it toward the circuit breaker.
+    log "GATE: defects $DEF_BEFORE->$DEF_AFTER unchanged + non-empty diff → UNVERIFIED (commit, item stays OPEN)"
+    decide "iter $CUR_ITER UNVERIFIED: agent edited files but the defect count did not move ($DEF_BEFORE->$DEF_AFTER) and no revert_signal; committed as UNVERIFIED, queue item left OPEN (not checked off)."
+    finalize UNVERIFIED "o" "$FORCED"; CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "UNVERIFIED · consecutive fail = $CONSEC_FAIL"
+  else
+    # equal count + the agent left NO edits → nothing to commit; leave the item OPEN, count toward the breaker
+    log "GATE: defects $DEF_BEFORE->$DEF_AFTER unchanged and agent left no edits → NO_CHANGE (item stays OPEN)"
+    decide "iter $CUR_ITER NO_CHANGE: agent returned $STATUS_TOKEN but produced no edits and no defect movement; item left OPEN."
+    revert_to "$CHECKPOINT"; finalize NO_CHANGE "o" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "NO_CHANGE · consecutive fail = $CONSEC_FAIL"
   fi
 done
 
