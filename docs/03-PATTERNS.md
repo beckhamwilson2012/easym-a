@@ -28,6 +28,15 @@ EPS). True numeric-fabrication total is **~22 (+47%)**; the shares `: 0` at old 
 a known positive before trusting its output. (Here: a grep for one syntax cannot bound a multi-syntax
 phenomenon — census every fabrication syntax, or the count is a floor.)
 
+**Fourth instance (Stage 17) — a syntactic census groups by SHAPE; severity does not follow shape.**
+`SectionComparables:39` (revenue) and `:50/:118` (debt) are the **identical** syntax — `parseFloat(...) || 0` —
+so D17 grouped them as one Pattern-B finding. But their semantics are **opposite**: absent revenue is a
+pure fabrication (no company is revenue-free → fixed, D17→resolved), while absent debt is a *defensible
+but falsified* "debt-free like SHOP" assumption (a separate, harder, source-aware defect ranked with bug
+#3 → D18). Grouping by grep shape put a trivial fix and a ranked defect in one bucket. **Census by syntax
+to find candidates; then classify each by what it MEANS, one at a time — the shape does not carry the
+severity.**
+
 ## P4 — Null-honesty is only worth what the consumers preserve
 A boundary null-honesty fix is **unverifiable without tracing to the rendered surface.** Null can be
 re-coerced to 0 (or made unreachable) at any layer up- or down-stream of the fix. Three instances in one
