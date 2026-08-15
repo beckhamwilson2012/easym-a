@@ -76,10 +76,13 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
   // which would render a fabricated "0 shares issued / 100% acquirer" split. Precise recompute and the
   // rounded-fallback both require A.price > 0; absent that, the whole issuance chain is unknown.
   const newShares      = _newSharesPrecise != null ? _newSharesPrecise : (A.price > 0 ? (num(deal.newSharesIssued) || 0) : null);
-  const preDealShares  = A.shares || 0;
-  // proFormaShares is null when newShares is unknown: a pro-forma total that silently omits the (unknown)
-  // new shares would imply zero dilution — the same fabrication we are removing. Render "—", not preDealShares.
-  const proFormaShares = newShares != null ? preDealShares + newShares : null;
+  const preDealShares  = A.shares;   // Stage 16: preserve null (was `|| 0`); a null acquirer share count is unknown, not 0.
+  // proFormaShares is null when EITHER leg is unknown. MUST guard preDealShares too (Stage 16): with :79
+  // null-honest but this sum unguarded, `null + newShares` = newShares — pre-deal ownership would read 0%
+  // while pro-forma shares look plausible, a fabricated number that survives inspection (worse than the old
+  // visible 0%). A pro-forma total omitting the (unknown) pre-deal or new shares implies zero dilution —
+  // the fabrication we are removing. Render "—", not a coerced sum.
+  const proFormaShares = (preDealShares != null && newShares != null) ? preDealShares + newShares : null;
   const ownershipExistingPct = proFormaShares > 0 ? (preDealShares / proFormaShares) * 100 : null;
   const ownershipNewPct      = proFormaShares > 0 ? (newShares     / proFormaShares) * 100 : null;
 

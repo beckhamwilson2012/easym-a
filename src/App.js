@@ -742,12 +742,13 @@ function App() {
     debt: inputs.companyBDebt, companyType: companyTypeB,
     sharePrice: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null,
     // Current market cap = live price × shares (real). Used for trading profile / relative contribution.
-    currentMarketCap: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB * inputs.companyBShares : null,
+    // Guard BOTH operands (Stage 16): a null share count × price is 0, same fabrication as a null price.
+    currentMarketCap: inputs.currentSharePriceB > 0 && inputs.companyBShares > 0 ? inputs.currentSharePriceB * inputs.companyBShares : null,
     // `marketCap` is the effective acquisition price being paid (basis for bank P/TBV).
     marketCap: (() => {
       const tpp = results ? parseFloat(results.totalPurchasePrice) : 0;
       if (tpp > 0) return tpp;                                                    // effective acquisition price (basis for bank P/TBV, comment above)
-      if (inputs.currentSharePriceB > 0) return inputs.currentSharePriceB * inputs.companyBShares;  // real trading cap
+      if (inputs.currentSharePriceB > 0 && inputs.companyBShares > 0) return inputs.currentSharePriceB * inputs.companyBShares;  // real trading cap
       return null;  // no acquisition price and no live price → absent (was: companyBEPS × 15 proxy). Consumers must render "—", not fabricate.
     })(),
     // Bank-specific fields (null for non-financial companies)
@@ -777,10 +778,11 @@ function App() {
     balanceSheetAsOf: inputs.companyABsAsOf, balanceSheetBasis: inputs.companyABsBasis,
     debt: inputs.companyADebt, companyType: companyTypeA,
     sharePrice: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null,
-    // Real (live) market cap = live price × shares; null when no live price.
-    currentMarketCap: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA * inputs.companyAShares : null,
-    // marketCap = live price × shares; fall back to a P/E proxy only if no live price.
-    marketCap: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA * inputs.companyAShares : null,
+    // Real (live) market cap = live price × shares; null when no live price. Guard BOTH operands
+    // (Stage 16): a null share count × price is 0 — the same fabrication as a null price.
+    currentMarketCap: inputs.currentSharePriceA > 0 && inputs.companyAShares > 0 ? inputs.currentSharePriceA * inputs.companyAShares : null,
+    // marketCap = live price × shares; null when either is absent (was the EPS×15 proxy).
+    marketCap: inputs.currentSharePriceA > 0 && inputs.companyAShares > 0 ? inputs.currentSharePriceA * inputs.companyAShares : null,
     tangibleBookValue: bankFactsA?.tangibleBookValue ?? null,
     netInterestIncome: bankFactsA?.netInterestIncome ?? null,
     nonInterestIncome: bankFactsA?.nonInterestIncome ?? null,
