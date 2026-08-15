@@ -32,6 +32,8 @@ dist/
 .env.*
 # NOTE: _archive/ is intentionally TRACKED — archiving (vs deleting) is meant to
 # preserve the file; version control is the durable place to keep it.
+.env
+../outreach/
 
 # unattended sweep harness — transient run artifacts + the stop sentinel (agent/
 # calibration.csv and agent/DECISIONS.md are the durable audit record and stay TRACKED)
