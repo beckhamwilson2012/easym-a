@@ -181,6 +181,7 @@ command -v node >/dev/null || die "node not found"
 [[ -z "$(gitr status --porcelain)" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
 
 mkdir -p "$RUN_DIR/cap"
+echo "$$" > "$RUN_DIR/run.pid"   # liveness marker — the dashboard checks kill -0 on this to tell RUNNING from DIED
 build_pairs_json
 NPAIRS="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$PAIRS_JSON")"
 QCOUNT="$(node -e 'const fs=require("fs"),t=fs.readFileSync(process.argv[1],"utf8");const o=(t.split(/^## Open/m)[1]||"").split(/^## /m)[0];process.stdout.write(String((o.match(/^- \[ \] /mg)||[]).length));' "$QUEUE")"

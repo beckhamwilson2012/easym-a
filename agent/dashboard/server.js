@@ -68,6 +68,18 @@ function parseLoopLog(runId, tailLines = 60) {
   const startMs = (rst && rst.birthtimeMs) || (st && st.birthtimeMs) || null;
   const endMs = s.complete && st ? st.mtimeMs : Date.now();
   if (startMs) out.elapsedSec = Math.max(0, Math.round((endMs - startMs) / 1000));
+  // liveness: never infer "running" from the log alone — a killed run would look healthy forever. Check
+  // the actual process via run.pid (kill -0). States: COMPLETED | RUNNING | STALE (>30m no write) | DIED.
+  s.lastLogLine = [...all].reverse().find(l => l.trim()) || '';
+  s.lastWriteAgeSec = st ? Math.round((Date.now() - st.mtimeMs) / 1000) : null;
+  const pidTxt = readSafe(path.join(runDir, 'run.pid'));
+  const pid = pidTxt ? parseInt(pidTxt.trim(), 10) : null;
+  let alive = false;
+  if (pid) { try { process.kill(pid, 0); alive = true; } catch (e) { alive = e && e.code === 'EPERM'; } } // EPERM = exists but unsignalable
+  s.pid = pid; s.pidAlive = alive;
+  if (s.complete) s.runState = 'COMPLETED';
+  else if (pid != null) s.runState = alive ? (s.lastWriteAgeSec > 1800 ? 'STALE' : 'RUNNING') : 'DIED';
+  else s.runState = (s.lastWriteAgeSec != null && s.lastWriteAgeSec > 120) ? 'DIED' : 'RUNNING'; // pre-run.pid runs: infer from log staleness
   return out;
 }
 function diagnosisList() {
@@ -91,61 +103,74 @@ function queueOpen() {
   return { open: (open.match(/^- \[ \] /mg) || []).length, done: (open.match(/^- \[x\] /mg) || []).length, parked: (open.match(/^- \[~\] /mg) || []).length };
 }
 
-// ── Phase 2: plan intake ──────────────────────────────────────────────────────────────────────────
-// DETERMINISTIC extractor — NO LLM. The whole value is REJECTION: an item missing any of the four fields
-// (pair, observed, expected, source) returns BLOCKED and burns a full iteration (~22 min of capture). A
-// deterministic parser cannot hallucinate a value, so it can never auto-fill a missing field — it only
-// reports which labels are literally present in the pasted text. Nothing here infers a pair, value, or
-// source from context. (If this ever used an LLM, the prompt would have to say EXTRACT ONLY, never supply
-// a plausible value for a field the notes don't contain — but it doesn't; it's pure regex.)
-const REQUIRED = ['pair', 'observed', 'expected', 'source'];
-function splitItems(text) {
-  const lines = String(text || '').split('\n');
-  const isStart = l => /^\s*(\d+[.)]|[-*•])\s+/.test(l);
-  const blank = l => /^\s*$/.test(l);
-  const out = [];
-  if (lines.some(isStart)) {
-    let cur = null;
-    for (const l of lines) { if (isStart(l)) { cur = [l]; out.push(cur); } else if (cur) cur.push(l); }
-  } else {
-    let buf = [];
-    for (const l of lines) { if (blank(l)) { if (buf.length) { out.push(buf); buf = []; } } else buf.push(l); }
-    if (buf.length) out.push(buf);
-  }
-  return out.map(b => b.join('\n').trim()).filter(Boolean);
-}
-function detectFields(block) {
-  // capture up to the next "·" field-separator or newline — NOT greedy across sibling fields on one line
-  const label = k => { const m = block.match(new RegExp('\\b' + k + '\\b\\s*[:\\-]\\s*([^·\\n]+)', 'i')); return m && m[1].trim() ? m[1].trim() : null; };
-  const fields = {};
-  for (const k of REQUIRED) fields[k] = label(k);
-  // pair may also be a literal ticker-pair token in the text — that is EXTRACTION (it is present verbatim),
-  // not inference. It still does NOT make the item complete on its own; the other three must be present too.
-  if (!fields.pair) { const t = block.match(/\b([A-Z][A-Z.]{0,5}\/[A-Z][A-Z.]{0,5})\b/); if (t) fields.pair = t[1]; }
-  const missing = REQUIRED.filter(k => !fields[k]);
-  const title = (block.split('\n')[0] || '').replace(/^\s*(\d+[.)]|[-*•])\s+/, '').replace(/\s*(pair|observed|expected|source)\s*[:\-].*/i, '').trim() || (fields.pair || 'untitled');
-  return { raw: block, title: title.slice(0, 80), fields, missing, complete: missing.length === 0 };
-}
+// ── Plan parser — DETERMINISTIC, NO LLM (see CLAUDE.md for the format) ────────────────────────────────
+// A regex extractor structurally CANNOT fabricate a value, so it never auto-fills a missing field — that
+// guarantee is the whole point. got/want/why capture to END OF LINE only (values may contain commas,
+// slashes, parens; NO mid-line separator — a greedy "·" split bit us once). Missing any of got/want/why
+// -> blocked, and we name which. A pair with no detail lines -> blocked (a pair alone is not a repro).
+const HEADING_STATUS = { 'next up': 'queued', 'blocked on you': 'blocked', parked: 'skipped', done: 'done' };
+const PAIR_TITLE = /^([A-Z][A-Z0-9.]{0,5}\/[A-Z][A-Z0-9.]{0,5})\s*[—–-]\s*(.*)$/;   // PAIR — desc
+const PAIR_ANY = /\b([A-Z][A-Z0-9.]{0,5}\/[A-Z][A-Z0-9.]{0,5})\b/;
 function parsePlan(text) {
-  const items = splitItems(text).map(detectFields);
-  const n = items.length;
-  const complete = items.filter(i => i.complete).length;
-  const miss = { pair: 0, observed: 0, expected: 0, source: 0 };
-  items.forEach(i => i.missing.forEach(k => miss[k]++));
-  const summary = [`${complete} of ${n} item(s) are COMPLETE (ready for ## Open); ${n - complete} are INCOMPLETE.`];
-  const label = { pair: 'a reproducing pair', observed: 'an observed value', expected: 'an expected value', source: 'a source' };
-  for (const k of REQUIRED) if (miss[k]) summary.push(`${miss[k]} of ${n} item(s) are missing ${label[k]}. These will return BLOCKED without being fixed.`);
-  return { items, summary, counts: { total: n, complete, incomplete: n - complete } };
+  const lines = String(text || '').split('\n');
+  const itemRe = /^\s*-\s*\[([ xX])\]\s+(.+?)\s*$/;
+  const detailRe = /^\s+(got|want|why)\s*:\s*(.*)$/i;            // indented; capture to end of line only
+  const headingRe = /^\s*##\s+(.+?)\s*$/;
+  const items = []; let cur = null; let headStatus = 'queued';
+  const finalize = () => {
+    if (!cur) return;
+    cur.missing = ['got', 'want', 'why'].filter(k => !cur[k]);
+    cur.status = cur.checked ? 'done' : (cur.missing.length ? 'blocked' : cur.headStatus);
+    items.push(cur); cur = null;
+  };
+  for (const raw of lines) {
+    let m;
+    if (!itemRe.test(raw) && (m = raw.match(headingRe))) { finalize(); const h = m[1].trim().toLowerCase(); if (HEADING_STATUS[h]) headStatus = HEADING_STATUS[h]; continue; }
+    if ((m = raw.match(itemRe))) {
+      finalize();
+      const checked = m[1].toLowerCase() === 'x'; const title = m[2].trim();
+      cur = { title, checked, headStatus, got: null, want: null, why: null };
+      const tm = title.match(PAIR_TITLE);
+      if (tm) { cur.pair = tm[1]; cur.desc = tm[2].trim(); }
+      else { const pm = title.match(PAIR_ANY); cur.pair = pm ? pm[1] : null; cur.desc = title; }
+      continue;
+    }
+    if (cur && (m = raw.match(detailRe))) { cur[m[1].toLowerCase()] = m[2].trim() || null; continue; }
+  }
+  finalize();
+  return items;
 }
-// Build the exact QUEUE text that WOULD be appended. COMPLETE -> ## Open; INCOMPLETE -> ## Discovered
-// (never ## Open). Missing fields are shown as "(missing)" — never invented.
-function renderAppend(items) {
-  const open = items.filter(i => i.complete).map(i =>
-    `- [ ] **${i.title}**\n  - pair: ${i.fields.pair} · observed: ${i.fields.observed} · expected: ${i.fields.expected} · source: ${i.fields.source}`);
-  const disc = items.filter(i => !i.complete).map(i =>
-    `- ${i.title} — from pasted plan (INCOMPLETE, MISSING: ${i.missing.join(', ')}). Not actionable until all four fields are supplied.\n  - pair: ${i.fields.pair || '(missing)'} · observed: ${i.fields.observed || '(missing)'} · expected: ${i.fields.expected || '(missing)'} · source: ${i.fields.source || '(missing)'}`);
-  return { openBlock: open.join('\n'), discBlock: disc.join('\n'), openCount: open.length, discCount: disc.length };
+function countStatuses(items) { const c = { done: 0, running: 0, queued: 0, blocked: 0, skipped: 0 }; items.forEach(i => c[i.status] = (c[i.status] || 0) + 1); return c; }
+function planPreview(items) {
+  const counts = countStatuses(items);
+  const summary = [`${counts.queued} queued · ${counts.blocked} blocked · ${counts.skipped} skipped · ${counts.done} done`];
+  items.filter(i => i.status === 'blocked' && i.missing && i.missing.length).forEach(i =>
+    summary.push(`blocked: ${i.pair || i.desc} — missing ${i.missing.join(', ')}${i.missing.length === 3 ? '  (a pair alone is not a repro)' : ''}`));
+  return { items, counts, summary };
 }
+
+// working queue = dashboard state (plan.json). Pasting REPLACES it, preserving items already `done`.
+const PLAN_FILE = path.join(__dirname, 'plan.json');
+function readPlan() { try { return JSON.parse(fs.readFileSync(PLAN_FILE, 'utf8')); } catch { return []; } }
+function writePlan(items) { try { fs.writeFileSync(PLAN_FILE, JSON.stringify(items, null, 1)); } catch {} }
+function mergePreservingDone(parsed, old) {
+  const key = i => (i.pair || '') + '|' + (i.desc || '');
+  const parsedKeys = new Set(parsed.map(key));
+  parsed.forEach(i => { const o = old.find(x => key(x) === key(i)); if (o && o.status === 'done') i.status = 'done'; });
+  return [...parsed, ...old.filter(o => o.status === 'done' && !parsedKeys.has(key(o)))];
+}
+// runtime overlay: match plan pairs to the live run's current item / calibration DONE rows
+function planWithRuntime() {
+  const items = readPlan();
+  const log = parseLoopLog(latestRun());
+  const cal = parseCalibration();
+  const curPair = (log.status.currentItem && !log.status.complete) ? (log.status.currentItem.match(PAIR_ANY) || [])[1] : null;
+  const donePairs = new Set(cal.rows.filter(r => r.status === 'DONE').map(r => (String(r.item).match(PAIR_ANY) || [])[1]).filter(Boolean));
+  items.forEach(i => { if (i.status === 'queued') { if (curPair && i.pair === curPair) i.status = 'running'; else if (i.pair && donePairs.has(i.pair)) i.status = 'done'; } });
+  return { items, counts: countStatuses(items) };
+}
+
+// QUEUE.md append (on launch only) — append-only; got/want/why map to observed/expected/source.
 function insertIntoSection(content, section, block) {
   if (!block) return content;
   const lines = content.split('\n');
@@ -156,23 +181,74 @@ function insertIntoSection(content, section, block) {
   while (before.length && /^\s*$/.test(before[before.length - 1])) before.pop();
   return [...before, '', block, '', ...after].join('\n').replace(/\n{3,}/g, '\n\n');
 }
+function appendQueuedToQueueMd(items) {
+  const queued = items.filter(i => i.status === 'queued');
+  if (!queued.length) return { appended: 0 };
+  const block = queued.map(i => `- [ ] **${i.pair} — ${i.desc}**\n  - pair: ${i.pair} · observed: ${i.got} · expected: ${i.want} · source: ${i.why}`).join('\n');
+  let content = readSafe(ap('QUEUE.md')); if (content == null) return { appended: 0, error: 'QUEUE.md not found' };
+  fs.writeFileSync(ap('QUEUE.md'), insertIntoSection(content, 'Open', block));
+  return { appended: queued.length };
+}
 
-// ── the combined state the page polls (~2s) ──────────────────────────────────────────────────────────
+// ── preflight (async: git + claude + app :3001 + queued + a quick freeze proxy) ───────────────────────
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// probe: `up` = we got ANY HTTP response (a 429 means the app is up-but-throttled, NOT down). `body` is the
+// text only on 2xx. Use 127.0.0.1 (some setups 429 the `localhost` host header while 127.0.0.1 answers 200).
+async function httpProbe(url) { try { const r = await fetch(url, { signal: AbortSignal.timeout(4000) }); return { up: true, status: r.status, body: r.ok ? await r.text() : null }; } catch { return { up: false, status: 0, body: null }; } }
+async function preflight() {
+  const checks = [];
+  let treeClean = false; try { treeClean = execFileSync('git', ['-C', REPO_ROOT, 'status', '--porcelain'], { encoding: 'utf8' }).trim() === ''; } catch {}
+  checks.push({ name: 'tree clean', ok: treeClean, detail: treeClean ? 'clean' : 'commit or stash uncommitted changes first' });
+  // check with `bash -c` (NOT -lc): this uses the dashboard process's own PATH — exactly what the runner
+  // inherits when the dashboard spawns it. If open-dashboard.sh put ~/.local/bin on PATH, both see claude.
+  let claudeOk = false; try { execFileSync('bash', ['-c', 'command -v claude'], { stdio: 'ignore' }); claudeOk = true; } catch {}
+  checks.push({ name: 'claude on PATH', ok: claudeOk, detail: claudeOk ? 'found' : 'install the CLI / add ~/.local/bin to the launcher PATH' });
+  const URL = 'http://127.0.0.1:3001/api/price/AAPL';
+  const a = await httpProbe(URL);
+  checks.push({ name: 'app :3001 up', ok: a.up, detail: a.up ? `responding (HTTP ${a.status})` : 'no response — start the app on :3001' });
+  const queued = queueOpen().open;   // the runner reads QUEUE.md ## Open (plan.json is the paste-staging area)
+  checks.push({ name: 'a queued item', ok: queued >= 1, detail: queued >= 1 ? `${queued} unchecked in QUEUE.md ## Open` : 'no unchecked items in QUEUE.md ## Open' });
+  // freeze proxy — reuse the up-check quote as read A; one more after a pause. Rate-limit tolerant: only a
+  // genuine two-200 MISMATCH blocks. If we can't get two clean reads, defer to the runner's 60s check
+  // (the authoritative gate) rather than false-block on the app's own throttling.
+  let fok, fdetail;
+  if (!a.up) { fok = false; fdetail = 'app down'; }
+  else { await sleep(1500); const b = await httpProbe(URL);
+    if (a.body && b.body) { fok = a.body === b.body; fdetail = fok ? 'stable (quick proxy; runner does the authoritative 60s check)' : 'MOVING — two reads differ, N+1 unsafe'; }
+    else { fok = true; fdetail = 'deferred to runner (app throttled the quick check; runner does the 60s check)'; } }
+  checks.push({ name: 'prices frozen', ok: fok, detail: fdetail });
+  const budgetUsd = parseFloat(process.env.BUDGET_USD || '25');
+  return { checks, allOk: checks.every(c => c.ok), queued, budgetUsd };
+}
+
+// ── summary (from calibration.csv + the branch commit log — numbers from data, never an LLM) ──────────
+function buildSummary() {
+  const cal = parseCalibration();
+  const log = parseLoopLog(latestRun());
+  const commits = commitsFor(log.status.branch, log.status.runId);
+  const decisions = commits.map(c => { const m = c.match(/^(\S+)\s+sweep\([^)]*\) iter \d+: (.+?) \[(\w+)\]/); return m ? { sha: m[1], item: m[2], status: m[3] } : null; }).filter(Boolean);
+  // attach defect deltas from calibration by matching item text
+  decisions.forEach(d => { const row = cal.rows.find(r => (r.item || '').slice(0, 20) && d.item.includes((r.item || '').slice(0, 12))); if (row) d.defects = `${row.defects_before}→${row.defects_after}`; });
+  const committed = cal.rows.filter(r => r.status === 'DONE' || r.status === 'RESOLVED_UPSTREAM').length;
+  const reverted = cal.rows.filter(r => ['REGRESSION', 'FAILED', 'TIMEOUT'].includes(r.status)).length;
+  const baseline = log.status.baselineDefects != null ? log.status.baselineDefects : null;
+  const last = cal.rows[cal.rows.length - 1];
+  const defectsAfter = last ? Number(last.defects_after) : baseline;
+  return { committed, reverted, defectsBefore: baseline, defectsAfter, spent: cal.costTotal, decisions };
+}
+
 function buildState() {
   const runId = latestRun();
   const log = parseLoopLog(runId);
-  const cal = parseCalibration();
-  const budget = parseFloat(process.env.BUDGET_USD || '50');
+  const budget = parseFloat(process.env.BUDGET_USD || '25');
   return {
     agentDir: AGENT_DIR, repoRoot: REPO_ROOT, now: Date.now(),
     latestRun: runId, hasAnyRun: !!runId,
-    status: log.status, loopLogExists: log.exists, logTail: log.tail, elapsedSec: log.elapsedSec,
-    queue: queueOpen(),
-    calibration: cal, costTotal: cal.costTotal, budgetUsd: budget, budgetIsDefault: !process.env.BUDGET_USD,
+    live: { status: log.status, loopLogExists: log.exists, logTail: log.tail, elapsedSec: log.elapsedSec },
+    plan: planWithRuntime(),
+    summary: buildSummary(),
+    budgetUsd: budget, budgetIsDefault: !process.env.BUDGET_USD,
     stopExists: !!statSafe(ap('STOP')),
-    decisions: readSafe(ap('DECISIONS.md')),
-    diagnosis: diagnosisList(),
-    commits: commitsFor(log.status.branch, log.status.runId),
     undo: runId ? readSafe(ap('runs', runId, 'UNDO.txt')) : null,
   };
 }
@@ -181,6 +257,7 @@ const app = express();
 app.use(express.json());
 app.get('/', (_req, res) => res.sendFile(path.join(__dirname, 'index.html')));
 app.get('/api/state', (_req, res) => { try { res.json(buildState()); } catch (e) { res.status(500).json({ error: String(e) }); } });
+app.get('/api/preflight', async (_req, res) => { try { res.json(await preflight()); } catch (e) { res.status(500).json({ error: String(e) }); } });
 app.get('/api/diagnosis/:name', (req, res) => {
   const name = path.basename(req.params.name || '');
   if (!name.endsWith('.md')) return res.status(400).type('text/plain').send('bad name');
@@ -192,25 +269,29 @@ app.get('/api/stop', (_req, res) => res.json({ exists: !!statSafe(ap('STOP')) })
 app.post('/api/stop', (_req, res) => { try { fs.writeFileSync(ap('STOP'), 'requested via dashboard\n'); res.json({ exists: true }); } catch (e) { res.status(500).json({ error: String(e) }); } });
 app.delete('/api/stop', (_req, res) => { try { fs.rmSync(ap('STOP'), { force: true }); res.json({ exists: false }); } catch (e) { res.status(500).json({ error: String(e) }); } });
 
-// Phase 2 — plan intake (parse is read-only; append requires explicit confirm and is append-only)
-app.post('/api/parse', (req, res) => { try { res.json(parsePlan((req.body && req.body.text) || '')); } catch (e) { res.status(500).json({ error: String(e) }); } });
-app.post('/api/queue/append', (req, res) => {
+// parse preview (read-only, no write)
+app.post('/api/parse', (req, res) => { try { res.json(planPreview(parsePlan((req.body && req.body.text) || ''))); } catch (e) { res.status(500).json({ error: String(e) }); } });
+// paste → REPLACE the working queue (preserving done items). Writes plan.json only, NOT QUEUE.md.
+app.post('/api/plan', (req, res) => {
   try {
-    const text = (req.body && req.body.text) || '';
-    const confirm = !!(req.body && req.body.confirm);
-    const { items } = parsePlan(text);
-    const { openBlock, discBlock, openCount, discCount } = renderAppend(items);
-    const parts = [];
-    if (openBlock) parts.push('>>> appended to ## Open (COMPLETE items):\n' + openBlock);
-    if (discBlock) parts.push('>>> appended to ## Discovered (INCOMPLETE — never ## Open):\n' + discBlock);
-    const diff = parts.join('\n\n') || '(nothing to append)';
-    if (!confirm) return res.json({ dryRun: true, diff, openCount, discCount });
-    let content = readSafe(ap('QUEUE.md'));
-    if (content == null) return res.status(500).json({ error: 'QUEUE.md not found' });
-    if (openBlock) content = insertIntoSection(content, 'Open', openBlock);        // append-only
-    if (discBlock) content = insertIntoSection(content, 'Discovered', discBlock);   // append-only
-    fs.writeFileSync(ap('QUEUE.md'), content);
-    res.json({ written: true, diff, openCount, discCount });
+    const parsed = parsePlan((req.body && req.body.text) || '');
+    const merged = mergePreservingDone(parsed, readPlan());
+    writePlan(merged);
+    res.json(planPreview(merged));
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
+app.get('/api/plan', (_req, res) => { try { res.json(planPreview(readPlan())); } catch (e) { res.status(500).json({ error: String(e) }); } });
+// LAUNCH — the only write action beyond plan.json. Server-side gated on preflight; appends queued items to
+// QUEUE.md (append-only) and spawns run-sweep.sh detached. Refuses on any failed precondition.
+app.post('/api/launch', async (req, res) => {
+  try {
+    const pf = await preflight();
+    if (!pf.allOk) return res.status(412).json({ error: 'preflight failed', checks: pf.checks });
+    const appended = appendQueuedToQueueMd(readPlan());
+    const { spawn } = require('child_process');
+    const child = spawn('bash', [ap('run-sweep.sh')], { cwd: REPO_ROOT, detached: true, stdio: 'ignore', env: { ...process.env, BUDGET_USD: String(pf.budgetUsd) } });
+    child.unref();
+    res.json({ launched: true, pid: child.pid, appended: appended.appended });
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
 

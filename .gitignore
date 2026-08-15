@@ -42,3 +42,6 @@ agent/STOP
 
 # sweep dashboard runtime log (written by open-dashboard.sh)
 agent/dashboard/dashboard.log
+
+# sweep dashboard working-queue state (paste-replaces; not the harness QUEUE.md)
+agent/dashboard/plan.json

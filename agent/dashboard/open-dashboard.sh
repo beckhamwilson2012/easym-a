@@ -10,7 +10,7 @@
 # absolute path, the same discipline the launchd plist needs. Every path is quoted (the & in EasyM&A splits
 # an unquoted path).
 set -uo pipefail
-export PATH="/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
+export PATH="$HOME/.local/bin:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"  # ~/.local/bin = where claude lives; the dashboard inherits this PATH and the runner inherits it in turn
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER="$DIR/server.js"

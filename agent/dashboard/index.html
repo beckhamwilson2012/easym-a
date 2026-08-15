@@ -4,194 +4,184 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Sweep Dashboard</title>
-<!-- Single-file React page, no build step. React + Babel from CDN (external, not :3001 — the app can be
-     stopped and this still loads). If offline, vendor these instead. -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
   :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --dim:#8b949e; --accent:#58a6ff; }
-  * { box-sizing: border-box; }
+  * { box-sizing:border-box; }
   body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
-  h1 { font-size:18px; margin:0; } h2 { font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin:0 0 8px; }
-  a { color:var(--accent); }
-  .wrap { max-width:1100px; margin:0 auto; padding:16px; }
-  .top { display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px; }
-  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; margin-bottom:16px; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
-  .kv .k { color:var(--dim); font-size:12px; } .kv .v { font-size:16px; font-weight:600; }
-  pre, .mono { font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
-  .log { background:#010409; border:1px solid var(--border); border-radius:6px; padding:10px; height:260px; overflow:auto; white-space:pre-wrap; }
-  table { width:100%; border-collapse:collapse; font-size:13px; }
-  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
-  th { color:var(--dim); font-weight:600; font-size:12px; }
-  .pill { padding:1px 8px; border-radius:10px; color:#fff; font-size:11px; font-weight:700; }
-  .dim { color:var(--dim); } .warn { color:#e3b341; } .bad { color:#f85149; } .good { color:#3fb950; }
-  button { background:#21262d; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px 12px; cursor:pointer; font-size:13px; }
-  button:hover { border-color:var(--accent); }
-  button.danger { border-color:#8b3a3a; } button.danger:hover { background:#3d1b1b; }
-  .trend { display:flex; align-items:flex-end; gap:3px; height:40px; }
-  .trend .bar { width:14px; background:#30475e; border-radius:2px 2px 0 0; }
+  h1 { font-size:18px; margin:0; } h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin:0 0 10px; }
+  .wrap { max-width:900px; margin:0 auto; padding:16px; }
+  .top { display:flex; align-items:center; gap:14px; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px; }
+  .mono { font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  textarea { width:100%; background:#010409; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:10px; font:12px/1.5 ui-monospace,Menlo,monospace; }
+  button { background:#21262d; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:7px 14px; cursor:pointer; font-size:13px; }
+  button:hover:not(:disabled) { border-color:var(--accent); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .dim { color:var(--dim); } .good { color:#3fb950; } .bad { color:#f85149; } .warn { color:#e3b341; }
+  .log { background:#010409; border:1px solid var(--border); border-radius:6px; padding:10px; max-height:280px; overflow:auto; white-space:pre-wrap; }
+  .row { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px solid var(--border); }
+  .row.done { opacity:.55; }
+  .dot { width:11px; height:11px; border-radius:50%; flex:0 0 auto; }
+  .pill { padding:1px 9px; border-radius:10px; font-size:11px; font-weight:700; margin-left:auto; }
+  .pair { font:12px/1 ui-monospace,Menlo,monospace; font-weight:700; min-width:110px; }
+  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
+  .card { background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:10px; }
+  .card .k { color:var(--dim); font-size:11px; text-transform:uppercase; } .card .v { font-size:22px; font-weight:700; }
+  .pf { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; margin-bottom:10px; }
+  .pf span::before { content:'✓ '; color:#3fb950; } .pf span.no::before { content:'✗ '; color:#f85149; }
+  .pf span.no { color:#f85149; }
   code.copy { background:#010409; border:1px solid var(--border); border-radius:6px; padding:8px 10px; display:block; word-break:break-all; }
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect } = React;
-const STATUS_COLORS = { DONE:'#1a7f37', REGRESSION:'#cf222e', INDETERMINATE:'#9a6700', TIMEOUT:'#bc4c00',
-  RESOLVED_UPSTREAM:'#0969da', BLOCKED:'#57606a', REPLAY_SUSPECTED:'#8250df', FAILED:'#82071e' };
-const fmtDur = s => s==null ? '—' : (s>=3600? (s/3600).toFixed(1)+'h' : s>=60? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s');
-const num = v => (v===''||v==null||isNaN(+v)) ? '—' : +v;
+const { useState, useEffect, useCallback } = React;
+const ST = {
+  done:    { color:'#3fb950', fill:true,  pill:'rgba(63,185,80,.15)' },
+  running: { color:'#58a6ff', fill:true,  pill:'rgba(88,166,255,.15)' },
+  queued:  { color:'#8b949e', fill:false, pill:'rgba(139,148,158,.10)' },
+  blocked: { color:'#e3b341', fill:true,  pill:'rgba(227,179,65,.15)' },
+  skipped: { color:'#57606a', fill:false, pill:'rgba(87,96,106,.10)' },
+};
+const post = (url, body) => fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) }).then(r=>r.json());
+const fmtDur = s => s==null?'—':(s>=3600?(s/3600).toFixed(1)+'h':s>=60?Math.floor(s/60)+'m '+(s%60)+'s':s+'s');
 
-function Pill({ status }) {
-  return <span className="pill" style={{background: STATUS_COLORS[status] || '#57606a'}}>{status||'?'}</span>;
-}
-
-function LiveRun({ s }) {
-  const st = s.status || {};
-  if (!s.hasAnyRun) return <div className="panel"><h2>Live run</h2><div className="dim">No runs yet. Once the runner writes agent/runs/&lt;id&gt;/, this populates.</div></div>;
-  const rows = (s.calibration.rows)||[];
-  const trend = [ ...(st.baselineDefects!=null? [{iter:'base', after: st.baselineDefects}]:[]),
-                  ...rows.map(r=>({iter:r.iter, after: num(r.defects_after)})) ].filter(x=>x.after!=='—');
-  const maxD = Math.max(1, ...trend.map(t=>+t.after||0));
-  return (
-    <div className="panel">
-      <h2>Live run — {st.complete ? <span className="good">complete</span> : <span className="warn">running</span>}</h2>
-      <div className="grid">
-        <div className="kv"><div className="k">current item</div><div className="v" style={{fontSize:13}}>{st.currentItem || '—'}</div></div>
-        <div className="kv"><div className="k">iteration</div><div className="v">{st.iter||'—'} <span className="dim">of {s.queue.open + s.queue.done + s.queue.parked || st.openItems || '?'}</span></div></div>
-        <div className="kv"><div className="k">elapsed</div><div className="v">{fmtDur(s.elapsedSec)}</div></div>
-        <div className="kv"><div className="k">projected end</div><div className="v" style={{fontSize:13}}>{st.projectedEnd||'—'}</div></div>
-        <div className="kv"><div className="k">capture mode</div><div className="v">{st.mode||'—'}{st.freezeSwitchedAtIter? <span className="warn" style={{fontSize:12}}> ⚠ froze→2N @iter {st.freezeSwitchedAtIter}</span>:null}</div></div>
-        <div className="kv"><div className="k">baseline defects</div><div className="v">{st.baselineDefects!=null? st.baselineDefects : '—'}</div></div>
-      </div>
-      {trend.length>0 && <div style={{marginTop:12}}>
-        <div className="k dim" style={{fontSize:12,marginBottom:4}}>defect trend</div>
-        <div className="trend">{trend.map((t,i)=><div key={i} title={`${t.iter}: ${t.after}`} className="bar" style={{height:(6+34*(+t.after)/maxD)+'px'}}></div>)}</div>
-        <div className="mono dim" style={{marginTop:4}}>{trend.map(t=>`${t.iter}:${t.after}`).join('  ')}</div>
-      </div>}
-      <div style={{marginTop:12}}>
-        <div className="k dim" style={{fontSize:12,marginBottom:4}}>loop.log {s.loopLogExists? '(tail, auto-refresh 2s)' : <span className="warn">— not found (launcher must redirect runner stdout to runs/&lt;id&gt;/loop.log)</span>}</div>
-        <div className="log mono">{(s.logTail||[]).join('\n') || '(empty)'}</div>
-      </div>
-    </div>
-  );
-}
-
-function Iterations({ s }) {
-  const rows = (s.calibration.rows)||[];
-  const overBudget = s.costTotal > s.budgetUsd;
-  return (
-    <div className="panel">
-      <h2>Iterations ({rows.length})</h2>
-      {rows.length===0 ? <div className="dim">No iterations recorded yet (agent/calibration.csv is empty or absent).</div> :
-      <table><thead><tr><th>#</th><th>item</th><th>status</th><th>wall</th><th>turns</th><th>cost</th><th>defects</th><th>forced recap</th></tr></thead>
-      <tbody>{rows.map((r,i)=><tr key={i}>
-        <td>{r.iter}</td><td style={{whiteSpace:'normal',maxWidth:340}}>{r.item}</td>
-        <td><Pill status={r.status}/></td><td>{fmtDur(+r.wall_sec)}</td><td>{num(r.turns)}</td>
-        <td>${(+r.cost_usd||0).toFixed(3)}</td>
-        <td className="mono">{num(r.defects_before)} → {num(r.defects_after)}</td>
-        <td>{r.forced_recapture==='true'? <span className="warn">yes</span> : 'no'}</td>
-      </tr>)}</tbody></table>}
-      <div style={{marginTop:10}} className={overBudget?'bad':''}>
-        running cost <b>${s.costTotal.toFixed(3)}</b> / budget <b>${(+s.budgetUsd).toFixed(2)}</b>{s.budgetIsDefault? <span className="dim"> (default)</span>:null}
-        {overBudget? <span className="bad"> — OVER BUDGET</span>:null}
-      </div>
-    </div>
-  );
-}
-
-function MorningReview({ s }) {
-  return (
-    <div className="panel">
-      <h2>Morning review</h2>
-      <div style={{marginBottom:14}}><div className="k dim">DECISIONS.md</div>
-        {s.decisions ? <pre className="log" style={{height:'auto',maxHeight:200}}>{s.decisions}</pre> : <div className="dim">None logged.</div>}</div>
-      <div style={{marginBottom:14}}><div className="k dim">diagnosis files</div>
-        {(s.diagnosis||[]).length? <ul style={{margin:'4px 0'}}>{s.diagnosis.map(d=><li key={d.name}><a href={'/api/diagnosis/'+encodeURIComponent(d.name)} target="_blank">{d.name}</a> <span className="dim">— {d.preview}</span></li>)}</ul> : <div className="dim">None.</div>}</div>
-      <div style={{marginBottom:14}}><div className="k dim">branch commits {s.status && s.status.branch? '('+s.status.branch+')':''}</div>
-        {(s.commits||[]).length? <pre className="mono" style={{margin:'4px 0'}}>{s.commits.join('\n')}</pre> : <div className="dim">None (no sweep branch yet).</div>}</div>
-      <div><div className="k dim">UNDO — discards the whole night. Copy and run it yourself (deliberately not a button):</div>
-        {s.undo ? <code className="copy">{s.undo.split('\n').filter(l=>l && !l.startsWith('#')).join('\n')}</code> : <div className="dim">No UNDO.txt (no run yet).</div>}</div>
-    </div>
-  );
-}
-
-function StopControl({ s, refresh }) {
-  const set = (method) => fetch('/api/stop', { method }).then(()=>refresh());
-  return (
-    <div className="panel">
-      <h2>STOP</h2>
-      <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
-        <div>agent/STOP: {s.stopExists ? <b className="warn">PRESENT — runner will halt at the next iteration boundary</b> : <span className="dim">not set (runner continues)</span>}</div>
-        {s.stopExists
-          ? <button onClick={()=>set('DELETE')}>Remove STOP (resume)</button>
-          : <button className="danger" onClick={()=>set('POST')}>Create STOP (halt after current item)</button>}
-      </div>
-    </div>
-  );
-}
-
-function PlanIntake() {
+function PastePlan({ onQueue }) {
   const [text, setText] = useState('');
-  const [parsed, setParsed] = useState(null);
-  const [diff, setDiff] = useState(null);
-  const [msg, setMsg] = useState('');
-  const post = (url, body) => fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
-  const parse = () => post('/api/parse', { text }).then(d=>{ setParsed(d); setDiff(null); setMsg(''); });
-  const preview = () => post('/api/queue/append', { text, confirm:false }).then(d=>{ setDiff(d.diff); setMsg(''); });
-  const append = () => { if (!window.confirm('Append to QUEUE.md? COMPLETE → ## Open, INCOMPLETE → ## Discovered. Append-only; existing items untouched.')) return;
-    post('/api/queue/append', { text, confirm:true }).then(d=> setMsg(d.written ? `Appended: ${d.openCount} to ## Open, ${d.discCount} to ## Discovered.` : ('error: '+(d.error||'?')))); };
+  const [prev, setPrev] = useState(null);
+  const parse = () => post('/api/parse', { text }).then(setPrev);
+  const replace = () => post('/api/plan', { text }).then(d => { setPrev(d); onQueue(); });
   return (
     <div className="panel">
-      <h2>Plan intake</h2>
-      <div className="dim" style={{marginBottom:8}}>Paste raw notes. Each item needs <b>pair · observed · expected · source</b>. Missing any one → the item returns <b>BLOCKED</b> (≈22 min of capture wasted before any agent time). Nothing is auto-filled or inferred.</div>
-      <textarea value={text} onChange={e=>setText(e.target.value)} rows={7}
-        style={{width:'100%',background:'#010409',color:'var(--fg)',border:'1px solid var(--border)',borderRadius:6,padding:8,fontFamily:'ui-monospace,monospace',fontSize:12}}
-        placeholder={"1. KO/NSRGY comps are CNBC-only\n   observed: source=CNBC · expected: EDGAR-sourced · source: peer screen SIC dep\n\n2. debt looks off for some target somewhere"} />
-      <div style={{marginTop:8,display:'flex',gap:8,flexWrap:'wrap'}}>
-        <button onClick={parse}>Parse</button>
-        {parsed && parsed.counts.total>0 && <button onClick={preview}>Preview append (show diff)</button>}
-        {diff && <button className="danger" onClick={append}>Confirm &amp; append to QUEUE.md</button>}
+      <h2>Paste plan</h2>
+      <div className="dim" style={{marginBottom:8}}>Format: <span className="mono">- [ ] PAIR — desc</span> then indented <span className="mono">got: / want: / why:</span>. Missing any of got/want/why → <b>blocked</b>. Nothing is inferred or auto-filled.</div>
+      <textarea rows={8} value={text} onChange={e=>setText(e.target.value)}
+        placeholder={"## Next up\n- [ ] KO/NSRGY — comps sourced from CNBC\n      got: comps table shows CNBC prices\n      want: EDGAR-sourced\n      why: peer screen SIC dependency"} />
+      <div style={{marginTop:8, display:'flex', gap:8}}>
+        <button onClick={parse} disabled={!text.trim()}>Parse preview</button>
+        <button onClick={replace} disabled={!text.trim()}>Replace queue with this</button>
       </div>
-      {parsed && <div style={{marginTop:12}}>
-        {parsed.summary.map((l,i)=><div key={i} className={i===0?'':'warn'} style={{fontWeight:i===0?700:400}}>{l}</div>)}
-        {parsed.counts.total===0 ? <div className="dim" style={{marginTop:8}}>No items parsed.</div> :
-        <table style={{marginTop:8}}><thead><tr><th>#</th><th>title</th><th>status</th><th>pair</th><th>observed</th><th>expected</th><th>source</th></tr></thead>
-        <tbody>{parsed.items.map((it,i)=><tr key={i}>
-          <td>{i+1}</td><td style={{maxWidth:220,whiteSpace:'normal'}}>{it.title}</td>
-          <td>{it.complete ? <span className="pill" style={{background:'#1a7f37'}}>COMPLETE</span> : <span className="pill" style={{background:'#9a6700'}}>INCOMPLETE</span>}</td>
-          {['pair','observed','expected','source'].map(k=><td key={k} className={it.fields[k]?'good':'bad'} title={it.fields[k]||'missing'}>{it.fields[k] ? '✓' : 'MISSING'}</td>)}
-        </tr>)}</tbody></table>}
-        {parsed.items.some(i=>!i.complete) && <div className="dim" style={{marginTop:6}}>INCOMPLETE items route to <b>## Discovered only</b> — never ## Open. Missing fields render as "(missing)", never invented.</div>}
+      {prev && <div style={{marginTop:10}}>
+        {prev.summary.map((l,i)=><div key={i} className={i===0?'':'warn'} style={{fontWeight:i===0?700:400}}>{l}</div>)}
+        <div className="dim" style={{marginTop:4,fontSize:12}}>Preview only — "Replace queue with this" writes the working queue (done items preserved). QUEUE.md is written only on launch.</div>
       </div>}
-      {diff && <div style={{marginTop:12}}><div className="k dim">exactly what will be appended (append-only — existing items are never reordered or removed):</div><pre className="log" style={{height:'auto',maxHeight:240}}>{diff}</pre></div>}
-      {msg && <div style={{marginTop:8}} className="good">{msg}</div>}
+    </div>
+  );
+}
+
+function Queue({ plan }) {
+  const items = (plan && plan.items) || [];
+  const c = (plan && plan.counts) || {};
+  return (
+    <div className="panel">
+      <h2>Queue — {c.done||0} done · {c.running||0} running · {c.queued||0} queued · {c.blocked||0} blocked{c.skipped?` · ${c.skipped} skipped`:''}</h2>
+      {items.length===0 ? <div className="dim">Empty — paste a plan above.</div> :
+        items.map((it,i)=>{ const s = ST[it.status]||ST.queued; return (
+          <div key={i} className={'row'+(it.status==='done'?' done':'')}>
+            <span className="dot" style={{background:s.fill?s.color:'transparent', border:'2px solid '+s.color}}></span>
+            <span className="pair">{it.pair||'—'}</span>
+            <span>{it.desc}{it.status==='blocked'&&it.missing&&it.missing.length? <span className="warn" style={{fontSize:12}}> — missing {it.missing.join(', ')}{it.missing.length===3?' (a pair alone is not a repro)':''}</span>:null}</span>
+            <span className="pill" style={{background:s.pill, color:s.color}}>{it.status}</span>
+          </div>
+        );})}
+    </div>
+  );
+}
+
+function Launch({ pf, plan, refresh }) {
+  const [armed, setArmed] = useState(false);
+  useEffect(()=>{ if(!armed) return; const t=setTimeout(()=>setArmed(false),5000); return ()=>clearTimeout(t); },[armed]);
+  const queued = (pf && pf.queued) || 0;
+  const budget = (pf && pf.budgetUsd) || 0;
+  const ready = pf && pf.allOk;
+  const failed = pf ? pf.checks.filter(c=>!c.ok) : [];
+  const click = () => {
+    if (!ready) return;
+    if (!armed) { setArmed(true); return; }
+    post('/api/launch', {}).then(d=>{ setArmed(false); if(d.error){ alert('launch refused: '+d.error); } refresh(); });
+  };
+  return (
+    <div className="panel">
+      <h2>Launch</h2>
+      <div className="pf">
+        {pf ? pf.checks.map((c,i)=><span key={i} className={c.ok?'':'no'} title={c.detail}>{c.name}</span>) : <span className="dim">checking…</span>}
+      </div>
+      {!ready && failed.length>0 && <div className="bad" style={{marginBottom:8,fontSize:13}}>blocked by: {failed.map(c=>`${c.name} (${c.detail})`).join(' · ')}</div>}
+      <button onClick={click} disabled={!ready}
+        style={armed?{borderColor:'#f85149',background:'#3d1b1b'}:{}}>
+        {armed ? `Confirm — ${queued} item${queued===1?'':'s'}, $${budget} cap` : `Launch ${queued} queued`}
+      </button>
+      <span className="dim" style={{marginLeft:10,fontSize:12}}>blocked &amp; parked items are excluded{armed?' · click again within 5s to start':' · two clicks to start'}</span>
+    </div>
+  );
+}
+
+function Summary({ summary }) {
+  const s = summary || {};
+  const d = s.decisions || [];
+  return (
+    <div className="panel">
+      <h2>Summary</h2>
+      <div className="cards">
+        <div className="card"><div className="k">Committed</div><div className="v good">{s.committed||0}</div></div>
+        <div className="card"><div className="k">Reverted</div><div className="v bad">{s.reverted||0}</div></div>
+        <div className="card"><div className="k">Defects</div><div className="v">{s.defectsBefore==null?'—':`${s.defectsBefore}→${s.defectsAfter}`}</div></div>
+        <div className="card"><div className="k">Spent</div><div className="v">${(s.spent||0).toFixed(2)}</div></div>
+      </div>
+      <div style={{marginTop:12}}>
+        {d.length===0 ? <div className="dim">No decisions yet — populates from calibration.csv + the branch commit log during a run.</div> :
+          d.map((x,i)=> x.status==='DONE'||x.status==='RESOLVED_UPSTREAM'
+            ? <div key={i} className="mono good">commit {x.sha} · {x.item}</div>
+            : <div key={i} className="mono bad" style={{fontWeight:700}}>revert {x.item}{x.defects?` · defects ${x.defects}`:''} [{x.status}]</div>)}
+      </div>
+    </div>
+  );
+}
+
+function LiveView({ live, undo }) {
+  const st = (live && live.status) || {};
+  if (!live || !live.loopLogExists) return null;
+  const rs = st.runState || 'RUNNING';
+  const BADGE = { RUNNING:{c:'#58a6ff'}, COMPLETED:{c:'#3fb950'}, DIED:{c:'#f85149'}, STALE:{c:'#e3b341'} };
+  const c = (BADGE[rs]||{c:'#8b949e'}).c;
+  const ageM = st.lastWriteAgeSec!=null ? Math.floor(st.lastWriteAgeSec/60) : null;
+  return (
+    <div className="panel">
+      <h2>Live run — <span style={{color:c,fontWeight:800}}>{rs}</span> {st.runId||''}</h2>
+      {(rs==='DIED'||rs==='STALE') && <div className="bad" style={{marginBottom:8}}>
+        {rs==='DIED' ? 'the process is not alive and the log has no completion line — this run is DEAD, not running.' : 'the log has not advanced in over 30 min — the capture may be hung (a hung capture looks identical to a working one from the log alone).'}
+        {' '}last write {ageM!=null?ageM+'m ago':'?'} · last line: <span className="mono">{st.lastLogLine||'—'}</span>
+      </div>}
+      <div className="dim" style={{fontSize:12,marginBottom:6}}>iter {st.iter||'—'} · mode {st.mode||'—'} · elapsed {fmtDur(live.elapsedSec)} · projected end {st.projectedEnd||'—'}{st.pid?` · pid ${st.pid} ${st.pidAlive?'(alive)':'(dead)'}`:' · (no run.pid)'}{st.currentItem?` · ${st.currentItem}`:''}</div>
+      <div className="log mono">{(live.logTail||[]).join('\n')||'(empty)'}</div>
+      {undo && <div style={{marginTop:10}}><div className="dim" style={{fontSize:12}}>UNDO — discards the night. Copy and run it yourself:</div><code className="copy mono">{undo.split('\n').filter(l=>l&&!l.startsWith('#')).join('\n')}</code></div>}
     </div>
   );
 }
 
 function App() {
   const [s, setS] = useState(null);
-  const [err, setErr] = useState(null);
-  const refresh = () => fetch('/api/state').then(r=>r.json()).then(d=>{ setS(d); setErr(null); }).catch(e=>setErr(String(e)));
-  useEffect(() => { refresh(); const id = setInterval(refresh, 2000); return () => clearInterval(id); }, []);
-  if (!s) return <div className="wrap">{err? <span className="bad">dashboard API error: {err}</span> : 'loading…'}</div>;
+  const [pf, setPf] = useState(null);
+  const refreshState = useCallback(()=>fetch('/api/state').then(r=>r.json()).then(setS).catch(()=>{}),[]);
+  const refreshPf = useCallback(()=>fetch('/api/preflight').then(r=>r.json()).then(setPf).catch(()=>{}),[]);
+  useEffect(()=>{ refreshState(); refreshPf(); const a=setInterval(refreshState,2000); const b=setInterval(refreshPf,15000); return ()=>{clearInterval(a);clearInterval(b);}; },[refreshState,refreshPf]);
+  if (!s) return <div className="wrap">loading…</div>;
   return (
     <div className="wrap">
       <div className="top">
         <h1>Sweep Dashboard</h1>
         <span className="dim">run <b>{s.latestRun||'—'}</b></span>
-        {s.status && s.status.branch && <span className="dim">branch <b>{s.status.branch}</b></span>}
-        {s.status && s.status.mode && <span className="dim">mode <b>{s.status.mode}</b></span>}
-        <span style={{marginLeft:'auto'}} className="dim">agent dir: {s.agentDir}</span>
+        <span style={{marginLeft:'auto'}} className="dim">{s.stopExists?<b className="warn">STOP set</b>:''}</span>
       </div>
-      <LiveRun s={s} />
-      <Iterations s={s} />
-      <MorningReview s={s} />
-      <StopControl s={s} refresh={refresh} />
-      <PlanIntake />
+      <PastePlan onQueue={()=>{refreshState();refreshPf();}} />
+      <Queue plan={s.plan} />
+      <Launch pf={pf} plan={s.plan} refresh={()=>{refreshState();refreshPf();}} />
+      <Summary summary={s.summary} />
+      <LiveView live={s.live} undo={s.undo} />
     </div>
   );
 }
