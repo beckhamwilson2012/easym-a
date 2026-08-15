@@ -47,3 +47,22 @@ phase, each caught at a different layer:
 - **`pickOrNull` was proposed for FMP reuse — wrong abstraction.** It selects over EDGAR
   concept-namespaces (`pickOrNull(namespace, names)`); the FMP builder reads plain API values. The correct
   shared helper for FMP is `toMillions` (the dollars→$M converter), not the concept selector.
+
+## P4-variant (Stage 16) — a null-honesty fix can CREATE a Pattern B
+Making a value nullable is not safe in isolation: every **sum and ratio** that consumes it must be
+guarded in the **same commit**, or the fix degrades the surface it was meant to repair. `deckModel:79`
+(`A.shares || 0` → `A.shares`) fixed *alone* would have converted a **conspicuous** fabricated 0% pre-deal
+ownership into a **plausible** fabricated number: `null + newShares` = `newShares` (JS coerces `null → 0`
+in addition), so pro-forma shares look entirely normal while pre-deal ownership silently reads 0%. **A
+fabrication that survives inspection is worse than a visible zero.** So `deckModel:82` was guarded
+alongside `:79` (`preDealShares != null && newShares != null`); `:83/:84` already guarded
+`proFormaShares > 0` → "—".
+
+**Rule:** when making a value nullable, guard every sum and ratio consuming it in the same commit.
+
+## Correction to the Stage-15 record — revenue/debt were NOT "effective"
+Stage 15 / C2 reported all 8 non-shares FMP sites as "effective" (null → "—"). That is **FALSE for
+revenue and debt**: null-safe on §B (read via `num()`), but re-coerced to `$0` on the §2 comps slide by
+`SectionComparables:39` (`parseFloat(data.revenue) || 0`) and `:50/:118` (debt). Only **ebitda,
+netIncome, eps, cash** are genuinely null-safe end to end. The §2-comps re-coercers are logged for a
+section-file phase (DEFERRED **D17**).
