@@ -77,3 +77,25 @@
   would move its own grading baseline. (pair: KO/NSRGY,V/PYPL,WBD/PARA · observed: 429 consoleError, no
   app retry, no " loaded" · expected: app retries/backs off the load fetch on 429 and surfaces an error ·
   source: client ticker-load fetch path)
+
+- **Rate-limit storm on a full 50-pair baseline.** Surfaced in calibration run 1 (20260815-135915): the
+  50-pair sweep hammered the APIs hard enough that a chunk of pairs came back DIRTY, and capture.js's
+  dirty-pair **retry pass itself got 429'd and gave up** — `loadTicker … rate-limited, gave up after 3
+  attempts` on F/RIVN, GME/BBWI, GSK/NUVL, HD/FND. Baseline ran >52 min without an iteration starting. This
+  reproduces the known rate-limit problem on a REAL full sweep, and **must be fixed before any unattended
+  overnight run — it would eat the whole freeze window.** (observed: retry pass 429s and gives up on a
+  50-pair baseline · expected: a full baseline completes within a bounded time without rate-limit failures ·
+  source: capture.js retry pass + the app/upstream rate limiter)
+
+- **~35 Chrome processes alive during a long capture.** Observed during run 1's retry pass — far more than
+  the single reused browser capture.js should hold, suggesting pages accumulate across retries instead of
+  being closed. Separate from the 429s, and gets worse the longer a run goes (a 5-hour overnight run would
+  accumulate many). (observed: ~35 Chrome procs mid-capture · expected: one reused browser, pages closed per
+  pair · source: capture.js browser/page lifecycle)
+
+- **Runner should emit MAX_ITER and BUDGET_USD into loop.log at RUN start.** The dashboard can't show the
+  item-count denominator, the budget cap, or a correct ETA because the runner never reports its actual run
+  params (its loop.log projected-end assumes the full queue). This is the real fix that unblocks the ETA and
+  the "of N" / "Cap $N" fields — right now they honestly render "—". (observed: dashboard shows "—" for
+  cap/count/ETA during a run · expected: runner logs MAX_ITER + BUDGET_USD so the dashboard reads them ·
+  source: run-sweep.sh RUN-start logging)
