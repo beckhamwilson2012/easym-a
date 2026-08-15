@@ -165,12 +165,15 @@ function LiveView({ live, summary, budget, undo }) {
         <span style={{letterSpacing:'.14em',fontSize:12,fontWeight:700}}>{hasRun ? (rs||'RUNNING') : 'IDLE'}</span>
         <span className="mono dim" style={{marginLeft:'auto',fontSize:11}}>{st.runId||''}</span>
       </div>
-      {/* 2 — time remaining headline (or last outcome when idle) */}
+      {/* 2 — headline. Time-remaining needs MAX_ITER, which the runner does not report, and its loop.log
+             projected-end assumes the full queue (wrong for a capped run) — so during a run we show the
+             KNOWN honest number (elapsed) and leave projected-end/remaining as "—", never a number to trust
+             wrongly. Idle shows the last outcome. */}
       <div style={{display:'flex',alignItems:'baseline',marginTop:10}}>
-        {active && st.minLeft!=null
-          ? <><span style={{fontSize:40,fontWeight:300,lineHeight:1}}>{st.minLeft}</span><span style={{fontSize:15,marginLeft:8,color:'var(--dim)'}}>min left</span></>
+        {active
+          ? <><span style={{fontSize:40,fontWeight:300,lineHeight:1}}>{elapsedM!=null?elapsedM:'—'}</span><span style={{fontSize:15,marginLeft:8,color:'var(--dim)'}}>min elapsed</span></>
           : <span style={{fontSize:32,fontWeight:300,lineHeight:1}}>{outcome}</span>}
-        {active && st.endClock && <span style={{marginLeft:'auto',fontSize:13,color:'var(--dim)'}}>done ~{st.endClock}</span>}
+        {active && <span style={{marginLeft:'auto',fontSize:13,color:'var(--dim)'}}>ends ~<b>—</b> <span title="runner does not report MAX_ITER, so remaining time is unknown">(no ETA)</span></span>}
       </div>
       {(rs==='STALE'||rs==='DIED') && <div className="bad" style={{marginTop:8,fontSize:13}}>
         {rs==='DIED' ? 'process not alive, no completion line — this run is DEAD.' : 'no log write in >30 min — capture may be hung.'} last line: <span className="mono">{st.lastLogLine||'—'}</span></div>}
@@ -181,12 +184,14 @@ function LiveView({ live, summary, budget, undo }) {
       {active && <div style={{display:'flex',fontSize:12,color:'var(--dim)',marginTop:6}}>
         <span>{st.phase||'Working'} · {pairsDone} of {pairsTotal} pairs</span>
         <span style={{marginLeft:'auto'}}>{elapsedM!=null?elapsedM+'m elapsed':''}</span></div>}
-      {/* 5 — stat row */}
-      <div style={{display:'flex',gap:22,fontSize:12,marginTop:12}}>
-        <span><span className="dim">Item </span><b>{st.iter||'—'} of {st.openItems||'?'}</b></span>
+      {/* 5 — stat row. During an active run the runner does not report MAX_ITER or BUDGET, so item-count
+             and cap are "—" (a wrong "$25"/"of 5" is worse than none — you'd trust it). Spent is real
+             (from calibration.csv). Dashboard defaults are used only when idle. */}
+      {active && <div style={{display:'flex',gap:22,fontSize:12,marginTop:12}}>
+        <span><span className="dim">Item </span><b>{st.iter||'—'} of —</b></span>
         <span><span className="dim">Spent </span><b>${spent.toFixed(2)}</b></span>
-        <span><span className="dim">Cap </span><b>${budget!=null?(+budget).toFixed(0):'?'}</b></span>
-      </div>
+        <span><span className="dim">Cap </span><b>$—</b></span>
+      </div>}
       {/* 6 — disclosures (collapsed by default) */}
       <details style={hair}>
         <summary style={sum}>Log<span className="mono dim" style={{marginLeft:'auto',maxWidth:'62%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{st.lastLogLine||''}</span></summary>
