@@ -45,3 +45,40 @@ reasons unrelated to any code change. The harness must:
     **became not-analyzable after the change** (revert — this fails the gate).
 
 Comparing counts alone cannot tell these two apart; comparing sets can.
+
+## 5. INDETERMINATE — a third state; capture failure is not code failure
+
+Conditions (a) and (b) assume the analyzer actually **ran**. A pair can become
+not-analyzable for a reason that has nothing to do with the code under test: the
+**capture itself** failed on an environmental condition — most commonly a **429
+rate limit** on the loadA-critical fetch (see QUEUE.md). `capture.js` records
+`reason=RATE_LIMITED` on such failures. Scored naively, condition (b) reads this as
+`analyzable -> not-analyzable -> revert_signal`, so the harness would **delete a
+good fix** and blame the agent for a transient network event. Three in a row would
+trip the consecutive-fail circuit breaker on **pure network noise**.
+
+A pair is **INDETERMINATE** when it became not-analyzable **AND** the capture
+reported `RATE_LIMITED` (or another environmental failure reason) — as opposed to a
+code-caused build failure.
+
+Harness behavior on INDETERMINATE:
+
+  1. **Retry the CAPTURE first.** Never revert code on an unretried capture failure
+     — the code may be fine.
+  2. If the retry **succeeds**, proceed with normal comparison (conditions a/b as
+     usual).
+  3. If the retry **exhausts**, revert conservatively (once capture keeps failing we
+     cannot distinguish causes) **BUT record status `INDETERMINATE`, never
+     `REGRESSION`**.
+  4. INDETERMINATE does **NOT** increment the consecutive-fail counter. The circuit
+     breaker exists to stop a wrong premise, not to stop the network.
+  5. `calibration.csv` records the run as `INDETERMINATE` so it never pollutes the
+     timing or success statistics.
+
+Rationale — keep this in the file so it survives future edits: **capture failure and
+code failure are different events.** A 429 during an unattended run is a property of
+the network that hour, not of the change under test. Attributing one to the other
+makes the harness blame the agent for network conditions — reverting good work and,
+if it recurs, halting the whole run on noise. The three-state grade
+(**CLEAN / REGRESSION / INDETERMINATE**) is what keeps the gate honest under real
+network conditions.

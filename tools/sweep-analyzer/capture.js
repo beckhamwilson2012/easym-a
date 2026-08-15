@@ -10,7 +10,7 @@ const BASE = 'http://localhost:3001';
 const RAW = '/tmp/sweep_v2_raw';
 const STATUS = '/tmp/sweep_v2_status.log';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
-const pairs = JSON.parse(process.argv[2]);            // [["A","B",offerOverrideOrNull],...]
+const pairs = process.argv[2] ? JSON.parse(process.argv[2]) : []; // [["A","B",offerOverrideOrNull],...] (empty when required as a module for tests)
 const NOISE = /Download the React DevTools|Warning: .*defaultProps|source map|\[HMR\]|webpack|Recharts/i;
 
 function get(path) {
@@ -43,11 +43,48 @@ async function oracle(t) {
   return o;
 }
 
+// Fast-bail wait. Resolves 'ok' the instant the target " loaded" count is reached — byte-identical to the
+// original 80s waitForFunction on the SUCCESS path. Resolves 'ratelimited' EARLY (after a short grace)
+// only if a 429 appeared on the console AND the ticker still has not loaded, instead of idling the full
+// 80s after what the diagnosis showed is a fast upstream failure. A benign nongaap 429 that still lets
+// the deck load never trips it, because the loaded-wait resolves first. The 80000ms budget is unchanged.
+function waitLoadedOrBail(page, want) {
+  return new Promise((resolve, reject) => {
+    let done = false, saw429 = false;
+    const onConsole = m => { if (m.type() === 'error' && /429|Too Many Requests/i.test(m.text())) saw429 = true; };
+    page.on('console', onConsole);
+    const finish = (fn, v) => { if (!done) { done = true; page.off('console', onConsole); fn(v); } };
+    page.waitForFunction(n => (document.body.innerText.match(/ loaded/g) || []).length >= n, { timeout: 80000 }, want)
+      .then(() => finish(resolve, 'ok'))
+      .catch(err => saw429 ? finish(resolve, 'ratelimited') : finish(reject, err));
+    const BAIL_AFTER = 15000, STEP = 1000; let elapsed = 0;                        // fast-bail on a stalled load
+    const tick = async () => {
+      if (done) return;
+      elapsed += STEP;
+      if (saw429 && elapsed >= BAIL_AFTER) {
+        const loaded = await page.evaluate(w => (document.body.innerText.match(/ loaded/g) || []).length >= w, want).catch(() => false);
+        if (!loaded) return finish(resolve, 'ratelimited');
+      }
+      if (!done) setTimeout(tick, STEP);
+    };
+    setTimeout(tick, STEP);
+  });
+}
+
+// On the SUCCESS path this is byte-identical to the original (click, type, Enter, wait). On a rate-limited
+// stall it bails fast, backs off exponentially, and retries up to 3 attempts before throwing with
+// reason=RATE_LIMITED so the caller can distinguish a transient network event from a code failure.
 async function loadTicker(page, idx, t) {
   const ins = await page.$$('input[id^="react-select"]');
   if (ins.length < idx + 1) throw new Error(`no react-select input ${idx}`);
-  await ins[idx].click(); await ins[idx].type(t, { delay: 15 }); await sleep(160); await page.keyboard.press('Enter');
-  await page.waitForFunction(n => (document.body.innerText.match(/ loaded/g) || []).length >= n, { timeout: 80000 }, idx + 1);
+  for (let attempt = 0; ; attempt++) {
+    if (attempt > 0) { await ins[idx].click({ clickCount: 3 }); await page.keyboard.press('Backspace'); } // clear residual on retry only
+    await ins[idx].click(); await ins[idx].type(t, { delay: 15 }); await sleep(160); await page.keyboard.press('Enter');
+    const outcome = await waitLoadedOrBail(page, idx + 1);
+    if (outcome === 'ok') return;
+    if (attempt >= 2) { const e = new Error(`loadTicker ${t}: rate-limited, gave up after 3 attempts`); e.reason = 'RATE_LIMITED'; throw e; }
+    await sleep(2000 * Math.pow(2, attempt)); // exponential backoff: 2s, 4s
+  }
 }
 
 async function runPair(browser, A, B, offerOverride) {
@@ -102,6 +139,7 @@ async function runPair(browser, A, B, offerOverride) {
     rec.ok = true; rec.stage = 'done';
   } catch (e) {
     rec.error = e.message;
+    rec.reason = e.reason || 'OTHER'; // RATE_LIMITED (environmental) vs OTHER (code/load) — only set on failure
     try { rec.loadedCount = await page.evaluate(() => (document.body.innerText.match(/ loaded/g) || []).length); } catch (_) {}
   } finally {
     rec.consoleErrors = [...new Set(cErr)]; rec.consoleWarnings = [...new Set(cWarn)]; rec.pageErrors = [...new Set(pErr)];
@@ -140,7 +178,9 @@ function alreadyClean(A, B) {
   try { const r = JSON.parse(fs.readFileSync(`${RAW}/${A}_${B}.json`, 'utf8')); return !dirty(r); } catch (e) { return false; }
 }
 
-(async () => {
+// Guarded so `require()`-ing this file for tests does NOT launch the batch. When run as a script
+// (require.main === module) it executes exactly as before — successful-capture output is unchanged.
+if (require.main === module) (async () => {
   if (COOLDOWN > 0) { process.stderr.write(`cooldown ${COOLDOWN / 1000}s...`); await sleep(COOLDOWN); }
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
   const retry = [];
@@ -172,3 +212,5 @@ function alreadyClean(A, B) {
   process.stderr.write('\nCAPTURE BATCH DONE\n');
   fs.appendFileSync(STATUS, `[${new Date().toISOString()}] CAPTURE BATCH DONE (retry=${retry.length})\n`);
 })().catch(e => { fs.appendFileSync(STATUS, `FATAL ${e.message}\n`); process.exit(1); });
+
+module.exports = { loadTicker, waitLoadedOrBail, runPair }; // test-only exports; no effect when run as a script
