@@ -36,7 +36,7 @@ function shortName(name, ticker) {
 // ── Per-company column data ────────────────────────────────────────────────────
 // Exported (pure) so the Screening view reuses the SAME per-company metric machinery — one source of truth.
 export function buildCompany(ticker, data, isTarget, displayName) {
-  const rev    = parseFloat(data.revenue) || 0;
+  const rev    = Number.isFinite(parseFloat(data.revenue)) ? parseFloat(data.revenue) : null;   // Stage 17: null-honest (was `|| 0`) — absent revenue → "—", a genuine 0 → 0. Mirrors :49 (cashVal).
   const live   = data.livePrice != null && data.livePrice > 0 ? data.livePrice : null;
   const shares = parseFloat(data.shares) || 0;
   const mktCap = live != null && shares > 0 ? live * shares : null;
