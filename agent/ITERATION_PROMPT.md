@@ -27,6 +27,25 @@ you are not the judge of your own work.
   The first three grade you; the last two generate and shape what you are graded on. Changing any of them
   **moves your own grading baseline** and invalidates the run.
 
+## STEP 0 — VERIFY THE REPRO STILL REPRODUCES
+
+**Before diagnosing anything**, reproduce the item's stated defect using the pair, observed value, and
+expected value in the item. Print the live value.
+
+- **Still reproduces** (live value matches "observed") → proceed to diagnose.
+- **Does NOT reproduce** (live value now matches "expected", or the defect condition no longer holds) →
+  **STOP.** Mark the item `RESOLVED_UPSTREAM(<item that fixed it, if identifiable>)` and record the live
+  values proving it in `agent/diagnosis/<slug>.md`. Make **NO** code change. Move on.
+- **Live value matches NEITHER** observed nor expected → **STOP.** Mark `BLOCKED(repro-drifted)` and
+  record all three values. Something changed that is not accounted for, and diagnosing against a stale
+  premise wastes the iteration and risks a wrong fix.
+
+**RATIONALE (keep this in the file so it survives future edits):** the queue is ordered upstream-first,
+and items 1→4 and 2→3 share root causes. **Cascading resolution is the design goal, not a missing bug.**
+An item that resolved itself is a **success** — do not look for something else to fix in order to produce
+a change. A needless edit passes both graders (defect count does not rise, and the cells it touched moved
+for a stated reason), so the graders **cannot** catch this. Step 0 is the only thing that can.
+
 ## DIAGNOSE BEFORE FIXING
 
 - Trace the **real** code path end to end. Do not pattern-match from the queue text.
@@ -79,7 +98,7 @@ ITEM:         <the item you worked>
 ROOT CAUSE:   <one sentence> + Pattern <A | B | C | New>
 FILES:        <every file changed>
 TARGET FIXED: <pair> — <old value> -> <new value> (source authority: <where the correct value comes from>)
-STATUS:       DONE | BLOCKED(<reason>) | FAILED(<reason>)
+STATUS:       DONE | RESOLVED_UPSTREAM(cause) | BLOCKED(reason) | FAILED(reason)
 ```
 
 **Do NOT self-report verification as passed.** The runner re-runs both graders independently. Your
