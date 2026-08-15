@@ -13,7 +13,7 @@
        null target/combined DEBT      : item 2 (target debt dropped) is upstream of item 3 (false EBITDA message)
      Do item 1 before 4, and item 2 before 3. -->
 
-- [ ] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).
+- [x] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- DONE run 20260815-150838 -->
   - pair: GOOGL/AMZN · observed: target (AMZN) gross profit renders "—" on §7 (LTM P&L) while §2 shows
     AMZN gross margin **50.3%** [present] and §8 shows target GP **$415,634M** [present] — analyzer #18
     `GP ASYMMETRY [§2gm=50.3%[VALUE] · §7=—[DASH] · §8tgt=$415,634[VALUE]]` · expected: §7 renders AMZN's

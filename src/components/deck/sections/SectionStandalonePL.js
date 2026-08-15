@@ -121,7 +121,10 @@ function MultiYearPL({ pnl, restaurantMode }) {
   const lastActual = actualsSrc[actualsSrc.length - 1];
   const ltmCol = showLtm ? {
     label: `LTM (${asOfShort(L.asOf)})`, actual: true, isLtm: true,
-    revenue: L.revenue, costOfRevenue: null, grossProfit: L.grossProfit, grossProfitEst: false,
+    // costOfRevenue was hardcoded null while the payload had no LTM COGS leg; it now carries the real
+    // three-leg figure, so the LTM column foots Revenue − Cost of Revenue = Gross Profit like the FY
+    // columns. Still null (→ "—") for a filer whose COGS isn't tagged across all three legs — never 0.
+    revenue: L.revenue, costOfRevenue: L.costOfRevenue ?? null, grossProfit: L.grossProfit, grossProfitEst: false,
     // LTM OpEx = LTM gross − LTM operating income (reported GAAP identity, same as the FY actuals) — unflagged.
     operatingExpense: (L.grossProfit != null && L.operatingIncome != null) ? L.grossProfit - L.operatingIncome : null, operatingExpenseEst: false,
     operatingIncome: L.operatingIncome, nonOperatingIncome: L.nonOperatingIncome?.ltmM ?? null, netIncome: L.netIncome,

@@ -1,0 +1,2 @@
+run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture
+20260815-150838,1,"1. Leg-availability / LTM gross-profit blanking — 32 pai",DONE,799,41,3.7568284999999997,8,8,N+1,false

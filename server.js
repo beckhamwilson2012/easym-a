@@ -10,7 +10,7 @@ const { PEER_OVERRIDES } = require('./peerOverrides');
 const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deckTokens.isFinancial — one SIC source
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
-const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
+const { computeLTM, scaleShares, COGS_CONCEPTS } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
@@ -528,8 +528,8 @@ async function fetchFromEDGAR(symbol, cik) {
     const tagged = useIfrs ? pickMatched(ifrs, ['GrossProfit'], revenueEntry?.end) : pickMatched(gaap, ['GrossProfit'], revenueEntry?.end);
     if (tagged != null && tagged !== 0) return tagged;
     const cor = useIfrs
-      ? pickMatched(ifrs, ['CostOfSales', 'CostOfGoodsAndServicesSold'], revenueEntry?.end)
-      : pickMatched(gaap, ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold'], revenueEntry?.end);
+      ? pickMatched(ifrs, COGS_CONCEPTS.ifrs, revenueEntry?.end)
+      : pickMatched(gaap, COGS_CONCEPTS.gaap, revenueEntry?.end);
     return (cor != null && cor !== 0 && revenue !== 0) ? revenue - cor : null;
   })();
   let grossProfitSource = grossProfit != null ? 'sec_edgar' : null;
@@ -1591,7 +1591,7 @@ const pnlCache = new Map();
 const PNL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PNL_GAAP = {
   revenue: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense', 'InterestAndFeeIncomeLoansAndLeases'],
-  cogs:    ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold'],
+  cogs:    COGS_CONCEPTS.gaap,
   gross:   ['GrossProfit'],
   opInc:   ['OperatingIncomeLoss'],
   netInc:  ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
@@ -1601,7 +1601,7 @@ const PNL_GAAP = {
 };
 const PNL_IFRS = {
   revenue: ['Revenue', 'RevenueFromContractsWithCustomers'],
-  cogs:    ['CostOfSales', 'CostOfGoodsAndServicesSold'],
+  cogs:    COGS_CONCEPTS.ifrs,
   gross:   ['GrossProfit'],
   opInc:   ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'],
   netInc:  ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'],
@@ -1725,7 +1725,11 @@ app.get('/api/pnl/:ticker', async (req, res) => {
       const lr = computeLTM(facts);
       ltmBlock = lr.ltm ? {
         trusted: true, asOf: lr.asOf, label: 'LTM', actual: true, ltm: true,
-        revenue: lr.flows.revenue.ltmM, grossProfit: lr.flows.grossProfit.ltmM,
+        revenue: lr.flows.revenue.ltmM,
+        // COGS is a real three-leg LTM at the same window, so the LTM column FOOTS (rev − COGS = GP) exactly
+        // as the annual columns do; grossProfitDerived says WHICH of the two GP sources the row came from.
+        costOfRevenue: lr.flows.costOfRevenue.ltmM,
+        grossProfit: lr.flows.grossProfit.ltmM, grossProfitDerived: lr.flows.grossProfit.derived,
         operatingIncome: lr.flows.operatingIncome.ltmM, nonOperatingIncome: lr.flows.nonOperatingIncome, netIncome: lr.flows.netIncome.ltmM,
         ebitda: lr.flows.ebitda.ltmM, ebitdaDaFound: lr.flows.ebitda.daFound,
         eps: lr.epsDiluted.ltm, dilutedShares: lr.epsDiluted.dilutedSharesM,
