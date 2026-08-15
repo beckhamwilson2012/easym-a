@@ -11,6 +11,7 @@ const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deck
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
+const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
@@ -843,50 +844,70 @@ async function fetchFromFMP(symbol) {
   };
 }
 
+// Pure transformation: a Yahoo quoteSummary `result` → canonical wrapped company (Stage 14).
+// Extracted from fetchFromYahoo (fetch vs transform) so the wrap→null path is unit-testable against a
+// mocked payload — see src/lib/__tests__/yahooBuilder.test.js. Exported at the bottom of this file.
+function buildYahooCompany(result, symbol) {
+  const fd  = result.financialData || {};
+  const ks  = result.defaultKeyStatistics || {};
+  const ish = result.incomeStatementHistory?.incomeStatementHistory?.[0] || {};
+  const qt  = result.quoteType || {};
+
+  // Null-honest dollars→$M (Stage 14). Deliberately NOT inM (server.js:372), whose zero-coercion
+  // would turn an ABSENT value into a fabricated 0 and defeat the wrapper. A real reported 0 survives.
+  const yM = (v) => Number.isFinite(v) ? Math.round(v / 1e6) : null;
+
+  // Raw extraction — keep the fd→ish source preference; drop the missing→0 coercion (old trailing fallback).
+  const rawRevenue   = fd.totalRevenue?.raw || ish.totalRevenue?.raw;
+  const rawEbitda    = fd.ebitda?.raw;
+  const rawNetIncome = ish.netIncome?.raw;
+  const rawShares    = ks.sharesOutstanding?.raw;
+  const rawEps       = ks.trailingEps?.raw;
+  const rawCash      = fd.totalCash?.raw;
+  const rawDebt      = fd.totalDebt?.raw;
+  const rawPrice     = fd.currentPrice?.raw;
+  const name         = qt.longName || qt.shortName || symbol;   // string — not a financial value, stays bare
+
+  const revenueM = yM(rawRevenue);
+  const sharesM  = yM(rawShares);
+  console.log(`[${symbol}] Yahoo extracted — revenue: ${revenueM}M, shares: ${sharesM}M, eps: ${rawEps}`);
+  // Usability guard: nothing usable → fall through the waterfall. `!(x > 0)` catches null AND 0
+  // (the old `=== 0` would miss the now-null absent values).
+  if (!(revenueM > 0) && !(sharesM > 0)) return null;
+
+  return {
+    name,
+    companyType: 'standard',
+    // Financial values → wrapped with provenance; absent → {value:null, status:'missing'} via the factory.
+    revenue:    field(revenueM, { source: 'yahoo' }),
+    ebitda:     field(yM(rawEbitda), { source: 'yahoo' }),
+    netIncome:  field(yM(rawNetIncome), { source: 'yahoo' }),
+    shares:     field(sharesM, { source: 'yahoo' }),
+    eps:        field(Number.isFinite(rawEps) ? parseFloat(rawEps.toFixed(2)) : null, { source: 'yahoo' }),
+    cash:       field(yM(rawCash), { source: 'yahoo' }),
+    debt:       field(yM(rawDebt), { source: 'yahoo' }),
+    sharePrice: field(rawPrice ? parseFloat(rawPrice.toFixed(2)) : null, { source: 'yahoo' }),
+    dataSource: 'yahoo',
+    // Structurally unavailable from Yahoo — explicit missing (present & honest, not omitted).
+    operatingIncome:      field(null, { source: 'yahoo', status: 'missing' }),
+    grossProfit:          field(null, { source: 'yahoo', status: 'missing' }),
+    dilutedShares:        field(null, { source: 'yahoo', status: 'missing' }),
+    shortTermInvestments: field(null, { source: 'yahoo', status: 'missing' }),
+    totalAssets:          field(null, { source: 'yahoo', status: 'missing' }),
+    freeCashFlow:         field(null, { source: 'yahoo', status: 'missing' }),
+  };
+}
+
 async function fetchFromYahoo(symbol) {
   console.log(`[${symbol}] Yahoo — fetching quoteSummary`);
   const data = await get(
     `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=financialData,defaultKeyStatistics,incomeStatementHistory,quoteType`,
     { Accept: 'application/json' }
   );
-
   const result = data?.quoteSummary?.result?.[0];
   console.log(`[${symbol}] Yahoo raw — result present: ${!!result}, error: ${JSON.stringify(data?.quoteSummary?.error)}`);
   if (!result) return null;
-
-  const fd  = result.financialData || {};
-  const ks  = result.defaultKeyStatistics || {};
-  const ish = result.incomeStatementHistory?.incomeStatementHistory?.[0] || {};
-  const qt  = result.quoteType || {};
-
-  const revenue   = fd.totalRevenue?.raw  || ish.totalRevenue?.raw || 0;
-  const ebitda    = fd.ebitda?.raw        || 0;
-  const netIncome = ish.netIncome?.raw    || 0;
-  const shares    = ks.sharesOutstanding?.raw || 0;
-  const eps       = ks.trailingEps?.raw   || 0;
-  const cash      = fd.totalCash?.raw     || 0;
-  const debt      = fd.totalDebt?.raw     || 0;
-  const name      = qt.longName || qt.shortName || symbol;
-
-  console.log(`[${symbol}] Yahoo extracted — revenue: ${inM(revenue)}M, shares: ${inM(shares)}M, eps: ${eps}`);
-
-  const revenueM = inM(revenue);
-  const sharesM  = inM(shares);
-  if (revenueM === 0 && sharesM === 0) return null;
-
-  return {
-    name,
-    companyType: 'standard',
-    revenue:    revenueM,
-    ebitda:     inM(ebitda),
-    netIncome:  inM(netIncome),
-    shares:     sharesM,
-    eps:        parseFloat((eps || 0).toFixed(2)),
-    cash:       inM(cash),
-    debt:       inM(debt),
-    sharePrice: fd.currentPrice?.raw ? parseFloat(fd.currentPrice.raw.toFixed(2)) : null,
-    dataSource: 'yahoo',
-  };
+  return buildYahooCompany(result, symbol);
 }
 
 // ── Live price helpers (used by /api/price/:ticker waterfall) ─────────────────
@@ -987,7 +1008,9 @@ app.get('/quote', async (req, res) => {
     }
 
     console.log(`[${symbol}] ✓ Final result from ${result.dataSource}`);
-    res.json(result);
+    // Stage 14 boundary: unwrap the canonical wrapped shape → bare number-or-null for the client's
+    // bare-value read sites. Strict no-op on all-bare EDGAR/FMP results (isWrapper false per field).
+    res.json(unwrapCompany(result));
   } catch (err) {
     console.error('Quote error:', err);
     res.status(500).json({ error: 'Failed to fetch company data' });
@@ -2592,8 +2615,16 @@ app.use((err, req, res, next) => {
 });
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  // Pre-warm the SIC seed in the background so peers resolve cold (idempotent; persisted across boots).
-  warmSicSeed().catch(() => {});
-});
+// Only listen when run directly (`node server.js`) — NOT when required by a test (Stage 14, so the
+// exported buildYahooCompany can be unit-tested without starting a second server on :3001).
+if (require.main === module) {
+  app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
+    // Pre-warm the SIC seed in the background so peers resolve cold (idempotent; persisted across boots).
+    warmSicSeed().catch(() => {});
+  });
+}
+
+// Stage 14 — export the pure Yahoo transform so the wrap→null path is unit-testable against a mocked
+// payload, without the network fetch. The require.main guard above keeps `node server.js` unchanged.
+module.exports = { buildYahooCompany };
