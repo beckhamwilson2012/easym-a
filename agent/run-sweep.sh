@@ -40,6 +40,7 @@ BUDGET_USD="${BUDGET_USD:-50}"
 GAP_MS="${GAP_MS:-12000}"                      # rate-safe inter-pair spacing for capture.js
 PAIRS_LIMIT="${PAIRS_LIMIT:-0}"               # 0 = all 50; >0 caps pairs (tests)
 FROZEN_WAIT="${FROZEN_WAIT:-60}"
+ITER_TIMEOUT="${ITER_TIMEOUT:-2700}"           # per-iteration wall-clock cap (45 min); --max-turns does NOT bound a permission-prompt hang
 BASE_URL="${BASE_URL:-http://localhost:3001}"
 BASE_BRANCH="${BASE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
@@ -122,9 +123,15 @@ queue_mark() {                                 # $1 = marker (x|~), $2 = note �
 }
 
 # ── revert / bookkeeping ─────────────────────────────────────────────────────────────────────────────
-revert_to() {                                  # $1 = checkpoint sha — discard the agent's work entirely
+revert_to() {                                  # $1 = checkpoint sha — discard the agent's work, keep the runner's log
+  # Preserve runner-owned bookkeeping across the revert: a decide()/finalize note written this iteration
+  # must survive `reset --hard` + `clean` (the AGENT's code changes are what we discard, not our own log).
+  [[ -f "$DECISIONS" ]] && cp "$DECISIONS" "$RUN_DIR/.decisions.bak"
+  [[ -f "$CALIB" ]] && cp "$CALIB" "$RUN_DIR/.calib.bak"
   gitr reset --hard "$1" >/dev/null 2>&1
   gitr clean -fd >/dev/null 2>&1               # remove new untracked files; gitignored (.env, runs/) survive
+  [[ -f "$RUN_DIR/.decisions.bak" ]] && cp "$RUN_DIR/.decisions.bak" "$DECISIONS"
+  [[ -f "$RUN_DIR/.calib.bak" ]] && cp "$RUN_DIR/.calib.bak" "$CALIB"
 }
 decide() {                                     # $1 = plain-English statement (not a question)
   [[ -f "$DECISIONS" ]] || printf '# Sweep decisions log\n\nPlain-English statements of tripwire-worthy changes. Logged, not gated.\n' > "$DECISIONS"
@@ -137,6 +144,33 @@ finalize() {                                   # $1=status $2=marker $3=forced ;
   printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s\n' "$RUN_ID" "$CUR_ITER" "$ITEM_TITLE" "$1" "$WALL" "$TURNS" "$COST" "$DEF_BEFORE" "$DEF_AFTER" "$CAP_MODE" "$3" >> "$CALIB"
   gitr add -A >/dev/null 2>&1
   gitr commit -q -m "sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER" >/dev/null 2>&1 || true
+}
+
+# ── agent invocation + per-iteration wall-clock timeout ──────────────────────────────────────────────
+# --max-turns does NOT bound a permission-prompt hang: a pending prompt consumes no turns and waits
+# forever. So the agent runs under a wall-clock watchdog; on expiry we tree-kill it and treat it as
+# TIMEOUT (a fail, unlike INDETERMINATE — a timeout means a bad allowlist or a stuck item, both reasons
+# to stop). stderr is captured so the morning report shows WHERE it hung.
+run_agent() {
+  if [[ -n "${MOCK_AGENT:-}" ]]; then
+    bash "$MOCK_AGENT" "$ITEM" "$AGENT_OUT" "$ROOT" >/dev/null 2>"$AGENT_OUT.err" || true
+  else
+    # cd to ROOT so claude reads .claude/settings.local.json (the allowlist) and edits the right tree,
+    # regardless of where run-sweep.sh was launched from. Redirects stay absolute (outside the subshell).
+    ( cd "$ROOT" && { cat "$PROMPT"; printf '\n\nITEM: %s\n' "$ITEM"; } | \
+      claude -p --output-format json --max-turns "$MAX_TURNS" --permission-mode acceptEdits ) > "$AGENT_OUT" 2>"$AGENT_OUT.err" || true
+  fi
+}
+hash_result() { node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1]));process.stdout.write(require("crypto").createHash("sha256").update(JSON.stringify(j.result||"")).digest("hex"))}catch(e){process.stdout.write("ERR")}' "$AGENT_OUT"; }
+kill_tree() { local p="$1" c; for c in $(pgrep -P "$p" 2>/dev/null); do kill_tree "$c"; done; kill -KILL "$p" 2>/dev/null; }
+run_agent_timed() {                            # $1 = seconds; rc 124 = timed out (tree killed)
+  local secs="$1" waited=0 pid
+  ( run_agent ) & pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ "$waited" -ge "$secs" ]]; then kill_tree "$pid"; wait "$pid" 2>/dev/null; return 124; fi
+    sleep 1; waited=$(( waited + 1 ))
+  done
+  wait "$pid" 2>/dev/null; return 0
 }
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════════
@@ -213,13 +247,17 @@ while :; do
   fi
 
   CHECKPOINT="$(gitr rev-parse HEAD)"; ITER_T0="$(date +%s)"; AGENT_OUT="$RUN_DIR/agent-$CUR_ITER.json"
-  run_agent() {
-    if [[ -n "${MOCK_AGENT:-}" ]]; then bash "$MOCK_AGENT" "$ITEM" "$AGENT_OUT" "$ROOT" || true
-    else { cat "$PROMPT"; printf '\n\nITEM: %s\n' "$ITEM"; } | claude -p --output-format json --max-turns "$MAX_TURNS" --permission-mode acceptEdits > "$AGENT_OUT" 2>/dev/null || true; fi
-  }
-  hash_result() { node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1]));process.stdout.write(require("crypto").createHash("sha256").update(JSON.stringify(j.result||"")).digest("hex"))}catch(e){process.stdout.write("ERR")}' "$AGENT_OUT"; }
 
-  run_agent
+  # run the agent under a wall-clock timeout (bounds a permission-prompt hang that --max-turns cannot)
+  run_agent_timed "$ITER_TIMEOUT"; AGENT_RC=$?
+  if [[ "$AGENT_RC" -eq 124 ]]; then
+    WALL="$ITER_TIMEOUT"; TURNS=0; COST=0; DEF_AFTER="$DEF_BEFORE"
+    log "TIMEOUT: agent exceeded ${ITER_TIMEOUT}s (elapsed $(( $(date +%s) - ITER_T0 ))s) — killed. Last agent stderr:"
+    if [[ -s "$AGENT_OUT.err" ]]; then tail -3 "$AGENT_OUT.err" | sed 's/^/      | /'; else log "      | (no output captured — likely hung on a permission prompt before producing any)"; fi
+    decide "iter $CUR_ITER TIMEOUT after ${ITER_TIMEOUT}s — likely a permission prompt on an unlisted command, or a stuck item."
+    revert_to "$CHECKPOINT"; finalize TIMEOUT "~" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "REVERTED (TIMEOUT) · consecutive fail = $CONSEC_FAIL"; continue
+  fi
   TURNS="$(json_field "$AGENT_OUT" num_turns 0)"; COST="$(json_field "$AGENT_OUT" total_cost_usd 0)"
   COST_TOTAL="$(awk "BEGIN{print $COST_TOTAL + $COST}")"
 
@@ -228,7 +266,7 @@ while :; do
   if [[ -n "$PREV_RESULT_HASH" && "$RESULT_HASH" == "$PREV_RESULT_HASH" && "$RESULT_HASH" != "ERR" ]]; then
     log "REPLAY_SUSPECTED: result byte-identical to previous iteration — revert + retry once"
     decide "Replay suspected at iter $CUR_ITER (identical result payload); reverted and retried once."
-    revert_to "$CHECKPOINT"; run_agent; RESULT_HASH="$(hash_result)"
+    revert_to "$CHECKPOINT"; run_agent_timed "$ITER_TIMEOUT" || true; RESULT_HASH="$(hash_result)"
     if [[ "$RESULT_HASH" == "$PREV_RESULT_HASH" ]]; then
       revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
       finalize FAILED "~" false; CONSEC_FAIL=$(( CONSEC_FAIL + 1 )); continue
