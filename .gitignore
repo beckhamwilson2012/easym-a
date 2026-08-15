@@ -39,3 +39,6 @@ dist/
 # calibration.csv and agent/DECISIONS.md are the durable audit record and stay TRACKED)
 agent/runs/
 agent/STOP
+
+# sweep dashboard runtime log (written by open-dashboard.sh)
+agent/dashboard/dashboard.log

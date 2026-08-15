@@ -133,6 +133,45 @@ function StopControl({ s, refresh }) {
   );
 }
 
+function PlanIntake() {
+  const [text, setText] = useState('');
+  const [parsed, setParsed] = useState(null);
+  const [diff, setDiff] = useState(null);
+  const [msg, setMsg] = useState('');
+  const post = (url, body) => fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) }).then(r=>r.json());
+  const parse = () => post('/api/parse', { text }).then(d=>{ setParsed(d); setDiff(null); setMsg(''); });
+  const preview = () => post('/api/queue/append', { text, confirm:false }).then(d=>{ setDiff(d.diff); setMsg(''); });
+  const append = () => { if (!window.confirm('Append to QUEUE.md? COMPLETE → ## Open, INCOMPLETE → ## Discovered. Append-only; existing items untouched.')) return;
+    post('/api/queue/append', { text, confirm:true }).then(d=> setMsg(d.written ? `Appended: ${d.openCount} to ## Open, ${d.discCount} to ## Discovered.` : ('error: '+(d.error||'?')))); };
+  return (
+    <div className="panel">
+      <h2>Plan intake</h2>
+      <div className="dim" style={{marginBottom:8}}>Paste raw notes. Each item needs <b>pair · observed · expected · source</b>. Missing any one → the item returns <b>BLOCKED</b> (≈22 min of capture wasted before any agent time). Nothing is auto-filled or inferred.</div>
+      <textarea value={text} onChange={e=>setText(e.target.value)} rows={7}
+        style={{width:'100%',background:'#010409',color:'var(--fg)',border:'1px solid var(--border)',borderRadius:6,padding:8,fontFamily:'ui-monospace,monospace',fontSize:12}}
+        placeholder={"1. KO/NSRGY comps are CNBC-only\n   observed: source=CNBC · expected: EDGAR-sourced · source: peer screen SIC dep\n\n2. debt looks off for some target somewhere"} />
+      <div style={{marginTop:8,display:'flex',gap:8,flexWrap:'wrap'}}>
+        <button onClick={parse}>Parse</button>
+        {parsed && parsed.counts.total>0 && <button onClick={preview}>Preview append (show diff)</button>}
+        {diff && <button className="danger" onClick={append}>Confirm &amp; append to QUEUE.md</button>}
+      </div>
+      {parsed && <div style={{marginTop:12}}>
+        {parsed.summary.map((l,i)=><div key={i} className={i===0?'':'warn'} style={{fontWeight:i===0?700:400}}>{l}</div>)}
+        {parsed.counts.total===0 ? <div className="dim" style={{marginTop:8}}>No items parsed.</div> :
+        <table style={{marginTop:8}}><thead><tr><th>#</th><th>title</th><th>status</th><th>pair</th><th>observed</th><th>expected</th><th>source</th></tr></thead>
+        <tbody>{parsed.items.map((it,i)=><tr key={i}>
+          <td>{i+1}</td><td style={{maxWidth:220,whiteSpace:'normal'}}>{it.title}</td>
+          <td>{it.complete ? <span className="pill" style={{background:'#1a7f37'}}>COMPLETE</span> : <span className="pill" style={{background:'#9a6700'}}>INCOMPLETE</span>}</td>
+          {['pair','observed','expected','source'].map(k=><td key={k} className={it.fields[k]?'good':'bad'} title={it.fields[k]||'missing'}>{it.fields[k] ? '✓' : 'MISSING'}</td>)}
+        </tr>)}</tbody></table>}
+        {parsed.items.some(i=>!i.complete) && <div className="dim" style={{marginTop:6}}>INCOMPLETE items route to <b>## Discovered only</b> — never ## Open. Missing fields render as "(missing)", never invented.</div>}
+      </div>}
+      {diff && <div style={{marginTop:12}}><div className="k dim">exactly what will be appended (append-only — existing items are never reordered or removed):</div><pre className="log" style={{height:'auto',maxHeight:240}}>{diff}</pre></div>}
+      {msg && <div style={{marginTop:8}} className="good">{msg}</div>}
+    </div>
+  );
+}
+
 function App() {
   const [s, setS] = useState(null);
   const [err, setErr] = useState(null);
@@ -152,6 +191,7 @@ function App() {
       <Iterations s={s} />
       <MorningReview s={s} />
       <StopControl s={s} refresh={refresh} />
+      <PlanIntake />
     </div>
   );
 }

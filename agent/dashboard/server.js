@@ -91,6 +91,72 @@ function queueOpen() {
   return { open: (open.match(/^- \[ \] /mg) || []).length, done: (open.match(/^- \[x\] /mg) || []).length, parked: (open.match(/^- \[~\] /mg) || []).length };
 }
 
+// ── Phase 2: plan intake ──────────────────────────────────────────────────────────────────────────
+// DETERMINISTIC extractor — NO LLM. The whole value is REJECTION: an item missing any of the four fields
+// (pair, observed, expected, source) returns BLOCKED and burns a full iteration (~22 min of capture). A
+// deterministic parser cannot hallucinate a value, so it can never auto-fill a missing field — it only
+// reports which labels are literally present in the pasted text. Nothing here infers a pair, value, or
+// source from context. (If this ever used an LLM, the prompt would have to say EXTRACT ONLY, never supply
+// a plausible value for a field the notes don't contain — but it doesn't; it's pure regex.)
+const REQUIRED = ['pair', 'observed', 'expected', 'source'];
+function splitItems(text) {
+  const lines = String(text || '').split('\n');
+  const isStart = l => /^\s*(\d+[.)]|[-*•])\s+/.test(l);
+  const blank = l => /^\s*$/.test(l);
+  const out = [];
+  if (lines.some(isStart)) {
+    let cur = null;
+    for (const l of lines) { if (isStart(l)) { cur = [l]; out.push(cur); } else if (cur) cur.push(l); }
+  } else {
+    let buf = [];
+    for (const l of lines) { if (blank(l)) { if (buf.length) { out.push(buf); buf = []; } } else buf.push(l); }
+    if (buf.length) out.push(buf);
+  }
+  return out.map(b => b.join('\n').trim()).filter(Boolean);
+}
+function detectFields(block) {
+  // capture up to the next "·" field-separator or newline — NOT greedy across sibling fields on one line
+  const label = k => { const m = block.match(new RegExp('\\b' + k + '\\b\\s*[:\\-]\\s*([^·\\n]+)', 'i')); return m && m[1].trim() ? m[1].trim() : null; };
+  const fields = {};
+  for (const k of REQUIRED) fields[k] = label(k);
+  // pair may also be a literal ticker-pair token in the text — that is EXTRACTION (it is present verbatim),
+  // not inference. It still does NOT make the item complete on its own; the other three must be present too.
+  if (!fields.pair) { const t = block.match(/\b([A-Z][A-Z.]{0,5}\/[A-Z][A-Z.]{0,5})\b/); if (t) fields.pair = t[1]; }
+  const missing = REQUIRED.filter(k => !fields[k]);
+  const title = (block.split('\n')[0] || '').replace(/^\s*(\d+[.)]|[-*•])\s+/, '').replace(/\s*(pair|observed|expected|source)\s*[:\-].*/i, '').trim() || (fields.pair || 'untitled');
+  return { raw: block, title: title.slice(0, 80), fields, missing, complete: missing.length === 0 };
+}
+function parsePlan(text) {
+  const items = splitItems(text).map(detectFields);
+  const n = items.length;
+  const complete = items.filter(i => i.complete).length;
+  const miss = { pair: 0, observed: 0, expected: 0, source: 0 };
+  items.forEach(i => i.missing.forEach(k => miss[k]++));
+  const summary = [`${complete} of ${n} item(s) are COMPLETE (ready for ## Open); ${n - complete} are INCOMPLETE.`];
+  const label = { pair: 'a reproducing pair', observed: 'an observed value', expected: 'an expected value', source: 'a source' };
+  for (const k of REQUIRED) if (miss[k]) summary.push(`${miss[k]} of ${n} item(s) are missing ${label[k]}. These will return BLOCKED without being fixed.`);
+  return { items, summary, counts: { total: n, complete, incomplete: n - complete } };
+}
+// Build the exact QUEUE text that WOULD be appended. COMPLETE -> ## Open; INCOMPLETE -> ## Discovered
+// (never ## Open). Missing fields are shown as "(missing)" — never invented.
+function renderAppend(items) {
+  const open = items.filter(i => i.complete).map(i =>
+    `- [ ] **${i.title}**\n  - pair: ${i.fields.pair} · observed: ${i.fields.observed} · expected: ${i.fields.expected} · source: ${i.fields.source}`);
+  const disc = items.filter(i => !i.complete).map(i =>
+    `- ${i.title} — from pasted plan (INCOMPLETE, MISSING: ${i.missing.join(', ')}). Not actionable until all four fields are supplied.\n  - pair: ${i.fields.pair || '(missing)'} · observed: ${i.fields.observed || '(missing)'} · expected: ${i.fields.expected || '(missing)'} · source: ${i.fields.source || '(missing)'}`);
+  return { openBlock: open.join('\n'), discBlock: disc.join('\n'), openCount: open.length, discCount: disc.length };
+}
+function insertIntoSection(content, section, block) {
+  if (!block) return content;
+  const lines = content.split('\n');
+  const start = lines.findIndex(l => new RegExp('^## ' + section + '\\b').test(l));
+  if (start < 0) return content.replace(/\n*$/, '') + `\n\n## ${section}\n\n${block}\n`;
+  let end = start + 1; while (end < lines.length && !/^## /.test(lines[end])) end++;
+  const before = lines.slice(0, end); const after = lines.slice(end);
+  while (before.length && /^\s*$/.test(before[before.length - 1])) before.pop();
+  return [...before, '', block, '', ...after].join('\n').replace(/\n{3,}/g, '\n\n');
+}
+
 // ── the combined state the page polls (~2s) ──────────────────────────────────────────────────────────
 function buildState() {
   const runId = latestRun();
@@ -125,6 +191,28 @@ app.get('/api/diagnosis/:name', (req, res) => {
 app.get('/api/stop', (_req, res) => res.json({ exists: !!statSafe(ap('STOP')) }));
 app.post('/api/stop', (_req, res) => { try { fs.writeFileSync(ap('STOP'), 'requested via dashboard\n'); res.json({ exists: true }); } catch (e) { res.status(500).json({ error: String(e) }); } });
 app.delete('/api/stop', (_req, res) => { try { fs.rmSync(ap('STOP'), { force: true }); res.json({ exists: false }); } catch (e) { res.status(500).json({ error: String(e) }); } });
+
+// Phase 2 — plan intake (parse is read-only; append requires explicit confirm and is append-only)
+app.post('/api/parse', (req, res) => { try { res.json(parsePlan((req.body && req.body.text) || '')); } catch (e) { res.status(500).json({ error: String(e) }); } });
+app.post('/api/queue/append', (req, res) => {
+  try {
+    const text = (req.body && req.body.text) || '';
+    const confirm = !!(req.body && req.body.confirm);
+    const { items } = parsePlan(text);
+    const { openBlock, discBlock, openCount, discCount } = renderAppend(items);
+    const parts = [];
+    if (openBlock) parts.push('>>> appended to ## Open (COMPLETE items):\n' + openBlock);
+    if (discBlock) parts.push('>>> appended to ## Discovered (INCOMPLETE — never ## Open):\n' + discBlock);
+    const diff = parts.join('\n\n') || '(nothing to append)';
+    if (!confirm) return res.json({ dryRun: true, diff, openCount, discCount });
+    let content = readSafe(ap('QUEUE.md'));
+    if (content == null) return res.status(500).json({ error: 'QUEUE.md not found' });
+    if (openBlock) content = insertIntoSection(content, 'Open', openBlock);        // append-only
+    if (discBlock) content = insertIntoSection(content, 'Discovered', discBlock);   // append-only
+    fs.writeFileSync(ap('QUEUE.md'), content);
+    res.json({ written: true, diff, openCount, discCount });
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
 
 const server = app.listen(PORT, () => console.log(`sweep dashboard on http://localhost:${PORT}  (agent dir: ${AGENT_DIR})`));
 server.on('error', (e) => {
