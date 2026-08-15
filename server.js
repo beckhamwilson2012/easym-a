@@ -374,6 +374,11 @@ function inM(val) {
   return Math.round((val || 0) / 1e6);
 }
 
+// Null-honest dollars→$M (Stage 14/15). Deliberately NOT inM (whose zero-coercion fabricates 0 from an
+// absent value and would defeat the wrapped shape). A real reported 0 survives as 0. Shared by the
+// Yahoo AND FMP builders — one copy, so an edit for one cannot silently diverge the other.
+const toMillions = (v) => Number.isFinite(v) ? Math.round(v / 1e6) : null;
+
 // Multi-year annual series (for the 5-year P&L, slides 5/6). For each candidate concept, collect
 // 10-K/20-F FULL-YEAR entries (duration concepts: period span 350–380 days; instants pass through),
 // keyed by period-END. Per-year picking across `names` in preference order — concept-migration safe
@@ -784,31 +789,45 @@ async function fetchFromFMP(symbol) {
   console.log(`[${symbol}] FMP raw — income: ${income ? 'ok' : 'missing/error'}, profile: ${profile ? 'ok' : 'missing/error'}, balance: ${balance ? 'ok' : 'missing/error'}`);
   if (income)  console.log(`[${symbol}] FMP income — revenue: ${income.revenue}, netIncome: ${income.netIncome}, ebitda: ${income.ebitda}`);
 
-  const revenue   = income?.revenue   || 0;
-  const netIncome = income?.netIncome || 0;
-  const ebitda    = income?.ebitda    || ((income?.operatingIncome || 0) + (income?.depreciationAndAmortization || 0));
-  const eps       = income?.eps       || 0;
-  // /stable/profile dropped `sharesOutstanding`; derive it from marketCap ÷ price (both present on the
-  // same response). Keep the old field as a fallback in case FMP reinstates it.
-  const shares    = profile?.sharesOutstanding
-                    || (profile?.marketCap && profile?.price ? profile.marketCap / profile.price : 0);
-  const cash      = balance?.cashAndCashEquivalents || 0;
-  const debt      = balance?.totalDebt || balance?.longTermDebt || 0;
-  const name      = profile?.companyName || symbol;
-  if (profile) console.log(`[${symbol}] FMP profile — name: ${name}, shares: ${shares}`);
+  return buildFmpCompany(income, balance, profile, symbol);
+}
 
-  // Backfill the fields the comps slide needs that were previously dropped for EDGAR-miss (foreign)
-  // peers: /stable/income-statement carries grossProfit / operatingIncome / weightedAverageShsOutDil.
-  // Read each only when present — leave null (→ "n/a" on the slide) rather than fabricate or cross-fill.
-  const grossProfit     = income?.grossProfit       != null ? inM(income.grossProfit)            : null;
-  const operatingIncome = income?.operatingIncome   != null ? inM(income.operatingIncome)        : null;
-  const dilutedShares   = income?.weightedAverageShsOutDil != null ? inM(income.weightedAverageShsOutDil)
-                          : (income?.weightedAverageShsOut != null ? inM(income.weightedAverageShsOut) : null);
+// Pure transform: FMP income/balance/profile → canonical wrapped company (Stage 15). Extracted from
+// fetchFromFMP (fetch vs transform) so the wrap→null path is unit-testable against mocked payloads. Async
+// only because resolveFmpRates is async — a strict no-op for a USD payload (no network). Exported below.
+async function buildFmpCompany(income, balance, profile, symbol) {
+  // Raw extraction (Stage 15) — drop the missing→0 coercions (old trailing zero-fallbacks and the shares ternary);
+  // convert null-honestly via the SHARED toMillions (never inM). Absent → the factory yields
+  // {value:null, status:'missing'}. A genuine reported 0 survives as 0.
+  const rawRevenue   = income?.revenue;
+  const rawNetIncome = income?.netIncome;
+  const rawEps       = income?.eps;
+  // ebitda: FMP-reported when present, else self-derived opInc + D&A ONLY when BOTH present, else absent.
+  const rawEbitda    = income?.ebitda != null ? income.ebitda
+    : (Number.isFinite(income?.operatingIncome) && Number.isFinite(income?.depreciationAndAmortization)
+       ? income.operatingIncome + income.depreciationAndAmortization : null);
+  const rawCash      = balance?.cashAndCashEquivalents;
+  const rawDebt      = balance?.totalDebt ?? balance?.longTermDebt;   // was totalDebt-or-longTermDebt, trailing zero-fallback dropped
+  // /stable/profile dropped `sharesOutstanding`; derive from marketCap ÷ price when both present (price > 0
+  // avoids /0 → Infinity). Absent → null (old share-count zero fabrication). NOTE: a null share count is
+  // still re-coerced to 0 downstream by App.js:781 (price*null→0) and deckModel:79 (shares||0), so this is
+  // VISIBLY INERT — the rendered $0 fix is a later read-site phase. This makes the SERVER value honest only.
+  const rawShares    = Number.isFinite(profile?.sharesOutstanding) ? profile.sharesOutstanding
+    : (Number.isFinite(profile?.marketCap) && profile?.price > 0 ? profile.marketCap / profile.price : null);
+  const name         = profile?.companyName || symbol;   // string — stays bare
+  if (profile) console.log(`[${symbol}] FMP profile — name: ${name}, shares: ${rawShares}`);
 
-  const revenueM = inM(revenue);
-  const sharesM  = inM(shares);
+  // Optional backfills — already null-honest; swap inM→toMillions so the FMP builder is inM-free.
+  const grossProfit     = toMillions(income?.grossProfit);
+  const operatingIncome = toMillions(income?.operatingIncome);
+  const dilutedShares   = income?.weightedAverageShsOutDil != null ? toMillions(income.weightedAverageShsOutDil)
+                          : toMillions(income?.weightedAverageShsOut);
+
+  const revenueM = toMillions(rawRevenue);
+  const sharesM  = toMillions(rawShares);
   console.log(`[${symbol}] FMP extracted — revenue: ${revenueM}M, shares: ${sharesM}M, grossProfit: ${grossProfit}M, opInc: ${operatingIncome}M, dilShares: ${dilutedShares}M`);
-  if (revenueM === 0 && sharesM === 0) return null;
+  // Usability guard (:875 lesson): `!(x > 0)` catches null AND 0; the old `=== 0` missed now-null values.
+  if (!(revenueM > 0) && !(sharesM > 0)) return null;
 
   // FX Stage 1 — convert every figure to USD at its locked basis BEFORE returning, so dealCalc/formatters
   // see USD only. cvA = period-average (P&L flows), cvS = spot (balance sheet); share COUNTS are currency-
@@ -822,17 +841,18 @@ async function fetchFromFMP(symbol) {
   return {
     name,
     companyType: 'standard',
-    revenue:    cvA(revenueM),
-    ebitda:     cvA(inM(ebitda)),
-    netIncome:  cvA(inM(netIncome)),
-    grossProfit:     cvA(grossProfit),
-    operatingIncome: cvA(operatingIncome),
-    shares:     sharesM,        // share COUNT — currency-neutral, NOT converted
-    dilutedShares,              // share COUNT — NOT converted
-    eps:        parseFloat(((eps || 0) * fx.avgRate).toFixed(2)),
-    cash:       cvS(inM(cash)),
-    debt:       cvS(inM(debt)),
-    sharePrice: profile?.price != null ? parseFloat((profile.price * fx.priceRate).toFixed(2)) : null,
+    // Financial values → wrapped with provenance; cvA/cvS are null-safe, so a null $M → a missing wrapper.
+    revenue:    field(cvA(revenueM), { source: 'fmp' }),
+    ebitda:     field(cvA(toMillions(rawEbitda)), { source: 'fmp' }),
+    netIncome:  field(cvA(toMillions(rawNetIncome)), { source: 'fmp' }),
+    grossProfit:     field(cvA(grossProfit), { source: 'fmp' }),
+    operatingIncome: field(cvA(operatingIncome), { source: 'fmp' }),
+    shares:     field(sharesM, { source: 'fmp' }),            // share COUNT — currency-neutral, NOT converted
+    dilutedShares: field(dilutedShares, { source: 'fmp' }),   // share COUNT — NOT converted
+    eps:        field(Number.isFinite(rawEps) ? parseFloat((rawEps * fx.avgRate).toFixed(2)) : null, { source: 'fmp' }),
+    cash:       field(cvS(toMillions(rawCash)), { source: 'fmp' }),
+    debt:       field(cvS(toMillions(rawDebt)), { source: 'fmp' }),
+    sharePrice: field(profile?.price != null ? parseFloat((profile.price * fx.priceRate).toFixed(2)) : null, { source: 'fmp' }),
     dataSource: 'fmp',
     // FX provenance (Stage 1) — USD filer: converted:false, rates 1.
     reportedCurrency: fx.reportedCurrency,
@@ -853,11 +873,8 @@ function buildYahooCompany(result, symbol) {
   const ish = result.incomeStatementHistory?.incomeStatementHistory?.[0] || {};
   const qt  = result.quoteType || {};
 
-  // Null-honest dollars→$M (Stage 14). Deliberately NOT inM (server.js:372), whose zero-coercion
-  // would turn an ABSENT value into a fabricated 0 and defeat the wrapper. A real reported 0 survives.
-  const yM = (v) => Number.isFinite(v) ? Math.round(v / 1e6) : null;
-
   // Raw extraction — keep the fd→ish source preference; drop the missing→0 coercion (old trailing fallback).
+  // Convert dollars→$M with the SHARED toMillions (null-honest, never inM). See the helper near inM.
   const rawRevenue   = fd.totalRevenue?.raw || ish.totalRevenue?.raw;
   const rawEbitda    = fd.ebitda?.raw;
   const rawNetIncome = ish.netIncome?.raw;
@@ -868,8 +885,8 @@ function buildYahooCompany(result, symbol) {
   const rawPrice     = fd.currentPrice?.raw;
   const name         = qt.longName || qt.shortName || symbol;   // string — not a financial value, stays bare
 
-  const revenueM = yM(rawRevenue);
-  const sharesM  = yM(rawShares);
+  const revenueM = toMillions(rawRevenue);
+  const sharesM  = toMillions(rawShares);
   console.log(`[${symbol}] Yahoo extracted — revenue: ${revenueM}M, shares: ${sharesM}M, eps: ${rawEps}`);
   // Usability guard: nothing usable → fall through the waterfall. `!(x > 0)` catches null AND 0
   // (the old `=== 0` would miss the now-null absent values).
@@ -880,12 +897,12 @@ function buildYahooCompany(result, symbol) {
     companyType: 'standard',
     // Financial values → wrapped with provenance; absent → {value:null, status:'missing'} via the factory.
     revenue:    field(revenueM, { source: 'yahoo' }),
-    ebitda:     field(yM(rawEbitda), { source: 'yahoo' }),
-    netIncome:  field(yM(rawNetIncome), { source: 'yahoo' }),
+    ebitda:     field(toMillions(rawEbitda), { source: 'yahoo' }),
+    netIncome:  field(toMillions(rawNetIncome), { source: 'yahoo' }),
     shares:     field(sharesM, { source: 'yahoo' }),
     eps:        field(Number.isFinite(rawEps) ? parseFloat(rawEps.toFixed(2)) : null, { source: 'yahoo' }),
-    cash:       field(yM(rawCash), { source: 'yahoo' }),
-    debt:       field(yM(rawDebt), { source: 'yahoo' }),
+    cash:       field(toMillions(rawCash), { source: 'yahoo' }),
+    debt:       field(toMillions(rawDebt), { source: 'yahoo' }),
     sharePrice: field(rawPrice ? parseFloat(rawPrice.toFixed(2)) : null, { source: 'yahoo' }),
     dataSource: 'yahoo',
     // Structurally unavailable from Yahoo — explicit missing (present & honest, not omitted).
@@ -2627,4 +2644,4 @@ if (require.main === module) {
 
 // Stage 14 — export the pure Yahoo transform so the wrap→null path is unit-testable against a mocked
 // payload, without the network fetch. The require.main guard above keeps `node server.js` unchanged.
-module.exports = { buildYahooCompany };
+module.exports = { buildYahooCompany, buildFmpCompany, toMillions };
