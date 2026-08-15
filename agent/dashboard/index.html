@@ -54,20 +54,21 @@ function PastePlan({ onQueue }) {
   const [text, setText] = useState('');
   const [prev, setPrev] = useState(null);
   const parse = () => post('/api/parse', { text }).then(setPrev);
-  const replace = () => post('/api/plan', { text }).then(d => { setPrev(d); onQueue(); });
+  const add = () => post('/api/plan', { text }).then(d => { setPrev(d); onQueue(); });
   return (
     <div className="panel">
       <h2>Paste plan</h2>
-      <div className="dim" style={{marginBottom:8}}>Format: <span className="mono">- [ ] PAIR — desc</span> then indented <span className="mono">got: / want: / why:</span>. Missing any of got/want/why → <b>blocked</b>. Nothing is inferred or auto-filled.</div>
-      <textarea rows={8} value={text} onChange={e=>setText(e.target.value)}
-        placeholder={"## Next up\n- [ ] KO/NSRGY — comps sourced from CNBC\n      got: comps table shows CNBC prices\n      want: EDGAR-sourced\n      why: peer screen SIC dependency"} />
+      <div style={{marginBottom:8}}>Paste your plan. Each item needs a ticker pair, what it shows now, what it should show, and where you know that from.</div>
+      <textarea rows={7} value={text} onChange={e=>setText(e.target.value)}
+        placeholder={"AAPL/VZ combined gross margin shows 36.2%, should be 46.6% per §16"} />
+      <div className="dim" style={{marginTop:6,fontSize:12}}>Anything missing gets parked, not queued — nothing is guessed.</div>
       <div style={{marginTop:8, display:'flex', gap:8}}>
         <button onClick={parse} disabled={!text.trim()}>Parse preview</button>
-        <button onClick={replace} disabled={!text.trim()}>Replace queue with this</button>
+        <button onClick={add} disabled={!text.trim()}>Add to queue</button>
       </div>
       {prev && <div style={{marginTop:10}}>
         {prev.summary.map((l,i)=><div key={i} className={i===0?'':'warn'} style={{fontWeight:i===0?700:400}}>{l}</div>)}
-        <div className="dim" style={{marginTop:4,fontSize:12}}>Preview only — "Replace queue with this" writes the working queue (done items preserved). QUEUE.md is written only on launch.</div>
+        <div className="dim" style={{marginTop:4,fontSize:12}}>Preview only — "Add to queue" appends to the working queue (append-only; existing items kept). QUEUE.md is written only on launch.</div>
       </div>}
     </div>
   );
@@ -142,23 +143,59 @@ function Summary({ summary }) {
   );
 }
 
-function LiveView({ live, undo }) {
+function LiveView({ live, summary, budget, undo }) {
   const st = (live && live.status) || {};
-  if (!live || !live.loopLogExists) return null;
-  const rs = st.runState || 'RUNNING';
-  const BADGE = { RUNNING:{c:'#58a6ff'}, COMPLETED:{c:'#3fb950'}, DIED:{c:'#f85149'}, STALE:{c:'#e3b341'} };
-  const c = (BADGE[rs]||{c:'#8b949e'}).c;
-  const ageM = st.lastWriteAgeSec!=null ? Math.floor(st.lastWriteAgeSec/60) : null;
+  const rs = st.runState;                          // RUNNING/COMPLETED/DIED/STALE, or undefined when no run
+  const hasRun = !!(live && live.loopLogExists);
+  const active = rs === 'RUNNING';
+  const DOT = { RUNNING:'#58a6ff', STALE:'#e3b341', DIED:'#f85149', COMPLETED:'#3fb950' }[rs] || '#8b949e';
+  const pairsDone = (live && live.pairsDone) || 0, pairsTotal = (live && live.pairsTotal) || 50;
+  const frac = pairsTotal ? Math.min(1, pairsDone/pairsTotal) : 0;
+  const elapsedM = live && live.elapsedSec!=null ? Math.floor(live.elapsedSec/60) : null;
+  const spent = (summary && summary.spent) || 0;
+  const committed = (summary && summary.committed) || 0, reverted = (summary && summary.reverted) || 0;
+  const outcome = hasRun ? (committed + ' committed' + (reverted ? `, ${reverted} reverted` : '')) : 'no runs yet';
+  const hair = { marginTop:8, borderTop:'1px solid var(--border)', paddingTop:8 };
+  const sum = { cursor:'pointer', fontSize:12, display:'flex', alignItems:'center' };
   return (
     <div className="panel">
-      <h2>Live run — <span style={{color:c,fontWeight:800}}>{rs}</span> {st.runId||''}</h2>
-      {(rs==='DIED'||rs==='STALE') && <div className="bad" style={{marginBottom:8}}>
-        {rs==='DIED' ? 'the process is not alive and the log has no completion line — this run is DEAD, not running.' : 'the log has not advanced in over 30 min — the capture may be hung (a hung capture looks identical to a working one from the log alone).'}
-        {' '}last write {ageM!=null?ageM+'m ago':'?'} · last line: <span className="mono">{st.lastLogLine||'—'}</span>
-      </div>}
-      <div className="dim" style={{fontSize:12,marginBottom:6}}>iter {st.iter||'—'} · mode {st.mode||'—'} · elapsed {fmtDur(live.elapsedSec)} · projected end {st.projectedEnd||'—'}{st.pid?` · pid ${st.pid} ${st.pidAlive?'(alive)':'(dead)'}`:' · (no run.pid)'}{st.currentItem?` · ${st.currentItem}`:''}</div>
-      <div className="log mono">{(live.logTail||[]).join('\n')||'(empty)'}</div>
-      {undo && <div style={{marginTop:10}}><div className="dim" style={{fontSize:12}}>UNDO — discards the night. Copy and run it yourself:</div><code className="copy mono">{undo.split('\n').filter(l=>l&&!l.startsWith('#')).join('\n')}</code></div>}
+      {/* 1 — status line */}
+      <div style={{display:'flex',alignItems:'center',gap:8}}>
+        <span style={{width:9,height:9,borderRadius:'50%',background:DOT,display:'inline-block'}}></span>
+        <span style={{letterSpacing:'.14em',fontSize:12,fontWeight:700}}>{hasRun ? (rs||'RUNNING') : 'IDLE'}</span>
+        <span className="mono dim" style={{marginLeft:'auto',fontSize:11}}>{st.runId||''}</span>
+      </div>
+      {/* 2 — time remaining headline (or last outcome when idle) */}
+      <div style={{display:'flex',alignItems:'baseline',marginTop:10}}>
+        {active && st.minLeft!=null
+          ? <><span style={{fontSize:40,fontWeight:300,lineHeight:1}}>{st.minLeft}</span><span style={{fontSize:15,marginLeft:8,color:'var(--dim)'}}>min left</span></>
+          : <span style={{fontSize:32,fontWeight:300,lineHeight:1}}>{outcome}</span>}
+        {active && st.endClock && <span style={{marginLeft:'auto',fontSize:13,color:'var(--dim)'}}>done ~{st.endClock}</span>}
+      </div>
+      {(rs==='STALE'||rs==='DIED') && <div className="bad" style={{marginTop:8,fontSize:13}}>
+        {rs==='DIED' ? 'process not alive, no completion line — this run is DEAD.' : 'no log write in >30 min — capture may be hung.'} last line: <span className="mono">{st.lastLogLine||'—'}</span></div>}
+      {/* 3 — progress bar (hidden when not active) */}
+      {active && <div style={{height:4,background:'#010409',borderRadius:2,marginTop:12,overflow:'hidden'}}>
+        <div style={{height:'100%',width:(frac*100)+'%',background:'var(--accent)',transition:'width .5s'}}></div></div>}
+      {/* 4 — phase line */}
+      {active && <div style={{display:'flex',fontSize:12,color:'var(--dim)',marginTop:6}}>
+        <span>{st.phase||'Working'} · {pairsDone} of {pairsTotal} pairs</span>
+        <span style={{marginLeft:'auto'}}>{elapsedM!=null?elapsedM+'m elapsed':''}</span></div>}
+      {/* 5 — stat row */}
+      <div style={{display:'flex',gap:22,fontSize:12,marginTop:12}}>
+        <span><span className="dim">Item </span><b>{st.iter||'—'} of {st.openItems||'?'}</b></span>
+        <span><span className="dim">Spent </span><b>${spent.toFixed(2)}</b></span>
+        <span><span className="dim">Cap </span><b>${budget!=null?(+budget).toFixed(0):'?'}</b></span>
+      </div>
+      {/* 6 — disclosures (collapsed by default) */}
+      <details style={hair}>
+        <summary style={sum}>Log<span className="mono dim" style={{marginLeft:'auto',maxWidth:'62%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{st.lastLogLine||''}</span></summary>
+        <div className="log mono" style={{marginTop:8}}>{((live&&live.logTail)||[]).join('\n')||'(empty)'}</div>
+      </details>
+      <details style={hair}>
+        <summary style={sum}>Undo command<span className="dim" style={{marginLeft:'auto'}}>discards this run</span></summary>
+        <code className="copy mono" style={{marginTop:8,display:'block'}}>{undo?undo.split('\n').filter(l=>l&&!l.startsWith('#')).join('\n'):'(no run)'}</code>
+      </details>
     </div>
   );
 }
@@ -181,7 +218,7 @@ function App() {
       <Queue plan={s.plan} />
       <Launch pf={pf} plan={s.plan} refresh={()=>{refreshState();refreshPf();}} />
       <Summary summary={s.summary} />
-      <LiveView live={s.live} undo={s.undo} />
+      <LiveView live={s.live} summary={s.summary} budget={s.budgetUsd} undo={s.undo} />
     </div>
   );
 }

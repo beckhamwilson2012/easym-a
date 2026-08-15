@@ -71,7 +71,11 @@ function parseLoopLog(runId, tailLines = 60) {
   // liveness: never infer "running" from the log alone — a killed run would look healthy forever. Check
   // the actual process via run.pid (kill -0). States: COMPLETED | RUNNING | STALE (>30m no write) | DIED.
   s.lastLogLine = [...all].reverse().find(l => l.trim()) || '';
-  s.lastWriteAgeSec = st ? Math.round((Date.now() - st.mtimeMs) / 1000) : null;
+  // activity = most recent of the loop.log write OR a pair capture (/tmp/sweep_v2_raw). A baseline capture
+  // is loop.log-silent for 20-40 min but still writes a pair file every ~30s — that is progress, not a hang.
+  let activityMs = st ? st.mtimeMs : 0;
+  try { const rd = '/tmp/sweep_v2_raw'; for (const f of fs.readdirSync(rd)) { const m = statSafe(path.join(rd, f)); if (m && m.mtimeMs > activityMs) activityMs = m.mtimeMs; } } catch {}
+  s.lastWriteAgeSec = activityMs ? Math.round((Date.now() - activityMs) / 1000) : null;
   const pidTxt = readSafe(path.join(runDir, 'run.pid'));
   const pid = pidTxt ? parseInt(pidTxt.trim(), 10) : null;
   let alive = false;
@@ -80,6 +84,16 @@ function parseLoopLog(runId, tailLines = 60) {
   if (s.complete) s.runState = 'COMPLETED';
   else if (pid != null) s.runState = alive ? (s.lastWriteAgeSec > 1800 ? 'STALE' : 'RUNNING') : 'DIED';
   else s.runState = (s.lastWriteAgeSec != null && s.lastWriteAgeSec > 120) ? 'DIED' : 'RUNNING'; // pre-run.pid runs: infer from log staleness
+  // phase (so a 25-min silent capture isn't mistaken for a hang) + time remaining from the projected end
+  if (s.complete) s.phase = 'Complete';
+  else if (!/baseline:\s*\d+\s*defects/.test(txt)) s.phase = 'Baseline capture';
+  else if (s.iter) s.phase = 'Item ' + s.iter;
+  else s.phase = 'Working';
+  if (s.projectedEnd) { const pe = Date.parse(s.projectedEnd.replace(' ', 'T')); if (!isNaN(pe)) {
+    s.minLeft = Math.max(0, Math.round((pe - Date.now()) / 60000));
+    const d = new Date(pe); let h = d.getHours(); const ap = h >= 12 ? 'pm' : 'am'; h = h % 12 || 12;
+    s.endClock = h + ':' + String(d.getMinutes()).padStart(2, '0') + ' ' + ap;
+  } }
   return out;
 }
 function diagnosisList() {
@@ -103,49 +117,78 @@ function queueOpen() {
   return { open: (open.match(/^- \[ \] /mg) || []).length, done: (open.match(/^- \[x\] /mg) || []).length, parked: (open.match(/^- \[~\] /mg) || []).length };
 }
 
-// ── Plan parser — DETERMINISTIC, NO LLM (see CLAUDE.md for the format) ────────────────────────────────
-// A regex extractor structurally CANNOT fabricate a value, so it never auto-fills a missing field — that
-// guarantee is the whole point. got/want/why capture to END OF LINE only (values may contain commas,
-// slashes, parens; NO mid-line separator — a greedy "·" split bit us once). Missing any of got/want/why
-// -> blocked, and we name which. A pair with no detail lines -> blocked (a pair alone is not a repro).
+// ── Plan parser — DETERMINISTIC, NO LLM ──────────────────────────────────────────────────────────────
+// The four FIELDS are load-bearing (pair, observed, expected, source); the SYNTAX is not. This extracts
+// from free-form prose OR the structured "PAIR — desc / got: / want: / source:" format. A regex extractor
+// structurally CANNOT fabricate, so the EXTRACTION RULE holds: extract only what is present — never infer
+// a pair from context, never supply an expected value, never guess a source. Missing any of the four ->
+// blocked, and we name exactly which. Loosening the syntax does NOT loosen the field requirement.
 const HEADING_STATUS = { 'next up': 'queued', 'blocked on you': 'blocked', parked: 'skipped', done: 'done' };
-const PAIR_TITLE = /^([A-Z][A-Z0-9.]{0,5}\/[A-Z][A-Z0-9.]{0,5})\s*[—–-]\s*(.*)$/;   // PAIR — desc
-const PAIR_ANY = /\b([A-Z][A-Z0-9.]{0,5}\/[A-Z][A-Z0-9.]{0,5})\b/;
-function parsePlan(text) {
-  const lines = String(text || '').split('\n');
-  const itemRe = /^\s*-\s*\[([ xX])\]\s+(.+?)\s*$/;
-  const detailRe = /^\s+(got|want|why)\s*:\s*(.*)$/i;            // indented; capture to end of line only
-  const headingRe = /^\s*##\s+(.+?)\s*$/;
-  const items = []; let cur = null; let headStatus = 'queued';
-  const finalize = () => {
-    if (!cur) return;
-    cur.missing = ['got', 'want', 'why'].filter(k => !cur[k]);
-    cur.status = cur.checked ? 'done' : (cur.missing.length ? 'blocked' : cur.headStatus);
-    items.push(cur); cur = null;
-  };
-  for (const raw of lines) {
-    let m;
-    if (!itemRe.test(raw) && (m = raw.match(headingRe))) { finalize(); const h = m[1].trim().toLowerCase(); if (HEADING_STATUS[h]) headStatus = HEADING_STATUS[h]; continue; }
-    if ((m = raw.match(itemRe))) {
-      finalize();
-      const checked = m[1].toLowerCase() === 'x'; const title = m[2].trim();
-      cur = { title, checked, headStatus, got: null, want: null, why: null };
-      const tm = title.match(PAIR_TITLE);
-      if (tm) { cur.pair = tm[1]; cur.desc = tm[2].trim(); }
-      else { const pm = title.match(PAIR_ANY); cur.pair = pm ? pm[1] : null; cur.desc = title; }
-      continue;
-    }
-    if (cur && (m = raw.match(detailRe))) { cur[m[1].toLowerCase()] = m[2].trim() || null; continue; }
+const PAIR_SLASH = /\b([A-Z][A-Z0-9.]{0,5})\s*\/\s*([A-Z][A-Z0-9.]{0,5})\b/;         // AAPL/VZ, AAPL / VZ
+const PAIR_VS = /\b([A-Z][A-Z0-9.]{0,5})\s+vs\.?\s+([A-Z][A-Z0-9.]{0,5})\b/;          // AAPL vs VZ
+// A source must be a CONCRETE reference (§, a filing, EDGAR, an exhibit id) — never bare prose like "exhibit".
+const SOURCE_REF = /(§\s*\S+|\b(?:10|20|8)-?[KQF]\b|\bEDGAR\b|\bexhibit\s+[A-Z0-9]+\b|\bschedule\s+\S+|\bfootnote\s+\S+)/i;
+function extractFields(text) {
+  const it = { pair: null, observed: null, expected: null, source: null };
+  const pm = text.match(PAIR_SLASH) || text.match(PAIR_VS);
+  if (pm) it.pair = pm[1].toUpperCase() + '/' + pm[2].toUpperCase();
+  // free-form observed/expected via keyword markers; per/from/etc. are boundaries only (they end a value)
+  const marks = [];
+  const add = (re, field) => { const r = new RegExp(re, 'gi'); let m; while ((m = r.exec(text))) marks.push({ field, start: m.index, end: m.index + m[0].length }); };
+  add('\\b(?:shows?|got|observed|currently|reads?|actual(?:ly)?|is\\s+now)\\b\\s*[:=-]?\\s*', 'observed');
+  add('\\b(?:should\\s+(?:be|show|read)?|wants?|wanted|expected|expect|correct(?:ly)?|must\\s+be|ought\\s+to(?:\\s+be)?)\\b\\s*[:=-]?\\s*', 'expected');
+  add('\\b(?:per|from|see|source|because|since|as\\s+of|cited?|citation)\\b', 'boundary');
+  marks.sort((a, b) => a.start - b.start);
+  for (let i = 0; i < marks.length; i++) {
+    const h = marks[i]; if (h.field === 'boundary') continue;
+    const next = i + 1 < marks.length ? marks[i + 1].start : text.length;
+    const val = text.slice(h.end, next).replace(/[,;\n].*$/s, '').replace(/[.\s]+$/, '').trim();
+    if (val && !it[h.field]) it[h.field] = val;
   }
-  finalize();
-  return items;
+  const sm = text.match(SOURCE_REF); if (!it.source && sm) it.source = sm[1].replace(/\s+/g, ' ').trim();
+  // structured labels override (capture to end of line). Back-compat: why: still maps to source.
+  const lab = re => { const m = text.match(re); return m && m[1].trim() ? m[1].trim() : null; };
+  const g = lab(/\bgot\s*:\s*([^\n]+)/i) || lab(/\bobserved\s*:\s*([^\n]+)/i); if (g) it.observed = g;
+  const w = lab(/\bwant\s*:\s*([^\n]+)/i) || lab(/\bexpected\s*:\s*([^\n]+)/i); if (w) it.expected = w;
+  const s = lab(/\b(?:source|why)\s*:\s*([^\n]+)/i); if (s) it.source = s;
+  return it;
+}
+function splitBlocks(text) {
+  const lines = String(text || '').split('\n');
+  const starter = /^\s*(-\s*\[[ xX]\]\s+|[-*•]\s+|\d+[.)]\s+)/;   // "- [ ]", "-", "*", "1.", "2)"
+  const heading = /^\s*##\s+(.+?)\s*$/;
+  const out = []; let cur = null; let headStatus = 'queued';
+  const flush = () => { if (cur && cur.lines.join(' ').trim()) out.push(cur); cur = null; };
+  for (const raw of lines) {
+    let hm;
+    if ((hm = raw.match(heading)) && !starter.test(raw)) { flush(); const h = hm[1].trim().toLowerCase(); if (HEADING_STATUS[h]) headStatus = HEADING_STATUS[h]; continue; }
+    if (/^\s*$/.test(raw)) { flush(); continue; }                 // blank line ends a block
+    if (starter.test(raw)) { flush(); cur = { lines: [raw], headStatus, checked: /^\s*-\s*\[[xX]\]/.test(raw) }; continue; }
+    if (!cur) cur = { lines: [raw], headStatus, checked: false };
+    else cur.lines.push(raw);
+  }
+  flush();
+  return out.map(b => ({ text: b.lines.join('\n').trim(), headStatus: b.headStatus, checked: b.checked }));
+}
+function parsePlan(text) {
+  return splitBlocks(text).map(b => {
+    const body = b.text.replace(/^\s*(-\s*\[[ xX]\]\s+|[-*•]\s+|\d+[.)]\s+)/, '');
+    const it = extractFields(body);
+    it.desc = (body.split('\n')[0] || '').trim().slice(0, 90) || it.pair || 'untitled';
+    it.raw = b.text;
+    it.missing = ['pair', 'observed', 'expected', 'source'].filter(k => !it[k]);
+    it.status = b.checked ? 'done' : (it.missing.length ? 'blocked' : b.headStatus);
+    return it;
+  });
 }
 function countStatuses(items) { const c = { done: 0, running: 0, queued: 0, blocked: 0, skipped: 0 }; items.forEach(i => c[i.status] = (c[i.status] || 0) + 1); return c; }
 function planPreview(items) {
   const counts = countStatuses(items);
   const summary = [`${counts.queued} queued · ${counts.blocked} blocked · ${counts.skipped} skipped · ${counts.done} done`];
-  items.filter(i => i.status === 'blocked' && i.missing && i.missing.length).forEach(i =>
-    summary.push(`blocked: ${i.pair || i.desc} — missing ${i.missing.join(', ')}${i.missing.length === 3 ? '  (a pair alone is not a repro)' : ''}`));
+  items.filter(i => i.status === 'blocked' && i.missing && i.missing.length).forEach(i => {
+    const pairAlone = i.pair && i.missing.length === 3 && !i.missing.includes('pair');
+    summary.push(`blocked: ${i.pair || i.desc} — missing ${i.missing.join(', ')}${pairAlone ? '  (a pair alone is not a repro)' : ''}`);
+  });
   return { items, counts, summary };
 }
 
@@ -184,7 +227,7 @@ function insertIntoSection(content, section, block) {
 function appendQueuedToQueueMd(items) {
   const queued = items.filter(i => i.status === 'queued');
   if (!queued.length) return { appended: 0 };
-  const block = queued.map(i => `- [ ] **${i.pair} — ${i.desc}**\n  - pair: ${i.pair} · observed: ${i.got} · expected: ${i.want} · source: ${i.why}`).join('\n');
+  const block = queued.map(i => `- [ ] **${i.pair} — ${i.desc}**\n  - pair: ${i.pair} · observed: ${i.observed} · expected: ${i.expected} · source: ${i.source}`).join('\n');
   let content = readSafe(ap('QUEUE.md')); if (content == null) return { appended: 0, error: 'QUEUE.md not found' };
   fs.writeFileSync(ap('QUEUE.md'), insertIntoSection(content, 'Open', block));
   return { appended: queued.length };
@@ -244,7 +287,9 @@ function buildState() {
   return {
     agentDir: AGENT_DIR, repoRoot: REPO_ROOT, now: Date.now(),
     latestRun: runId, hasAnyRun: !!runId,
-    live: { status: log.status, loopLogExists: log.exists, logTail: log.tail, elapsedSec: log.elapsedSec },
+    live: { status: log.status, loopLogExists: log.exists, logTail: log.tail, elapsedSec: log.elapsedSec,
+      pairsDone: (() => { try { return fs.readdirSync('/tmp/sweep_v2_raw').filter(f => f.endsWith('.json')).length; } catch { return 0; } })(),
+      pairsTotal: (() => { try { return fs.readdirSync(path.join(REPO_ROOT, 'docs/sweep-v2/captures')).filter(f => f.endsWith('.json')).length || 50; } catch { return 50; } })() },
     plan: planWithRuntime(),
     summary: buildSummary(),
     budgetUsd: budget, budgetIsDefault: !process.env.BUDGET_USD,
@@ -272,10 +317,14 @@ app.delete('/api/stop', (_req, res) => { try { fs.rmSync(ap('STOP'), { force: tr
 // parse preview (read-only, no write)
 app.post('/api/parse', (req, res) => { try { res.json(planPreview(parsePlan((req.body && req.body.text) || ''))); } catch (e) { res.status(500).json({ error: String(e) }); } });
 // paste → REPLACE the working queue (preserving done items). Writes plan.json only, NOT QUEUE.md.
+// "Add to queue" — APPEND-ONLY: new items go to the end, existing items and their order are preserved.
 app.post('/api/plan', (req, res) => {
   try {
     const parsed = parsePlan((req.body && req.body.text) || '');
-    const merged = mergePreservingDone(parsed, readPlan());
+    const existing = readPlan();
+    const key = i => (i.pair || '') + '|' + (i.desc || '');
+    const have = new Set(existing.map(key));
+    const merged = [...existing, ...parsed.filter(i => !have.has(key(i)))];
     writePlan(merged);
     res.json(planPreview(merged));
   } catch (e) { res.status(500).json({ error: String(e) }); }
