@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sweep Dashboard</title>
+<!-- Single-file React page, no build step. React + Babel from CDN (external, not :3001 — the app can be
+     stopped and this still loads). If offline, vendor these instead. -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --dim:#8b949e; --accent:#58a6ff; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
+  h1 { font-size:18px; margin:0; } h2 { font-size:14px; text-transform:uppercase; letter-spacing:.04em; color:var(--dim); margin:0 0 8px; }
+  a { color:var(--accent); }
+  .wrap { max-width:1100px; margin:0 auto; padding:16px; }
+  .top { display:flex; align-items:center; gap:14px; flex-wrap:wrap; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px; }
+  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:14px; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+  .kv .k { color:var(--dim); font-size:12px; } .kv .v { font-size:16px; font-weight:600; }
+  pre, .mono { font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
+  .log { background:#010409; border:1px solid var(--border); border-radius:6px; padding:10px; height:260px; overflow:auto; white-space:pre-wrap; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:6px 8px; border-bottom:1px solid var(--border); white-space:nowrap; }
+  th { color:var(--dim); font-weight:600; font-size:12px; }
+  .pill { padding:1px 8px; border-radius:10px; color:#fff; font-size:11px; font-weight:700; }
+  .dim { color:var(--dim); } .warn { color:#e3b341; } .bad { color:#f85149; } .good { color:#3fb950; }
+  button { background:#21262d; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:6px 12px; cursor:pointer; font-size:13px; }
+  button:hover { border-color:var(--accent); }
+  button.danger { border-color:#8b3a3a; } button.danger:hover { background:#3d1b1b; }
+  .trend { display:flex; align-items:flex-end; gap:3px; height:40px; }
+  .trend .bar { width:14px; background:#30475e; border-radius:2px 2px 0 0; }
+  code.copy { background:#010409; border:1px solid var(--border); border-radius:6px; padding:8px 10px; display:block; word-break:break-all; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+const STATUS_COLORS = { DONE:'#1a7f37', REGRESSION:'#cf222e', INDETERMINATE:'#9a6700', TIMEOUT:'#bc4c00',
+  RESOLVED_UPSTREAM:'#0969da', BLOCKED:'#57606a', REPLAY_SUSPECTED:'#8250df', FAILED:'#82071e' };
+const fmtDur = s => s==null ? '—' : (s>=3600? (s/3600).toFixed(1)+'h' : s>=60? Math.floor(s/60)+'m '+(s%60)+'s' : s+'s');
+const num = v => (v===''||v==null||isNaN(+v)) ? '—' : +v;
+
+function Pill({ status }) {
+  return <span className="pill" style={{background: STATUS_COLORS[status] || '#57606a'}}>{status||'?'}</span>;
+}
+
+function LiveRun({ s }) {
+  const st = s.status || {};
+  if (!s.hasAnyRun) return <div className="panel"><h2>Live run</h2><div className="dim">No runs yet. Once the runner writes agent/runs/&lt;id&gt;/, this populates.</div></div>;
+  const rows = (s.calibration.rows)||[];
+  const trend = [ ...(st.baselineDefects!=null? [{iter:'base', after: st.baselineDefects}]:[]),
+                  ...rows.map(r=>({iter:r.iter, after: num(r.defects_after)})) ].filter(x=>x.after!=='—');
+  const maxD = Math.max(1, ...trend.map(t=>+t.after||0));
+  return (
+    <div className="panel">
+      <h2>Live run — {st.complete ? <span className="good">complete</span> : <span className="warn">running</span>}</h2>
+      <div className="grid">
+        <div className="kv"><div className="k">current item</div><div className="v" style={{fontSize:13}}>{st.currentItem || '—'}</div></div>
+        <div className="kv"><div className="k">iteration</div><div className="v">{st.iter||'—'} <span className="dim">of {s.queue.open + s.queue.done + s.queue.parked || st.openItems || '?'}</span></div></div>
+        <div className="kv"><div className="k">elapsed</div><div className="v">{fmtDur(s.elapsedSec)}</div></div>
+        <div className="kv"><div className="k">projected end</div><div className="v" style={{fontSize:13}}>{st.projectedEnd||'—'}</div></div>
+        <div className="kv"><div className="k">capture mode</div><div className="v">{st.mode||'—'}{st.freezeSwitchedAtIter? <span className="warn" style={{fontSize:12}}> ⚠ froze→2N @iter {st.freezeSwitchedAtIter}</span>:null}</div></div>
+        <div className="kv"><div className="k">baseline defects</div><div className="v">{st.baselineDefects!=null? st.baselineDefects : '—'}</div></div>
+      </div>
+      {trend.length>0 && <div style={{marginTop:12}}>
+        <div className="k dim" style={{fontSize:12,marginBottom:4}}>defect trend</div>
+        <div className="trend">{trend.map((t,i)=><div key={i} title={`${t.iter}: ${t.after}`} className="bar" style={{height:(6+34*(+t.after)/maxD)+'px'}}></div>)}</div>
+        <div className="mono dim" style={{marginTop:4}}>{trend.map(t=>`${t.iter}:${t.after}`).join('  ')}</div>
+      </div>}
+      <div style={{marginTop:12}}>
+        <div className="k dim" style={{fontSize:12,marginBottom:4}}>loop.log {s.loopLogExists? '(tail, auto-refresh 2s)' : <span className="warn">— not found (launcher must redirect runner stdout to runs/&lt;id&gt;/loop.log)</span>}</div>
+        <div className="log mono">{(s.logTail||[]).join('\n') || '(empty)'}</div>
+      </div>
+    </div>
+  );
+}
+
+function Iterations({ s }) {
+  const rows = (s.calibration.rows)||[];
+  const overBudget = s.costTotal > s.budgetUsd;
+  return (
+    <div className="panel">
+      <h2>Iterations ({rows.length})</h2>
+      {rows.length===0 ? <div className="dim">No iterations recorded yet (agent/calibration.csv is empty or absent).</div> :
+      <table><thead><tr><th>#</th><th>item</th><th>status</th><th>wall</th><th>turns</th><th>cost</th><th>defects</th><th>forced recap</th></tr></thead>
+      <tbody>{rows.map((r,i)=><tr key={i}>
+        <td>{r.iter}</td><td style={{whiteSpace:'normal',maxWidth:340}}>{r.item}</td>
+        <td><Pill status={r.status}/></td><td>{fmtDur(+r.wall_sec)}</td><td>{num(r.turns)}</td>
+        <td>${(+r.cost_usd||0).toFixed(3)}</td>
+        <td className="mono">{num(r.defects_before)} → {num(r.defects_after)}</td>
+        <td>{r.forced_recapture==='true'? <span className="warn">yes</span> : 'no'}</td>
+      </tr>)}</tbody></table>}
+      <div style={{marginTop:10}} className={overBudget?'bad':''}>
+        running cost <b>${s.costTotal.toFixed(3)}</b> / budget <b>${(+s.budgetUsd).toFixed(2)}</b>{s.budgetIsDefault? <span className="dim"> (default)</span>:null}
+        {overBudget? <span className="bad"> — OVER BUDGET</span>:null}
+      </div>
+    </div>
+  );
+}
+
+function MorningReview({ s }) {
+  return (
+    <div className="panel">
+      <h2>Morning review</h2>
+      <div style={{marginBottom:14}}><div className="k dim">DECISIONS.md</div>
+        {s.decisions ? <pre className="log" style={{height:'auto',maxHeight:200}}>{s.decisions}</pre> : <div className="dim">None logged.</div>}</div>
+      <div style={{marginBottom:14}}><div className="k dim">diagnosis files</div>
+        {(s.diagnosis||[]).length? <ul style={{margin:'4px 0'}}>{s.diagnosis.map(d=><li key={d.name}><a href={'/api/diagnosis/'+encodeURIComponent(d.name)} target="_blank">{d.name}</a> <span className="dim">— {d.preview}</span></li>)}</ul> : <div className="dim">None.</div>}</div>
+      <div style={{marginBottom:14}}><div className="k dim">branch commits {s.status && s.status.branch? '('+s.status.branch+')':''}</div>
+        {(s.commits||[]).length? <pre className="mono" style={{margin:'4px 0'}}>{s.commits.join('\n')}</pre> : <div className="dim">None (no sweep branch yet).</div>}</div>
+      <div><div className="k dim">UNDO — discards the whole night. Copy and run it yourself (deliberately not a button):</div>
+        {s.undo ? <code className="copy">{s.undo.split('\n').filter(l=>l && !l.startsWith('#')).join('\n')}</code> : <div className="dim">No UNDO.txt (no run yet).</div>}</div>
+    </div>
+  );
+}
+
+function StopControl({ s, refresh }) {
+  const set = (method) => fetch('/api/stop', { method }).then(()=>refresh());
+  return (
+    <div className="panel">
+      <h2>STOP</h2>
+      <div style={{display:'flex',alignItems:'center',gap:14,flexWrap:'wrap'}}>
+        <div>agent/STOP: {s.stopExists ? <b className="warn">PRESENT — runner will halt at the next iteration boundary</b> : <span className="dim">not set (runner continues)</span>}</div>
+        {s.stopExists
+          ? <button onClick={()=>set('DELETE')}>Remove STOP (resume)</button>
+          : <button className="danger" onClick={()=>set('POST')}>Create STOP (halt after current item)</button>}
+      </div>
+    </div>
+  );
+}
+
+function App() {
+  const [s, setS] = useState(null);
+  const [err, setErr] = useState(null);
+  const refresh = () => fetch('/api/state').then(r=>r.json()).then(d=>{ setS(d); setErr(null); }).catch(e=>setErr(String(e)));
+  useEffect(() => { refresh(); const id = setInterval(refresh, 2000); return () => clearInterval(id); }, []);
+  if (!s) return <div className="wrap">{err? <span className="bad">dashboard API error: {err}</span> : 'loading…'}</div>;
+  return (
+    <div className="wrap">
+      <div className="top">
+        <h1>Sweep Dashboard</h1>
+        <span className="dim">run <b>{s.latestRun||'—'}</b></span>
+        {s.status && s.status.branch && <span className="dim">branch <b>{s.status.branch}</b></span>}
+        {s.status && s.status.mode && <span className="dim">mode <b>{s.status.mode}</b></span>}
+        <span style={{marginLeft:'auto'}} className="dim">agent dir: {s.agentDir}</span>
+      </div>
+      <LiveRun s={s} />
+      <Iterations s={s} />
+      <MorningReview s={s} />
+      <StopControl s={s} refresh={refresh} />
+    </div>
+  );
+}
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>

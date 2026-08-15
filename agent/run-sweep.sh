@@ -46,7 +46,7 @@ BASE_BRANCH="${BASE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 RUN_DIR="$AGENT_DIR/runs/$RUN_ID"
 
-log()  { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*"; }
+log()  { local l; l="$(printf '[%s] %s' "$(date +%H:%M:%S)" "$*")"; printf '%s\n' "$l"; if [[ -n "${RUN_DIR:-}" ]]; then mkdir -p "$RUN_DIR" 2>/dev/null; printf '%s\n' "$l" >> "$RUN_DIR/loop.log"; fi; }  # tee to stdout AND runs/<id>/loop.log (appended live, per call)
 die()  { printf '[FATAL] %s\n' "$*" >&2; exit 1; }
 gitr() { git -C "$ROOT" "$@"; }
 
