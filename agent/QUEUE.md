@@ -13,7 +13,7 @@
        null target/combined DEBT      : item 2 (target debt dropped) is upstream of item 3 (false EBITDA message)
      Do item 1 before 4, and item 2 before 3. -->
 
-- [x] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- DONE run 20260815-150838 -->
+- [ ] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
   - pair: GOOGL/AMZN · observed: target (AMZN) gross profit renders "—" on §7 (LTM P&L) while §2 shows
     AMZN gross margin **50.3%** [present] and §8 shows target GP **$415,634M** [present] — analyzer #18
     `GP ASYMMETRY [§2gm=50.3%[VALUE] · §7=—[DASH] · §8tgt=$415,634[VALUE]]` · expected: §7 renders AMZN's

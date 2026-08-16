@@ -53,14 +53,66 @@ log()  { local l; l="$(printf '[%s] %s' "$(date +%H:%M:%S)" "$*")"; printf '%s\n
 die()  { printf '[FATAL] %s\n' "$*" >&2; exit 1; }
 gitr() { git -C "$ROOT" "$@"; }
 
+# ── repro pairs (Part C) ─────────────────────────────────────────────────────────────────────────────
+# Every open QUEUE.md item names the pair its defect REPRODUCES on. The capture set used to be the
+# alphabetically-first PAIRS_LIMIT pairs off disk, which contained almost none of them: run 20260815-150838
+# captured AAPL/VZ ABNB/EXPE AMT/CCI AMZN/MSFT ARM/SNPS while working item 1, whose repro pair is
+# GOOGL/AMZN — so the gate compared 8 defects to 8 on five decks that never contained the bug, and a no-op
+# scored as a pass. Repro pairs are therefore MANDATORY in the capture set; PAIRS_LIMIT caps only the filler.
+#
+# EXTRACTION IS LITERAL — never inferred. Two accepted forms, in priority order:
+#   1. a `pair:` label      — `- pair: GOOGL/AMZN · observed: …`      (QUEUE.md's documented shape)
+#   2. the title STARTING with the pair — `**KO/NSRGY — comps from CNBC**`  (the dashboard's shape)
+# A free scan of the whole block is deliberately NOT done: item 1's title carries "GATE-2A root:
+# GP/COGS-crossSurface", which a greedy scan reads as the pair GP/COGS. An item with no parseable pair
+# yields "-" and is BLOCKED at its iteration — a repro pair is never guessed.
+repro_pair() {                                 # $1 = "queue" ($2=QUEUE.md → one line per open item) | "block" ($2=item text)
+  node -e '
+    const fs=require("fs");
+    const TICK="[A-Z][A-Z0-9.]{0,5}";
+    const LABEL=new RegExp("\\bpair\\s*:\\s*("+TICK+")\\s*/\\s*("+TICK+")");
+    const TITLE=new RegExp("^("+TICK+")\\s*/\\s*("+TICK+")\\b");
+    const of=blk=>{
+      const lines=String(blk).split("\n"); let m;
+      if((m=String(blk).match(LABEL))) return m[1].toUpperCase()+"/"+m[2].toUpperCase();
+      const title=(lines[0]||"").replace(/^\s*- \[[^\]]\]\s*/,"").replace(/\*\*/g,"").replace(/^\d+[.)]\s*/,"").trim();
+      if((m=title.match(TITLE))) return m[1].toUpperCase()+"/"+m[2].toUpperCase();
+      return "-";
+    };
+    const [mode,arg]=process.argv.slice(1);
+    if(mode==="block"){ console.log(of(arg)); process.exit(0); }
+    const t=fs.readFileSync(arg,"utf8");
+    const open=(t.split(/^## Open/m)[1]||"").split(/^## /m)[0]; const L=open.split("\n");
+    for(let i=0;i<L.length;i++){
+      if(!/^- \[ \] /.test(L[i])) continue;
+      const b=[L[i]]; for(let j=i+1;j<L.length;j++){ if(/^- \[/.test(L[j])||/^## /.test(L[j])) break; b.push(L[j]); }
+      console.log(of(b.join("\n")));
+    }' "$1" "$2"
+}
+pair_capture_state() {                         # $1 = snapshot dir, $2 = PAIR → "OK" | "MISSING" | "FAILED:<reason>"
+  node -e '
+    const fs=require("fs"); const [dir,pair]=process.argv.slice(1);
+    let j; try{ j=JSON.parse(fs.readFileSync(dir+"/"+pair.replace("/","_")+".json","utf8")); }
+    catch(e){ process.stdout.write("MISSING"); process.exit(0); }
+    process.stdout.write(j.ok===true?"OK":("FAILED:"+(j.reason||j.stage||"UNKNOWN")));
+  ' "$1" "$2"
+}
+
 # ── capture: clear RAW, run capture.js (or MOCK_CAPTURE), snapshot into $1 ───────────────────────────
-PAIRS_JSON=""
+PAIRS_JSON=""; REPRO_PAIRS=""
 build_pairs_json() {
-  PAIRS_JSON="$(node -e '
+  # repro pairs FIRST and uncapped (they are what the run is measured on); the on-disk pair list is filler.
+  REPRO_PAIRS="$(repro_pair queue "$QUEUE" | grep -v '^-$' | sort -u | tr '\n' ' ')"
+  PAIRS_JSON="$(REPRO="$REPRO_PAIRS" node -e '
     const fs=require("fs"),p=process.argv[1],lim=+process.argv[2]||0;
-    let ps=fs.readdirSync(p).filter(f=>f.endsWith(".json")).map(f=>JSON.parse(fs.readFileSync(p+"/"+f)).pair);
-    if(lim>0) ps=ps.slice(0,lim);
-    process.stdout.write(JSON.stringify(ps.map(x=>{const [a,b]=x.split("/");return [a,b,null];})));
+    const seed=fs.readdirSync(p).filter(f=>f.endsWith(".json"))
+      .map(f=>{try{return JSON.parse(fs.readFileSync(p+"/"+f)).pair}catch(e){return null}}).filter(Boolean);
+    const seen=new Set(), out=[];
+    for(const x of (process.env.REPRO||"").trim().split(/\s+/).filter(Boolean)) if(!seen.has(x)){seen.add(x);out.push(x);}
+    let filler=seed.filter(x=>!seen.has(x));
+    if(lim>0) filler=filler.slice(0,lim);       // PAIRS_LIMIT caps the FILLER only — never a repro pair
+    for(const x of filler) if(!seen.has(x)){seen.add(x);out.push(x);}
+    process.stdout.write(JSON.stringify(out.map(x=>{const i=x.indexOf("/");return [x.slice(0,i),x.slice(i+1),null];})));
   ' "$ROOT/docs/sweep-v2/captures" "$PAIRS_LIMIT")"
 }
 do_capture() {                                 # $1 = dest snapshot dir, $2 = phase label; rc 2 = capture failed
@@ -148,6 +200,23 @@ agent_verdict() {                              # $1 = agent json → "OK <TOKEN>
 }
 agent_changed() { [[ -n "$(gitr status --porcelain)" ]]; }   # true if the agent left uncommitted edits (runs/ is gitignored)
 
+# ── agent error envelope (Part B) ─────────────────────────────────────────────────────────────────────
+# calibration.csv used to record ONLY status/turns/cost, so run 20260815-150838's row reads DONE even
+# though the agent returned is_error:true / subtype:error_max_turns. These three fields go into the
+# ledger so a row can never again look like a success when the agent actually died. NOTE: json_field()
+# stringifies a MISSING key as the literal "undefined", which would corrupt the CSV — hence a dedicated
+# reader that emits ABSENT and strips CSV-hostile characters. terminal_reason is read as the fallback for
+# subtype (same "why did it end" fact; subtype is the more specific of the two when both are present).
+agent_envelope() {                             # $1 = agent json → "is_error<TAB>subtype<TAB>terminal_reason"
+  node -e '
+    const fs=require("fs"); let j={};
+    try{ j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); }catch(e){}
+    const s=v=>(v===undefined||v===null||v==="")?"ABSENT":String(v).replace(/[",\r\n\t]/g," ").trim();
+    const e=j.is_error===true?"true":(j.is_error===false?"false":"ABSENT");
+    process.stdout.write([e,s(j.subtype),s(j.terminal_reason)].join("\t"));
+  ' "$1"
+}
+
 # ── frozen-price check (empirical, not clock) ────────────────────────────────────────────────────────
 frozen_check() {                               # rc 0 = frozen (N+1 ok), 1 = moving (force 2N)
   if [[ -n "${TEST_FROZEN:-}" ]]; then [[ "$TEST_FROZEN" == "1" ]]; return; fi
@@ -190,11 +259,12 @@ decide() {                                     # $1 = plain-English statement (n
   [[ -f "$DECISIONS" ]] || printf '# Sweep decisions log\n\nPlain-English statements of tripwire-worthy changes. Logged, not gated.\n' > "$DECISIONS"
   printf '\n- [%s · run %s · iter %s] %s\n' "$(date +%H:%M:%S)" "$RUN_ID" "${CUR_ITER:-?}" "$1" >> "$DECISIONS"
 }
-calib_hdr() { [[ -f "$CALIB" ]] || echo "run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture" > "$CALIB"; }
+calib_hdr() { [[ -f "$CALIB" ]] || echo "run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture,agent_is_error,agent_subtype,agent_status_token" > "$CALIB"; }
 finalize() {                                   # $1=status $2=marker (x=done · ~=parked · o=leave OPEN) $3=forced
   calib_hdr
   [[ "$2" == "x" || "$2" == "~" ]] && { queue_mark "$2" "$1 run $RUN_ID" || true; }   # "o" ⇒ leave the item OPEN (Parts 2/3: NO_VERDICT/BUILD_BROKEN/UNVERIFIED/NO_CHANGE)
-  printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s\n' "$RUN_ID" "$CUR_ITER" "$ITEM_TITLE" "$1" "$WALL" "$TURNS" "$COST" "$DEF_BEFORE" "$DEF_AFTER" "$CAP_MODE" "$3" >> "$CALIB"
+  printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$RUN_ID" "$CUR_ITER" "$ITEM_TITLE" "$1" "$WALL" "$TURNS" "$COST" "$DEF_BEFORE" "$DEF_AFTER" "$CAP_MODE" "$3" \
+    "${AGENT_IS_ERROR:-ABSENT}" "${AGENT_SUBTYPE:-ABSENT}" "${STATUS_TOKEN:-ABSENT}" >> "$CALIB"
   gitr add -A >/dev/null 2>&1
   gitr commit -q -m "sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER" >/dev/null 2>&1 || true
 }
@@ -254,6 +324,11 @@ if [[ "$CAP_MODE" == "N+1" ]]; then SWEEPS=$(( QCOUNT + 1 )); else SWEEPS=$(( QC
 EST_S=$(( SWEEPS * PER_SWEEP_S + QCOUNT * 120 ))
 END_HUMAN="$(date -v +"${EST_S}"S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "+${EST_S} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')"
 log "RUN $RUN_ID · branch sweep/auto-$RUN_ID · $NPAIRS pairs · $QCOUNT open items · mode $CAP_MODE"
+NREPRO="$(printf '%s' "$REPRO_PAIRS" | wc -w | tr -d ' ')"
+NOPAIR="$(repro_pair queue "$QUEUE" | grep -c '^-$' || true)"
+log "capture set: $NPAIRS pairs = $NREPRO mandatory repro + filler (PAIRS_LIMIT=$PAIRS_LIMIT caps filler only)"
+log "repro pairs (forced): ${REPRO_PAIRS:-<none>}"
+[[ "$NOPAIR" -gt 0 ]] && log "WARNING: $NOPAIR open item(s) name no repro pair — each is BLOCKED at its iteration (never guessed)"
 log "START $(date '+%Y-%m-%d %H:%M:%S')  →  PROJECTED END ~$END_HUMAN  (${SWEEPS} sweeps × ~${PER_SWEEP_S}s + agent)"
 
 log "baseline capture ($NPAIRS pairs)…"
@@ -277,7 +352,20 @@ while :; do
   ITEM="$(queue_next)"; [[ $? -eq 3 ]] && { log "halt: queue empty"; break; }
   ITEM_TITLE="$(printf '%s' "$ITEM" | head -1 | sed 's/^- \[ \] //; s/\*\*//g; s/,/;/g; s/"/'"'"'/g' | cut -c1-58)"
   WALL=0; TURNS=0; COST=0; DEF_AFTER="$DEF_BEFORE"
+  # Part B: reset the envelope columns each iteration so a TIMEOUT / pre-agent INDETERMINATE row cannot
+  # inherit the previous iteration's agent state. ABSENT = "we never got a readable envelope".
+  AGENT_IS_ERROR=ABSENT; AGENT_SUBTYPE=ABSENT; AGENT_TERMINAL=ABSENT; STATUS_TOKEN=ABSENT
   log "── iter $CUR_ITER · $ITEM_TITLE"
+
+  # ── REPRO GATE half 1 (Part C): an item that names no repro pair has nothing to measure against. Blocked
+  #    HERE, before any capture or agent time is spent. BLOCKED is a PARK, not a code failure — it reverts
+  #    nothing and does not count toward the consecutive-fail breaker.
+  ITEM_PAIR="$(repro_pair block "$ITEM")"
+  if [[ -z "$ITEM_PAIR" || "$ITEM_PAIR" == "-" ]]; then
+    log "BLOCKED: item names no repro pair (needs a 'pair: A/B' line, or a title starting 'A/B — …') — not worked"
+    decide "iter $CUR_ITER BLOCKED: queue item names no parseable repro pair, so no measurement is possible; parked without agent work."
+    finalize BLOCKED "~" false; continue
+  fi
 
   # freeze re-check every 3 iterations (HOLE 2)
   if [[ "$CAP_MODE" == "N+1" && "$CUR_ITER" -gt 1 && $(( (CUR_ITER-1) % 3 )) -eq 0 ]]; then
@@ -302,6 +390,17 @@ while :; do
     PENDING_FRESH_BASELINE=0
   fi
 
+  # ── REPRO GATE half 2 (Part C): the item's repro pair must be PRESENT and analyzable in the snapshot the
+  #    gate will actually score against. Working an item whose repro deck was never captured is exactly what
+  #    let run 20260815-150838 read a no-op as "8->8 clear": the deck carrying the defect was not in the
+  #    window at all, so neither grader could ever see the fix — or its absence.
+  PAIR_STATE="$(pair_capture_state "$CUR_BEFORE_DIR" "$ITEM_PAIR")"
+  if [[ "$PAIR_STATE" != "OK" ]]; then
+    log "BLOCKED: repro pair $ITEM_PAIR is $PAIR_STATE in $(basename "$CUR_BEFORE_DIR") — unmeasurable, not worked"
+    decide "iter $CUR_ITER BLOCKED: repro pair $ITEM_PAIR failed to capture ($PAIR_STATE); the defect's own deck is absent from the measurement window, so no verdict is possible — parked without agent work."
+    finalize BLOCKED "~" "$FORCED"; continue
+  fi
+
   CHECKPOINT="$(gitr rev-parse HEAD)"; ITER_T0="$(date +%s)"; AGENT_OUT="$RUN_DIR/agent-$CUR_ITER.json"
 
   # run the agent under a wall-clock timeout (bounds a permission-prompt hang that --max-turns cannot)
@@ -316,6 +415,10 @@ while :; do
   fi
   TURNS="$(json_field "$AGENT_OUT" num_turns 0)"; COST="$(json_field "$AGENT_OUT" total_cost_usd 0)"
   COST_TOTAL="$(awk "BEGIN{print $COST_TOTAL + $COST}")"
+  # Part B: read the agent's own error envelope alongside turns/cost, for calibration.csv and the log.
+  IFS=$'\t' read -r AGENT_IS_ERROR AGENT_SUBTYPE AGENT_TERMINAL <<< "$(agent_envelope "$AGENT_OUT")"
+  [[ "$AGENT_SUBTYPE" == "ABSENT" && "$AGENT_TERMINAL" != "ABSENT" ]] && AGENT_SUBTYPE="$AGENT_TERMINAL"
+  [[ "$AGENT_IS_ERROR" == "true" ]] && log "agent envelope: is_error=true subtype=$AGENT_SUBTYPE terminal_reason=$AGENT_TERMINAL turns=$TURNS"
 
   # REPLAY GUARD (duplicate responses have occurred 3× in this project)
   RESULT_HASH="$(hash_result)"
@@ -332,7 +435,10 @@ while :; do
 
   # ── VERDICT GATE (Part 2): no clean envelope + status token ⇒ NO_VERDICT. Checked BEFORE the after-capture
   #    so an untrustworthy agent never spends a ~10-min capture, and its edits are reverted, not measured.
-  VERDICT="$(agent_verdict "$AGENT_OUT")"; STATUS_TOKEN="${VERDICT#* }"
+  VERDICT="$(agent_verdict "$AGENT_OUT")"
+  # Only an OK verdict yields a real token; on NO_VERDICT the suffix is a REASON, not a token, and must
+  # not be written into calibration.csv's agent_status_token column as if it were one.
+  if [[ "$VERDICT" == OK\ * ]]; then STATUS_TOKEN="${VERDICT#OK }"; else STATUS_TOKEN=ABSENT; fi
   if [[ "$VERDICT" != OK\ * ]]; then
     log "NO_VERDICT (${VERDICT#NO_VERDICT }) — untrustworthy agent result; revert, leave item OPEN, save envelope to diagnosis/"
     mkdir -p "$AGENT_DIR/diagnosis" 2>/dev/null || true

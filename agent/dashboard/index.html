@@ -74,12 +74,25 @@ function PastePlan({ onQueue }) {
   );
 }
 
-function Queue({ plan }) {
+function Queue({ plan, onChange }) {
   const items = (plan && plan.items) || [];
   const c = (plan && plan.counts) || {};
+  // "Add to queue" is append-only, so re-parsing a plan STACKS entries — without this the working queue
+  // only ever grows (it had reached 47: 41 prose blocks + 7 duplicates). Two clicks, because it discards.
+  const [armed, setArmed] = useState(false);
+  useEffect(()=>{ if(!armed) return; const t=setTimeout(()=>setArmed(false),5000); return ()=>clearTimeout(t); },[armed]);
+  const clear = () => {
+    if (!armed) { setArmed(true); return; }
+    fetch('/api/plan', { method:'DELETE' }).then(r=>r.json()).then(()=>{ setArmed(false); onChange&&onChange(); }).catch(()=>setArmed(false));
+  };
   return (
     <div className="panel">
-      <h2>Queue — {c.done||0} done · {c.running||0} running · {c.queued||0} queued · {c.blocked||0} blocked{c.skipped?` · ${c.skipped} skipped`:''}</h2>
+      <div style={{display:'flex',alignItems:'baseline',gap:10}}>
+        <h2 style={{flex:1}}>Queue — {c.done||0} done · {c.running||0} running · {c.queued||0} queued · {c.blocked||0} blocked{c.skipped?` · ${c.skipped} skipped`:''}</h2>
+        <button onClick={clear} disabled={!items.length} style={Object.assign({padding:'3px 10px',fontSize:12},armed?{borderColor:'#f85149',background:'#3d1b1b'}:{})}>
+          {armed ? `Confirm — discard all ${items.length}` : 'Clear'}
+        </button>
+      </div>
       {items.length===0 ? <div className="dim">Empty — paste a plan above.</div> :
         items.map((it,i)=>{ const s = ST[it.status]||ST.queued; return (
           <div key={i} className={'row'+(it.status==='done'?' done':'')}>
@@ -220,7 +233,7 @@ function App() {
         <span style={{marginLeft:'auto'}} className="dim">{s.stopExists?<b className="warn">STOP set</b>:''}</span>
       </div>
       <PastePlan onQueue={()=>{refreshState();refreshPf();}} />
-      <Queue plan={s.plan} />
+      <Queue plan={s.plan} onChange={()=>{refreshState();refreshPf();}} />
       <Launch pf={pf} plan={s.plan} refresh={()=>{refreshState();refreshPf();}} />
       <Summary summary={s.summary} />
       <LiveView live={s.live} summary={s.summary} budget={s.budgetUsd} undo={s.undo} />

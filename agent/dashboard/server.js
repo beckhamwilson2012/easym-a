@@ -330,6 +330,11 @@ app.post('/api/plan', (req, res) => {
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
 app.get('/api/plan', (_req, res) => { try { res.json(planPreview(readPlan())); } catch (e) { res.status(500).json({ error: String(e) }); } });
+// CLEAR — empty the working queue. "Add to queue" is append-only by design, so every re-parse of a plan
+// STACKS: plan.json had grown to 47 entries (41 prose blocks that were never repros + 7 duplicate keys)
+// with no way to reset short of editing the file by hand. Clearing touches plan.json ONLY — QUEUE.md,
+// calibration.csv and the run history are never rewritten from here.
+app.delete('/api/plan', (_req, res) => { try { writePlan([]); res.json(planPreview([])); } catch (e) { res.status(500).json({ error: String(e) }); } });
 // LAUNCH — the only write action beyond plan.json. Server-side gated on preflight; appends queued items to
 // QUEUE.md (append-only) and spawns run-sweep.sh detached. Refuses on any failed precondition.
 app.post('/api/launch', async (req, res) => {

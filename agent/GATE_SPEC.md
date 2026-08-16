@@ -82,3 +82,22 @@ makes the harness blame the agent for network conditions — reverting good work
 if it recurs, halting the whole run on noise. The three-state grade
 (**CLEAN / REGRESSION / INDETERMINATE**) is what keeps the gate honest under real
 network conditions.
+
+## 6. Known blind spots
+
+**Neither grader checks whether a number is plausible.** The analyzer matches known
+defect patterns — it answers "does this output look like a shape I was taught to
+recognize as broken?" The differ detects change — it answers "did this cell move
+between two captures?" Nothing in either one asks "is this figure believable for this
+company?" So a figure that is confidently, materially wrong but *stable* passes both
+graders silently: the analyzer has no pattern for it, and the differ sees no movement
+because it never moves. This is not theoretical. Run `20260815-150838` rendered
+Verizon's 52-week low as **$10.60** against a $48.48 share price and a $51.68 52-week
+high — an impossible range that the analyzer did not flag, and that the differ only
+surfaced as an unflagged `VALUE -> VALUE` cell change, on the accident of the value
+having moved *that* run. Had the bad value been present in both captures it would
+have been completely invisible. The upstream cause was a single-source field: CNBC is
+sole source of truth for `week52Low`, and with Yahoo rate-limited (429) and Finnhub
+keyless, the cross-check degraded to `single` — one source cannot disagree with
+itself, so no flag was possible. Treat a clean gate as "no *known* pattern broke and
+nothing moved", never as "the output is correct".
