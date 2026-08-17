@@ -20,8 +20,11 @@ const norm = s => String(s || '').trim().toLowerCase().replace(/[’']/g, "'").r
 const M = {
   revenue:  n => ['revenues', 'revenue', 'total revenues', 'net revenues', 'net sales', 'total revenue'].includes(n),
   cogs:     n => /^cost of (revenues?|sales|goods sold)$/.test(n),
-  gross:    n => n === 'gross profit',
-  totCosts: n => ['total costs and expenses', 'total operating expenses', 'total costs and operating expenses', 'total operating costs and expenses'].includes(n),
+  gross:    n => n === 'gross profit' || n === 'gross margin',
+  // one-step total (Revenue − this = Operating income). Does NOT include "total operating expenses",
+  // which on a two-step statement is subtracted from GROSS PROFIT, not from revenue.
+  totCostsOneStep: n => ['total costs and expenses', 'total costs and operating expenses', 'total operating costs and expenses'].includes(n),
+  totOpEx:  n => n === 'total operating expenses',
   opInc:    n => ['income from operations', 'operating income', 'operating income (loss)', 'loss from operations'].includes(n),
   netInc:   n => ['net income', 'net income (loss)', 'net loss'].includes(n),
   assets:   n => n === 'total assets',
@@ -59,8 +62,28 @@ function runChecks(items, facts) {
 
   // 1. Revenue - COGS = stated gross profit  (only if a gross-profit line is printed)
   results.push(tie('grossProfit = revenue - COGS', M.revenue, M.cogs, M.gross, 'sub'));
-  // 2. Operating income = revenue - total costs  (ties to the printed subtotal)
-  results.push(tie('operatingIncome = revenue - totalCosts', M.revenue, M.totCosts, M.opInc, 'sub'));
+
+  // 2. Operating income — written for BOTH income-statement shapes (Bug 6):
+  //    two-step: Gross profit − Total operating expenses = Operating income   (NVDA, HD, AAPL)
+  //    one-step: Revenue − Total costs and expenses     = Operating income   (KO, MCD, …)
+  //    Never Revenue − "total operating expenses" (the old bug that nulled correct two-step EBIT).
+  {
+    let applicable = false; const failures = []; const detail = [];
+    for (const p of periods) {
+      const op = find(items, M.opInc, p); if (!op) continue;
+      const gp = find(items, M.gross, p), opex = find(items, M.totOpEx, p);
+      const rev = find(items, M.revenue, p), tc = find(items, M.totCostsOneStep, p);
+      let expected = null, basis = '';
+      if (gp && opex) { expected = gp.value - opex.value; basis = 'gross profit − total operating expenses'; }
+      else if (rev && tc) { expected = rev.value - tc.value; basis = 'revenue − total costs and expenses'; }
+      else continue;   // structure not verifiable → skip this period (NA), never fail on a mismatched shape
+      applicable = true;
+      if (Math.abs(expected - op.value) > ABS_TOL) { failures.push({ item: op, period: p, reason: `operating-income tie (${basis})`, expected, got: op.value }); detail.push(`${p}: exp ${expected} got ${op.value}`); }
+      else detail.push(`${p}: ${op.value} ✓ (${basis})`);
+    }
+    results.push({ name: 'operating income tie', status: !applicable ? 'na' : failures.length ? 'fail' : 'pass', detail: detail.join(' | ') || 'n/a', failures });
+  }
+
   // 3. Assets = liabilities + equity
   results.push(tie('assets = liabilities + equity', M.assets, M.liab, M.equity, 'add'));
 
