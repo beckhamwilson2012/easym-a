@@ -675,7 +675,13 @@ async function fetchFromEDGAR(symbol, cik) {
   // as it migrates (SHOP's 0.125% notes: $916M NC @2023 → $918M Cur @2024 → $0 @2025). baseRequired=false — the
   // live amount can be wholly in the current bucket; first-match over the two would be WRONG (pick accepts $0
   // and stops on the zeroed bucket). Non-null only when > 0 → a retired-to-zero convert stays "—".
-  const convertTotal = useIfrs ? null : siblingSum(bsPick(['ConvertibleDebtNoncurrent']), bsPick(['ConvertibleDebtCurrent']), false);
+  // Each BUCKET is first-match over its own alias list (never summed within a bucket — that would double-count
+  // a filer tagging both names): `ConvertibleLongTermNotesPayable` is the same noncurrent bucket under the
+  // notes-payable name, used by DASH ($2,727M @2026-06-30 = $2.75B principal net of issuance cost) and DDOG
+  // ($986M @2026-06-30 = $1.0B principal net of issuance cost) — both returned null before this alias.
+  const convertTotal = useIfrs ? null : siblingSum(
+    bsPick(['ConvertibleDebtNoncurrent', 'ConvertibleLongTermNotesPayable']),
+    bsPick(['ConvertibleDebtCurrent',    'ConvertibleNotesPayableCurrent']), false);
 
   // Current portion of long-term debt (Stage 7A-3). Where the TOTAL `LongTermDebt` is untagged at the anchor
   // (GOOGL/WMT tag the total only annually; the interim anchor carries only the components), summing
@@ -693,10 +699,27 @@ async function fetchFromEDGAR(symbol, cik) {
     //      lease-inclusive concept. Period-matched like the rest, so a stale lease tag (ADBE 2021, RRGB 2018)
     //      is still rejected; a stale/absent LTD-NC leaves ltdSiblingSum null so this fires unchanged for KO.
     //   4. convertTotal — convertibles tagged outside the LongTermDebt family (SHOP).
+    //   5. non-LongTermDebt TOTAL-debt concepts (Stage 7A-4). A filer whose borrowings are a term loan or a
+    //      revolver draw often stops tagging the `LongTermDebt` family in its 10-Qs and reports the same
+    //      total under a facility/notes name instead — IRDM tags `LongTermDebt` $1,757,124,000 @2025-12-31
+    //      and `LongTermLineOfCredit` at the IDENTICAL value on the same instant, then in the 10-Qs tags
+    //      ONLY the line-of-credit pair ($1,749M @2026-06-30). Missing this step returned debt=null at the
+    //      interim anchor, which §2 coerced to $0 and published as net CASH $184M against a filing showing
+    //      $1.75B of borrowings. Each alias is a TOTAL (includes its own current portion), evidenced by an
+    //      exact overlap with the concept it replaces: IRDM LongTermLineOfCredit == LongTermDebt at both
+    //      2024-12-31 and 2025-12-31; GME LongTermNotesPayable $4,166M @2026-05-02 vs §16 EDGAR $4,164M
+    //      @2026-01-31. `DebtLongtermAndShorttermCombinedAmount` (PGR $8,387M) is a total by definition and
+    //      so is tried FIRST of the three — a filer tagging it AND a facility name must not resolve to the
+    //      narrower facility figure. Component-only concepts stay OUT: `SeniorNotes` (EA $1,485M vs FMP
+    //      $1,854M at the SAME date → a subset, would understate) and `ShortTermBorrowings` (JPM — short-term
+    //      by definition). Residual limit, unchanged in kind by this step: a filer carrying bonds under a
+    //      concept none of 1-5 names plus a revolver under one that they do will still resolve to the
+    //      revolver alone and understate. Widen this list rather than adding a per-ticker branch.
     // OPERATING LEASES stay OUT of net debt by deliberate convention — operating obligations, not borrowings
     // (AMZN's ~$76.6B operating-lease liability is why this is STATED, not silently omitted). The lease concept
     // in step 3 is FINANCE-lease-inclusive BORROWING (a different thing) — do not add OperatingLeaseLiability*.
-    : (bsPick(['LongTermDebt']) ?? ltdSiblingSum ?? bsPick(['LongTermDebtAndCapitalLeaseObligations']) ?? convertTotal);
+    : (bsPick(['LongTermDebt']) ?? ltdSiblingSum ?? bsPick(['LongTermDebtAndCapitalLeaseObligations']) ?? convertTotal
+       ?? bsPick(['DebtLongtermAndShorttermCombinedAmount', 'LongTermLineOfCredit', 'LongTermNotesPayable']));
 
   // Total assets at the balance-sheet anchor (7A Item 2) — resolved via bsPick, i.e. pickInstantAt at the SAME
   // bsAnchor as cash/debt (interim) or the same annual end (annual). Same instant → no mixed-date risk on §3.
