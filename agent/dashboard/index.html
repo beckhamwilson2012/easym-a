@@ -119,6 +119,20 @@
   .undoBox{margin-top:10px;background:var(--page);border:1px solid var(--line);border-radius:8px;
            padding:10px;font:11px/1.6 ui-monospace,Menlo,monospace;color:var(--t-3);
            white-space:pre-wrap;word-break:break-all;}
+
+  /* ── settings ────────────────────────────────────────────────────────── */
+  .setRow{display:flex;align-items:center;gap:16px;padding:13px 0;border-bottom:1px solid var(--line);}
+  .setRow:last-child{border-bottom:0;}
+  .setLabel{font-size:13px;color:var(--t-1);}
+  .setExplain{font-size:11px;color:var(--t-4);margin-top:3px;line-height:1.4;}
+  .setCtrl{display:flex;align-items:center;gap:5px;flex:0 0 auto;}
+  .setPrefix{font-size:14px;color:var(--t-3);}
+  .setInput{width:82px;background:var(--page);color:var(--t-1);border:1px solid var(--line);border-radius:8px;
+            padding:8px 10px;font:14px/1.2 inherit;text-align:right;}
+  .setInput:focus{outline:none;border-color:#3A3A3A;}
+  .toggle{width:42px;height:24px;border-radius:20px;flex:0 0 auto;position:relative;transition:background .15s;}
+  .toggle .knob{position:absolute;top:3px;width:18px;height:18px;border-radius:50%;background:#E8E6E1;transition:left .15s;}
+  code{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--t-2);word-break:break-all;}
 </style>
 </head>
 <body>
@@ -216,20 +230,116 @@ const NEEDS = {
   source  : 'needs how you know',
 };
 
-function Sidebar() {
+// "Add a bug" is gone — the panel lives on the Dashboard; a duplicate nav item was just confusing.
+function Sidebar({ page, setPage }) {
+  const item = (name) => {
+    const id = name.toLowerCase();
+    return <div key={id} className={'navItem' + (page === id ? ' on' : '')}
+      style={{cursor:'pointer'}} onClick={()=>setPage(id)}>{name}</div>;
+  };
   return (
     <div className="side">
       <div className="avatar"></div>
-      <div className="nav">
-        <div className="navItem on">Dashboard</div>
-        <div className="navItem">Bugs</div>
-        <div className="navItem">History</div>
-        <div className="navItem">Add a bug</div>
-      </div>
-      <div className="navFoot"><div className="navItem">Settings</div></div>
+      <div className="nav">{['Dashboard','Bugs','History'].map(item)}</div>
+      <div className="navFoot">{item('Settings')}</div>
     </div>
   );
 }
+
+function Toggle({ on, disabled, onClick }) {
+  return (
+    <div className="toggle" onClick={disabled ? undefined : onClick}
+      style={{background: on ? '#4B7A1F' : '#2A2A2A', cursor: disabled ? 'default' : 'pointer', opacity: disabled ? 0.45 : 1}}>
+      <div className="knob" style={{left: on ? 21 : 3}} />
+    </div>
+  );
+}
+
+function SettingsPage() {
+  const [rows, setRows] = useState(null);
+  const [edit, setEdit] = useState({});
+  const [jobs, setJobs] = useState(null);
+  const [saved, setSaved] = useState(false);
+  const [err, setErr] = useState({});
+  const load = useCallback(() => {
+    fetch('/api/settings').then(r=>r.json()).then(d=>{ setRows(d.settings || []); setEdit({}); }).catch(()=>{});
+    fetch('/api/launchd').then(r=>r.json()).then(setJobs).catch(()=>{});   // REAL state, read on every open — never cached
+  }, []);
+  useEffect(load, [load]);
+  const dirty = Object.keys(edit).some(k => edit[k] != null && edit[k] !== '');
+  const save = () => {
+    const patch = {};
+    Object.keys(edit).forEach(k => { if (edit[k] != null && edit[k] !== '') patch[k] = edit[k]; });
+    post('/api/settings', patch).then(d => { if (d.settings) { setRows(d.settings); setEdit({}); setSaved(true); } });
+  };
+  const toggle = (j) => {
+    setErr(e => ({ ...e, [j.key]: null }));
+    post('/api/launchd', { key: j.key, on: !j.loaded })
+      .then(d => { if (d.error) setErr(e => ({ ...e, [j.key]: d.error })); })
+      .finally(() => fetch('/api/launchd').then(r=>r.json()).then(setJobs).catch(()=>{}));   // re-read REAL state
+  };
+  if (!rows) return <div className="panel">loading…</div>;
+  return (
+    <div className="row col">
+      <div className="panel">
+        <div className="secLabel">Run settings</div>
+        <div className="secSub">These used to live inside a script. The runner reads them from here now.</div>
+        <div style={{marginTop:12}}>
+          {rows.map(r => (
+            <div className="setRow" key={r.key}>
+              <div style={{flex:1,minWidth:0}}>
+                <div className="setLabel">{r.label}</div>
+                <div className="setExplain">{r.explain}</div>
+              </div>
+              <div className="setCtrl">
+                {r.kind === 'money' && <span className="setPrefix">$</span>}
+                <input className="setInput" type="number" min="0"
+                  value={edit[r.key] != null ? edit[r.key] : r.display}
+                  onChange={e => { setSaved(false); setEdit(x => ({ ...x, [r.key]: e.target.value })); }} />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div style={{marginTop:14,display:'flex',alignItems:'center',gap:12}}>
+          <button className="btn solid" onClick={save} disabled={!dirty}>Save</button>
+          {saved && !dirty && <span className="addTally">saved</span>}
+          <span className="addTally" style={{marginLeft:'auto',textAlign:'right'}}>An env var at launch (e.g. BUDGET_USD=8) still wins for that one run.</span>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="secLabel">Automatic jobs</div>
+        <div className="secSub">macOS launchd jobs. The state shown is read live from launchctl each time you open this — not remembered.</div>
+        <div style={{marginTop:12}}>
+          {(jobs ? jobs.jobs : []).map(j => {
+            const blocked = err[j.key] || !j.controllable;
+            const cmd = j.loaded ? j.offCmd : j.onCmd;
+            return (
+              <div className="setRow" key={j.key}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div className="setLabel">{j.title}</div>
+                  <div className="setExplain">{j.explain}</div>
+                  {blocked && <div className="setExplain" style={{color:'#C98A88',marginTop:5}}>
+                    {err[j.key] ? err[j.key] : (!j.hasPlist ? "Can't toggle from here — plist not installed" : "Can't toggle from here")} — run: <code>{cmd}</code>
+                  </div>}
+                </div>
+                <div style={{display:'flex',alignItems:'center',gap:10,flex:'0 0 auto'}}>
+                  <span className="addTally">{j.loaded ? 'On' : 'Off'}</span>
+                  <Toggle on={j.loaded} disabled={!j.controllable} onClick={() => toggle(j)} />
+                </div>
+              </div>
+            );
+          })}
+          {jobs && !jobs.available &&
+            <div className="setExplain" style={{color:'#C98A88',marginTop:10}}>launchctl isn't reachable from the dashboard here — these are read-only; run the commands above from a terminal.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BugsPage({ queue }) { return <QueuePanel queue={queue} />; }
+function HistoryPage({ runs }) { return <PastRuns runs={runs} />; }
 
 function StatusCard({ view, elapsedSec, spent }) {
   const c = STATE[view.k];
@@ -421,6 +531,7 @@ function App() {
   const [s, setS] = useState(null);
   const [pf, setPf] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
+  const [page, setPage] = useState('dashboard');
   const refreshState = useCallback(()=>fetch('/api/state').then(r=>r.json()).then(setS).catch(()=>{}),[]);
   const refreshPf = useCallback(()=>fetch('/api/preflight').then(r=>r.json()).then(setPf).catch(()=>{}),[]);
   useEffect(()=>{ refreshState(); refreshPf();
@@ -428,7 +539,7 @@ function App() {
     return ()=>{clearInterval(a);clearInterval(b);}; },[refreshState,refreshPf]);
   const refresh = useCallback(()=>{ refreshState(); refreshPf(); },[refreshState,refreshPf]);
 
-  if (!s) return <div className="page"><Sidebar /><div className="main"><div className="panel">loading…</div></div></div>;
+  if (!s) return <div className="page"><Sidebar page={page} setPage={setPage} /><div className="main"><div className="panel">loading…</div></div></div>;
 
   const view = derive(s, pf);
   const live = s.live || {}, sum = s.summary || {}, st = live.status || {};
@@ -438,37 +549,46 @@ function App() {
   const foundSuf = before == null ? '' : '→ ' + (running || after == null ? '?' : String(after));
   const waiting = pf ? pf.queued : 0;
 
+  const TITLES = { dashboard:'Bug Fixer', bugs:'Bugs', history:'History', settings:'Settings' };
+  const TAGS = { dashboard:"Fix the deck, don't babysit the script.", bugs:'Everything waiting, in order.',
+    history:'Every run, honestly.', settings:'Change it here instead of from the terminal.' };
+
   return (
     <div className="page">
-      <Sidebar />
+      <Sidebar page={page} setPage={setPage} />
       <div className="main">
         <div className="head">
-          <h1>Bug Fixer</h1>
-          <span className="tag">Fix the deck, don't babysit the script.</span>
+          <h1>{TITLES[page] || 'Bug Fixer'}</h1>
+          <span className="tag">{TAGS[page] || ''}</span>
         </div>
 
-        <div className="row">
-          <StatusCard view={view} elapsedSec={live.elapsedSec} spent={sum.spent} />
-          <div className="tiles">
-            <Tile num={foundNum} suffix={foundSuf} label="Problems found" />
-            {running
-              ? <Tile num={st.iter || 1} suffix={'of ' + waiting} label="Bug being worked" />
-              : <Tile num={waiting} label="Bugs queued" />}
-          </div>
-        </div>
+        {page === 'settings' ? <SettingsPage />
+         : page === 'bugs' ? <BugsPage queue={s.queue} />
+         : page === 'history' ? <HistoryPage runs={s.pastRuns} />
+         : (<React.Fragment>
+            <div className="row">
+              <StatusCard view={view} elapsedSec={live.elapsedSec} spent={sum.spent} />
+              <div className="tiles">
+                <Tile num={foundNum} suffix={foundSuf} label="Problems found" />
+                {running
+                  ? <Tile num={st.iter || 1} suffix={'of ' + waiting} label="Bug being worked" />
+                  : <Tile num={waiting} label="Bugs queued" />}
+              </div>
+            </div>
 
-        <div className="row">
-          <Feed tail={live.logTail} />
-          <LaunchCard pf={pf} running={running} budget={s.budgetUsd} stopExists={s.stopExists}
-            refresh={refresh} undo={s.undo} />
-        </div>
+            <div className="row">
+              <Feed tail={live.logTail} />
+              <LaunchCard pf={pf} running={running} budget={s.budgetUsd} stopExists={s.stopExists}
+                refresh={refresh} undo={s.undo} />
+            </div>
 
-        <QueuePanel queue={s.queue} />
+            <QueuePanel queue={s.queue} />
 
-        <div className={'row top' + (addOpen ? ' col' : '')}>
-          <AddBug open={addOpen} setOpen={setAddOpen} onQueue={refresh} />
-          <PastRuns runs={s.pastRuns} />
-        </div>
+            <div className={'row top' + (addOpen ? ' col' : '')}>
+              <AddBug open={addOpen} setOpen={setAddOpen} onQueue={refresh} />
+              <PastRuns runs={s.pastRuns} />
+            </div>
+          </React.Fragment>)}
       </div>
     </div>
   );
