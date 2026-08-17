@@ -64,6 +64,9 @@ BUILD_LOG="/tmp/build-$RUN_ID.log"             # `npm run build` stdout/stderr (
 SERVER_PID=""                                   # PID of the server WE start (kill only our own + the port holder)
 LOCK_FILE="${SWEEP_LOCK:-$AGENT_DIR/runs/.sweep.lock}"  # single-runner mutex; runs/ is gitignored so `git clean -fd` cannot eat it
 LOCK_HELD=0                                     # 1 once WE own the lock — release_lock refuses to delete another run's
+CAPTURE_PID=""                                  # PID of the capture.js we are running right now, if any
+RUN_PHASE="startup"                             # where we are; named in the ledger row if we die abnormally
+RUN_COMPLETED=0                                 # 1 only after the run ends normally — gates finalize_abnormal
 
 log()  { local l; l="$(printf '[%s] %s' "$(date +%H:%M:%S)" "$*")"; printf '%s\n' "$l"; if [[ -n "${RUN_DIR:-}" ]]; then mkdir -p "$RUN_DIR" 2>/dev/null; printf '%s\n' "$l" >> "$RUN_DIR/loop.log"; fi; }  # tee to stdout AND runs/<id>/loop.log (appended live, per call)
 die()  { printf '[FATAL] %s\n' "$*" >&2; exit 1; }
@@ -96,8 +99,10 @@ acquire_lock() {
        server and both measurements become garbage (see runs/20260816-165919 vs -165953).
        Wait for run $rid to finish, or stop it and delete $LOCK_FILE."
   fi
-  # stale: the owner is gone (SIGKILL / crash / reboot). Reclaim, loudly.
+  # stale: the owner is gone (SIGKILL / crash / reboot). Reclaim, loudly — and reap what it left behind
+  # BEFORE we start capturing, or its capture.js competes with ours for :$APP_PORT and the rate limit.
   log "stale lock from run ${rid:-<unknown>} (pid ${pid:-<none>} not running) — reclaiming"
+  reap_stale_capture "$rid"
   rm -f "$LOCK_FILE"
   if ( set -o noclobber; printf '%s %s\n' "$$" "$RUN_ID" > "$LOCK_FILE" ) 2>/dev/null; then
     LOCK_HELD=1; return 0
@@ -110,9 +115,56 @@ release_lock() {                               # only ever removes a lock WE own
   [[ "${held%% *}" == "$$" ]] && rm -f "$LOCK_FILE"
   LOCK_HELD=0
 }
+
+# ── orphan reaping ───────────────────────────────────────────────────────────────────────────────────
+# Kill a capture.js left behind by a run whose runner is already dead.
+#
+# TARGETED BY IDENTITY, NEVER BY NAME. A live run's capture.js is byte-identical in `ps` to a zombie one,
+# so `pkill -f capture.js` would murder the healthy run this whole mechanism exists to protect. We only
+# ever touch the PID the dead run itself recorded in its own run dir, and the command-line check below is
+# a PID-REUSE GUARD — proof the pid is still that capture — not the way the process is selected.
+reap_stale_capture() {                         # $1 = the stale run's RUN_ID
+  local rid="$1" pf cpid cmd
+  [[ -n "$rid" && "$rid" != "<unknown>" ]] || return 0
+  pf="$AGENT_DIR/runs/$rid/capture.pid"
+  [[ -f "$pf" ]] || return 0                   # it exited cleanly and cleared its own pidfile
+  cpid="$(head -1 "$pf" 2>/dev/null | tr -dc '0-9')"
+  rm -f "$pf" 2>/dev/null || true
+  [[ -n "$cpid" ]] || return 0
+  kill -0 "$cpid" 2>/dev/null || return 0      # already gone; nothing to reap
+  cmd="$(ps -o command= -p "$cpid" 2>/dev/null || true)"
+  case "$cmd" in
+    *"$CAPTURE_JS"*)
+      log "reaping orphaned capture.js (pid $cpid) left by dead run $rid — it would fight us for :$APP_PORT"
+      kill_tree "$cpid" ;;
+    *)
+      log "stale capture.pid $cpid from run $rid is no longer capture.js (pid reused) — left alone" ;;
+  esac
+}
+
+# Everything THIS runner spawned, killed on our way out. The app server is deliberately spared: it is not a
+# competitor (it is what captures read FROM), leaving it up keeps :$APP_PORT browsable after a run, and the
+# next run's restart_server reclaims the port anyway.
+cleanup_children() {
+  local p
+  for p in $(pgrep -P $$ 2>/dev/null); do
+    [[ -n "${SERVER_PID:-}" && "$p" == "$SERVER_PID" ]] && continue
+    kill_tree "$p"
+  done
+}
+
+# One handler for every way this process can end. ORDER MATTERS: write the ledger row while the run's state
+# is still readable, then kill the children, then release the lock — so the next runner cannot start until
+# this one's capture.js is actually dead.
+on_exit() {
+  finalize_abnormal
+  cleanup_children
+  release_lock
+}
 # EXIT covers normal exit AND die(); INT/TERM cover Ctrl-C and `kill`. SIGKILL is untrappable by design —
-# that is exactly the case the stale-PID check above handles, so the lock can never wedge permanently.
-trap release_lock EXIT INT TERM
+# that is the case the stale-PID check and reap_stale_capture() above are for: the NEXT run cleans up what
+# a SIGKILLed run could not.
+trap on_exit EXIT INT TERM
 
 # ── repro pairs (Part C) ─────────────────────────────────────────────────────────────────────────────
 # Every open QUEUE.md item names the pair its defect REPRODUCES on. The capture set used to be the
@@ -177,15 +229,26 @@ build_pairs_json() {
   ' "$ROOT/docs/sweep-v2/captures" "$PAIRS_LIMIT")"
 }
 do_capture() {                                 # $1 = dest snapshot dir, $2 = phase label; rc 2 = capture failed
-  local dest="$1" phase="$2" t0; t0="$(date +%s)"
+  local dest="$1" phase="$2" t0 rc; t0="$(date +%s)"
+  RUN_PHASE="capture:$phase"
   log "capture START · $phase · ${NPAIRS:-?} decks (per-deck progress follows — a silent capture is the runner working, not a hang)"
   rm -rf "$RAW"; mkdir -p "$RAW" "$dest"
   if [[ -n "${MOCK_CAPTURE:-}" ]]; then
     bash "$MOCK_CAPTURE" "$RAW" "$phase" "$RUN_ID" || return 2
   else
     # LOOP_LOG + CAPTURE_PHASE → capture.js appends one line per deck to loop.log (Part 1); stdout stays /dev/null
-    GAP_MS="$GAP_MS" LOOP_LOG="$RUN_DIR/loop.log" CAPTURE_PHASE="$phase" node "$CAPTURE_JS" "$PAIRS_JSON" >/dev/null 2>&1 \
-      || { log "capture END · $phase · FAILED after $(( ($(date +%s) - t0) / 60 ))m"; return 2; }
+    #
+    # Backgrounded ONLY so the PID can be recorded — `wait` immediately below keeps this synchronous, so
+    # control flow is unchanged. The pidfile is how the NEXT run identifies a capture that outlived a killed
+    # runner: run 20260816-212606's capture.js survived its parent by 4 minutes and competed with run
+    # -222441's baseline for :$APP_PORT and one rate-limit budget, which is why -222441 captured 20 decks
+    # with only 5 ok. Identity, not process name — see reap_stale_capture().
+    GAP_MS="$GAP_MS" LOOP_LOG="$RUN_DIR/loop.log" CAPTURE_PHASE="$phase" node "$CAPTURE_JS" "$PAIRS_JSON" >/dev/null 2>&1 &
+    CAPTURE_PID=$!
+    printf '%s\n' "$CAPTURE_PID" > "$RUN_DIR/capture.pid" 2>/dev/null || true
+    wait "$CAPTURE_PID"; rc=$?
+    CAPTURE_PID=""; rm -f "$RUN_DIR/capture.pid" 2>/dev/null || true
+    [[ "$rc" -eq 0 ]] || { log "capture END · $phase · FAILED after $(( ($(date +%s) - t0) / 60 ))m"; return 2; }
   fi
   cp "$RAW"/*.json "$dest"/ 2>/dev/null || true
   local n ok
@@ -440,6 +503,38 @@ finalize() {                                   # $1=status $2=marker (x=done · 
   gitr commit -q -m "$msg" >/dev/null 2>&1 || true
 }
 
+# ── the ledger must record the runs that DIED, not only the ones that finished ───────────────────────
+# finalize() only runs at the end of a completed iteration, so a run killed before that left NO trace:
+# run 20260816-212606 died during its baseline capture and has no calibration row and no envelope at all.
+# A ledger that silently omits its failures understates both the cost and the failure rate, and the runs
+# most worth studying are exactly the ones that never reached finalize.
+#
+# Called from the EXIT trap, so it covers die(), Ctrl-C, `kill`, and a failed setup. It cannot cover
+# SIGKILL — nothing can — which is why reap_stale_capture() exists to clean up after that case instead.
+finalize_abnormal() {
+  [[ "$RUN_COMPLETED" -eq 1 ]] && return 0     # normal end: finalize() already wrote every row
+  [[ "$RUN_PHASE" == "startup" ]] && return 0  # never got past setup (e.g. lock refused) — nothing to report
+  [[ -n "${RUN_ID:-}" && -n "${CALIB:-}" ]] || return 0
+  calib_hdr
+  local wall cost phase
+  wall=$(( $(date +%s) - ${START_EPOCH:-$(date +%s)} ))
+  # Cost is only known for iterations whose agent call RETURNED. A run killed mid-agent, or during a
+  # capture, never learns what it spent — so the field is left EMPTY, which reads as "unknown". Writing 0
+  # there would be a lie that also silently drags down the ledger's total.
+  cost=""
+  awk "BEGIN{exit !(${COST_TOTAL:-0} > 0)}" && cost="${COST_TOTAL}"
+  phase="$(printf '%s' "killed during $RUN_PHASE" | sed 's/,/;/g; s/"/'"'"'/g' | cut -c1-120)"
+  printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+    "$RUN_ID" "${CUR_ITER:-0}" "$phase" KILLED "$wall" "" "$cost" \
+    "${DEF_BEFORE:-}" "" "${CAP_MODE:-}" false ABSENT ABSENT ABSENT >> "$CALIB"
+  log "KILLED: wrote a ledger row (phase $RUN_PHASE · ${wall}s · cost ${cost:-unknown}) — an abnormal end must not be invisible"
+  decide "run ended abnormally during $RUN_PHASE after ${wall}s; wrote a KILLED row to calibration.csv (cost ${cost:-unknown — the run died before its agent call returned})."
+  # Commit ONLY the two bookkeeping files. Not `add -A`: whatever the agent had on disk when we died is not
+  # ours to commit, and leaving these two uncommitted would trip the next run's dirty-tree check.
+  gitr add "$CALIB" "$DECISIONS" >/dev/null 2>&1 || true
+  gitr commit -q -m "sweep($RUN_ID): KILLED during $RUN_PHASE after ${wall}s — ledger row for an abnormal end" >/dev/null 2>&1 || true
+}
+
 # ── agent invocation + per-iteration wall-clock timeout ──────────────────────────────────────────────
 # --max-turns does NOT bound a permission-prompt hang: a pending prompt consumes no turns and waits
 # forever. So the agent runs under a wall-clock watchdog; on expiry we tree-kill it and treat it as
@@ -589,7 +684,9 @@ while :; do
   CHECKPOINT="$(gitr rev-parse HEAD)"; ITER_T0="$(date +%s)"; AGENT_OUT="$RUN_DIR/agent-$CUR_ITER.json"
 
   # run the agent under a wall-clock timeout (bounds a permission-prompt hang that --max-turns cannot)
+  RUN_PHASE="agent:iter $CUR_ITER"
   run_agent_timed "$ITER_TIMEOUT"; AGENT_RC=$?
+  RUN_PHASE="gate:iter $CUR_ITER"
   if [[ "$AGENT_RC" -eq 124 ]]; then
     WALL="$ITER_TIMEOUT"; TURNS=0; COST=0; DEF_AFTER="$DEF_BEFORE"
     log "TIMEOUT: agent exceeded ${ITER_TIMEOUT}s (elapsed $(( $(date +%s) - ITER_T0 ))s) — killed. Last agent stderr:"
@@ -786,4 +883,5 @@ while :; do
   fi
 done
 
+RUN_COMPLETED=1                                # the run ended on its own terms — finalize_abnormal stands down
 log "RUN $RUN_ID COMPLETE · branch sweep/auto-$RUN_ID · undo: $RUN_DIR/UNDO.txt"
