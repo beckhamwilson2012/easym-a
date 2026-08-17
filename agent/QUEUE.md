@@ -13,21 +13,23 @@
        null target/combined DEBT      : item 2 (target debt dropped) is upstream of item 3 (false EBITDA message)
      Do item 1 before 4, and item 2 before 3. -->
 
-- [ ] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
-  - pair: GOOGL/AMZN · observed: GOOGL/AMZN shows cost of revenue as — on §7 while §8 target shows $410,911;
-    should show the sourced LTM figure. Source: §8 target column, same period.
-    <!-- The GROSS-PROFIT half of this item is RESOLVED_UPSTREAM by bcda19a. Verified against run
-         20260816-165919's own baseline capture: §7 LTM now renders Gross Profit $393,810 and Gross Margin
-         50.8% for AMZN, where the original repro said "—". The old repro text above described that
-         already-fixed defect, which is what sent runs 165919 and 165953 into two 61-turn NO_VERDICT deaths.
-         What REMAINS is cost of revenue only: §7 LTM Cost of Revenue is still "—" while /api/pnl serves
-         ltm.costOfRevenue = 381870, so the data is present and the blank is in the render.
-         The remaining fix ALREADY EXISTS in src/components/deck/sections/SectionStandalonePL.js — bcda19a
-         changed the hardcoded `costOfRevenue: null` to `costOfRevenue: L.costOfRevenue ?? null`. It was
-         UNMEASURABLE until Part 2 landed: the runner never ran `npm run build`, and server.js serves the
-         build/ bundle via express.static, so a src/ edit could never reach a capture. build/ was dated
-         Aug 14 18:34 against a bcda19a landing Aug 15 15:33. With the rebuild in place this may now come
-         back RESOLVED_UPSTREAM on the first capture — STEP 0 decides, not this note.
+- [x] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
+  - pair: GOOGL/AMZN · observed: §7 LTM rendered **—** for both Cost of Revenue and Gross Profit while
+    `/api/pnl` served both values (`ltm.costOfRevenue = 381870`) · expected: §7 LTM renders the sourced
+    LTM cost of revenue and gross profit · source: hardcoded `costOfRevenue: null` in
+    `src/components/deck/sections/SectionStandalonePL.js`, plus a stale `build/` bundle that hid the fix.
+    <!-- DONE 2026-08-16 — verified on screen after the frontend rebuild. §7 now renders, in the LTM
+         column, Cost of Revenue ($381,870) and Gross Profit $393,810 / 50.8%. BOTH halves of the defect
+         are resolved. The gross-profit half came back RESOLVED_UPSTREAM from bcda19a. The client-side
+         half was fixed in that same commit — `costOfRevenue: null` became `costOfRevenue:
+         L.costOfRevenue ?? null` in SectionStandalonePL.js — but only became VISIBLE once the build step
+         landed: server.js serves the build/ bundle via express.static, so until the runner ran
+         `npm run build` no src/ edit could reach a capture (build/ was dated Aug 14 18:34 against a
+         bcda19a landing Aug 15 15:33). That invisibility is what sent runs 165919 and 165953 into two
+         61-turn NO_VERDICT deaths against work that was already correct.
+         An earlier version of this repro carried an expected cost-of-revenue figure read off the FY2026E
+         consensus column, not the LTM column. It is deleted rather than corrected in place: §8's target
+         column is not LTM, and no future agent should chase a number taken from it.
          COUNT: the title's "32 pairs" is stale. The last analyzable baseline (run 20260816-165919,
          flags-50664.json) carries 15 A-crossSurface flags across 14 pairs, of which 9 are cost of revenue
          and 5 gross profit. That baseline was itself degraded — 33 of 50 decks failed to build on 429s
