@@ -16,7 +16,15 @@
      Do item 1 before 4, and 2a before 2b before 3.
      2a and 2b were ONE item until 2026-08-17. They are separate defects, not one: fixing 2a populates debt
      for IRDM/TM/CART and 2b's `|| 0` never fires for them — but it still fires for ANY filer whose debt is
-     genuinely unavailable, turning "unknown" into "$0 repaid". Neither fix removes the other. -->
+     genuinely unavailable, turning "unknown" into "$0 repaid". Neither fix removes the other.
+     2c and 2d were added 2026-08-17 and are FILED after 2a/2b, but neither is downstream of them — file
+     position is not work order here:
+       2c is the debt-concept VOCABULARY that 2a's fix (67574d7) widened in only one of the three places
+          that keep a copy of it. It is upstream of every debt consumer, /quote and SS16 alike.
+       2d is the SAME null-is-not-zero defect as 2b, one layer earlier: 2b coerces one null at the render
+          boundary, 2d ships zeros for the whole payload before any render runs.
+     Do 2c before any further debt-concept work, and 2d before 2b — 2b's `|| 0` can never fire on a value
+     the stub has already turned into a real 0, so fixing 2b alone leaves the stub publishing zeros. -->
 
 - [x] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
   - pair: GOOGL/AMZN · observed: §7 LTM rendered **—** for both Cost of Revenue and Gross Profit while
@@ -42,18 +50,48 @@
     <!-- was: "target (AMZN) gross profit renders — on §7 while §2 shows gross margin 50.3% and §8 shows
          target GP $415,634M — analyzer #18 GP ASYMMETRY". Retired 2026-08-16: no longer reproduces. -->
 
-- [ ] **2a. EDGAR concept-family gap — TOTAL-debt concepts outside the LongTermDebt family** — 6 pairs
+- [x] **2a. EDGAR concept-family gap — TOTAL-debt concepts outside the LongTermDebt family** — 6 pairs
       (GATE-2A root: debt-dropped). Upstream of 2b. This is the DATA gap: the debt never arrives.
-  - pair: RKLB/IRDM · observed: `/quote?symbol=IRDM` returns `"debt": null` with
+      **FIXED by 67574d7** (2026-08-17) — widened the EDGAR debt-concept vocabulary at steps 4 and 5 of the
+      resolution chain in `server.js`. Previously-null debts now resolve: IRDM **$1,749M**, DASH
+      **$2,727M**, DDOG **$986M**, GME **$4,166M**. No-op proof PASSED — AAPL 82,300 / MSFT 40,294 /
+      AMZN 132,995 / KO 39,065 / GOOGL 100,164 byte-identical against the pre-patch captures, so the
+      widened vocabulary changed nothing for filers that already resolved.
+      TM/GM is NOT in that confirmed set: 67574d7's evidence does not cover it. Treat that instance as
+      UNVERIFIED, not fixed.
+  - pair: RKLB/IRDM · observed: `/quote?symbol=IRDM` returned `"debt": null` with
     `"dataSource":"sec_edgar"`, `"cash":184`, `"bsAsOf":"2026-06-30"` — live value captured by run
     20260816-202617 at turn 19 · expected: `debt` populated ≈ **$1.8B**, per §16 Data Verification
-    (EDGAR★ + FMP, ✓ verified) · source: `server.js:699` — the resolution chain is
+    (EDGAR★ + FMP, ✓ verified); 67574d7 resolves it to **$1,749M** · source: `server.js:699` — the
+    resolution chain was
     `bsPick(['LongTermDebt']) ?? ltdSiblingSum ?? bsPick(['LongTermDebtAndCapitalLeaseObligations']) ?? convertTotal`,
-    and none of the four branches covers a TOTAL-debt concept tagged outside the LongTermDebt family.
-    IRDM's borrowings are a term loan; a revolver draw fails the same way. Run 20260816-202617 diagnosed
+    and none of those four branches covered a TOTAL-debt concept tagged outside the LongTermDebt family.
+    IRDM's borrowings are a term loan; a revolver draw failed the same way. Run 20260816-202617 diagnosed
     this and wrote a fifth branch ("Stage 7A-4, non-LongTermDebt TOTAL-debt concepts") at its turn 75,
     which was reverted when the run died at the turn cap — see `agent/runs/20260816-202617/`.
-    Other instances: TM/GM (`/quote` debt=null, §16 $130.30B), CART/DASH (`/quote` debt=null, §16 $3.30B).
+    Other instances: TM/GM (`/quote` debt=null, §16 $130.30B — basis unclassified, see below),
+    CART/DASH (`/quote` debt=null, expected **$2,727M** — corrected 2026-08-17, see below).
+
+    LEASE BASIS — read before "correcting" any expected in this item. **The deal model excludes operating
+    leases by convention**, so every `expected` debt figure here is stated on a **lease-EXCLUSIVE** basis
+    (borrowings only). SS16/§16 figures are NOT automatically on that basis. Do not restore a figure from
+    §16 without first establishing which basis it is on.
+    - **CART/DASH — lease-INCLUSIVE → CORRECTED 2026-08-17: $3.30B → $2,727M.** The $3.30B came from
+      SS16 on a lease-inclusive basis: DASH borrowings $2,727M + operating leases ($104M + $474M = $578M)
+      = $3,305M ≈ $3.30B. The lease-exclusive figure — the one this app must produce — is **$2,727M**,
+      which is exactly what 67574d7 now returns. Restoring $3.30B would make the correct fix grade as a
+      failure.
+    - **RKLB/IRDM ≈$1.8B — INDETERMINATE, NOT SOURCED.** 67574d7 returns $1,749M, which is consistent
+      with a ≈$1.8B rounding, but agreement is not proof of basis: IRDM's operating-lease balance appears
+      in no run artifact on hand, so the sum that would separate a lease-inclusive from a lease-exclusive
+      reading cannot be formed. **Left at ≈$1.8B unchanged** — the `≈` tolerance already spans $1,749M, so
+      it does not misgrade the fix either way. Classifying it requires IRDM's lease footnote, which is out
+      of scope for a text pass.
+    - **TM/GM $130.30B — INDETERMINATE, NOT SOURCED.** GM's operating-lease balance is likewise absent
+      from the run artifacts, so this figure cannot be classified as inclusive or exclusive. It is also
+      the one instance 67574d7 did not confirm, so its basis AND its resolution are both open. **Left
+      unchanged deliberately.** A wrong expected is worse than an unclassified one: an absent figure
+      blocks grading, a wrong one makes a correct fix grade as a failure.
 
 - [ ] **2b. Unavailable target debt coerced to $0 at the render boundary** — (GATE-2A root: debt-dropped).
       Downstream of 2a, but INDEPENDENT: it fires for any filer whose debt is genuinely unavailable.
@@ -68,6 +106,43 @@
     Net Debt/(Cash) (184)) are NOT attributed here. `dealCalc.js:180` returns **null** for EV when debt is
     null, so those rendered numbers come from a different code path that the run artifacts do not
     identify. Establishing which surface renders them is part of this item, not a premise for it.
+
+- [ ] **2c. Three hand-maintained debt-concept lists have drifted apart** — (root: debt-dropped, same
+      family as 2a). Filed after 2a/2b but NOT downstream of them: this is the vocabulary 2a's fix widened
+      in only one of the three places that keep a copy of it.
+  - pair: RKLB/IRDM · observed: `server.js`, `edgarClient.js` and `ltmCalc.js` EACH carry their own
+    hand-maintained list of EDGAR debt concepts, and the three have diverged. 67574d7 widened `server.js`
+    only, so `/quote` and SS16 now disagree about what counts as debt for the same filer — a ticker can
+    resolve a debt figure on one surface and stay null on the other · expected: ONE shared debt-concept
+    vocabulary imported by all three call sites, so every surface answers "what counts as debt"
+    identically · source: the three separate concept lists in `server.js`, `edgarClient.js` and
+    `ltmCalc.js`. Run 20260816-222441 already wrote `server/data/debtConcepts.js` as exactly that shared
+    module — the design is sound and is the right landing point. **It is a starting point, not a
+    drop-in:** its list OMITS `LongTermNotesPayable` and `DebtLongtermAndShorttermCombinedAmount`, both
+    of which 67574d7 added to `server.js`. Importing the module as written would silently NARROW
+    `server.js` and regress 2a. Reconcile to the UNION first, then switch all three call sites.
+
+- [ ] **2d. Unresolved companies get a zeroed payload stub instead of nulls** — (root: null-is-not-zero,
+      at the payload level). Filed after 2b but UPSTREAM of it, and of every per-field guard: 2b coerces
+      ONE null at the render boundary; this ships zeros for the WHOLE payload before any render runs.
+  - pair: BRK.B/PGR · observed: when no provider resolves a ticker, `/quote` emits a whole-payload
+    default carrying **0** for revenue, ebitda, netIncome, shares, eps, cash AND debt, with `name`
+    falling back to the ticker string, `dataSource:"none"`, and `ltm.reason:"no data source resolved"`.
+    Zero is a real number to every downstream consumer, so a BRK.B deck publishes **$0 revenue for
+    Berkshire Hathaway** as though it were sourced — a fabricated figure, not a gap · expected: **null
+    for every unresolved field**, so the render shows honest dashes and the stub is distinguishable from
+    a company that genuinely reports zero · source: the `/quote` no-provider default payload — the object
+    carrying `dataSource:"none"` / `ltm.reason:"no data source resolved"`.
+    CRITICAL — **this defect is invisible to the analyzer.** `docs/sweep-v2/captures/BRK.B_PGR.json` is
+    **`ok:true`**: that deck built successfully and BOTH graders scored it clean. Nothing in the current
+    gate can see it, because a zeroed payload renders as a well-formed deck full of real-looking numbers.
+    Any check added for this MUST key on **`dataSource:"none"` specifically**, not on implausible values —
+    a plausibility heuristic misses it exactly as the graders did, and would also fire on filers that
+    legitimately report zero.
+    This is the app's own **"null is not zero"** invariant (charter: "Unavailable data is an honest blank —
+    never zero, never a substituted proxy") violated at the PAYLOAD level. The fix is upstream of every
+    individual field guard, 2b's `|| 0` included — fixing 2b alone leaves this stub publishing zeros,
+    because `|| 0` never fires on a value the stub already turned into a real 0.
 
 - [ ] **3. False "Combined EBITDA is non-positive"** — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.
   - pair: NET/DDOG · observed: deck renders "Combined EBITDA is non-positive" while combined EBITDA is
