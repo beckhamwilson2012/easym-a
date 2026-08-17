@@ -14,13 +14,26 @@
      Do item 1 before 4, and item 2 before 3. -->
 
 - [ ] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
-  - pair: GOOGL/AMZN · observed: target (AMZN) gross profit renders "—" on §7 (LTM P&L) while §2 shows
-    AMZN gross margin **50.3%** [present] and §8 shows target GP **$415,634M** [present] — analyzer #18
-    `GP ASYMMETRY [§2gm=50.3%[VALUE] · §7=—[DASH] · §8tgt=$415,634[VALUE]]` · expected: §7 renders AMZN's
-    LTM gross profit — the annual GP is present and the only thing missing is the three-leg LTM split, so a
-    working annual fallback should fill it instead of blanking · source: RUN-findings.md GOOGL/AMZN #18 +
-    #17 ("three-leg LTM split not exposed on /quote → leg-level N/A"); GATE-2B.1 splits the 32 into BUG5
-    (FMP-wiring) + **BUG6 (leg-availability: annual GP present, LTM GP blank)** — BUG6 needs its own LTM-leg fix.
+  - pair: GOOGL/AMZN · observed: GOOGL/AMZN shows cost of revenue as — on §7 while §8 target shows $410,911;
+    should show the sourced LTM figure. Source: §8 target column, same period.
+    <!-- The GROSS-PROFIT half of this item is RESOLVED_UPSTREAM by bcda19a. Verified against run
+         20260816-165919's own baseline capture: §7 LTM now renders Gross Profit $393,810 and Gross Margin
+         50.8% for AMZN, where the original repro said "—". The old repro text above described that
+         already-fixed defect, which is what sent runs 165919 and 165953 into two 61-turn NO_VERDICT deaths.
+         What REMAINS is cost of revenue only: §7 LTM Cost of Revenue is still "—" while /api/pnl serves
+         ltm.costOfRevenue = 381870, so the data is present and the blank is in the render.
+         The remaining fix ALREADY EXISTS in src/components/deck/sections/SectionStandalonePL.js — bcda19a
+         changed the hardcoded `costOfRevenue: null` to `costOfRevenue: L.costOfRevenue ?? null`. It was
+         UNMEASURABLE until Part 2 landed: the runner never ran `npm run build`, and server.js serves the
+         build/ bundle via express.static, so a src/ edit could never reach a capture. build/ was dated
+         Aug 14 18:34 against a bcda19a landing Aug 15 15:33. With the rebuild in place this may now come
+         back RESOLVED_UPSTREAM on the first capture — STEP 0 decides, not this note.
+         COUNT: the title's "32 pairs" is stale. The last analyzable baseline (run 20260816-165919,
+         flags-50664.json) carries 15 A-crossSurface flags across 14 pairs, of which 9 are cost of revenue
+         and 5 gross profit. That baseline was itself degraded — 33 of 50 decks failed to build on 429s
+         from two concurrent sweeps — so re-measure before trusting either number. -->
+    <!-- was: "target (AMZN) gross profit renders — on §7 while §2 shows gross margin 50.3% and §8 shows
+         target GP $415,634M — analyzer #18 GP ASYMMETRY". Retired 2026-08-16: no longer reproduces. -->
 
 - [ ] **2. Target debt dropped via null preferred path** — 6 pairs (GATE-2A root: debt-dropped). Corrupts EV/leverage.
   - pair: RKLB/IRDM · observed: `/quote?symbol=IRDM` debt=**null** → deal-model preferred path
