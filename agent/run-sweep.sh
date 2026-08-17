@@ -263,7 +263,7 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
   # GUARD 1 — the dir we are about to capture into must be EMPTY. rm -rf can fail silently (permissions,
   # a busy mount), and capturing on top of leftovers is how a baseline acquires decks it never produced.
   if [[ -n "$(ls -A "$RAW" 2>/dev/null)" ]]; then
-    log "capture ABORT · $phase · $RAW is not empty after clearing — refusing to capture on top of $(ls -1 "$RAW" | wc -l | tr -d ' ') existing file(s)"
+    log "capture ABORT · $phase · rc=2 (GUARD 1, not a node failure) · $RAW is not empty after clearing — refusing to capture on top of $(ls -1 "$RAW" | wc -l | tr -d ' ') existing file(s)"
     return 2
   fi
   if [[ -n "${MOCK_CAPTURE:-}" ]]; then
@@ -276,13 +276,32 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
     # runner: run 20260816-212606's capture.js survived its parent by 4 minutes and competed with run
     # -222441's baseline for :$APP_PORT and one rate-limit budget, which is why -222441 captured 20 decks
     # with only 5 ok. Identity, not process name — see reap_stale_capture().
+    # Capture stdout/stderr land in $RUN_DIR, NEVER /dev/null. Run 20260817-151534 died in under a second
+    # on a MODULE_NOT_FOUND for puppeteer-core; the stack went to /dev/null, so loop.log recorded only
+    # "FAILED after 0m" and the reason had to be reproduced by hand afterwards. The evidence now survives
+    # the run that produced it.
+    #
+    # Iteration-scoped filenames: do_capture runs once per phase PER ITEM, so an unscoped name lets iter 2
+    # overwrite iter 1's evidence — and the overwritten file is exactly the one you need when a late
+    # iteration is the one that broke. ${CUR_ITER:-0} because the baseline capture runs before the loop.
+    local cout="$RUN_DIR/capture-iter${CUR_ITER:-0}-$phase.out"
+    local cerr="$RUN_DIR/capture-iter${CUR_ITER:-0}-$phase.err"
     GAP_MS="$GAP_MS" LOOP_LOG="$RUN_DIR/loop.log" CAPTURE_PHASE="$phase" \
-      SWEEP_RAW_DIR="$RAW" SWEEP_STATUS_LOG="$RAW/status.log" node "$CAPTURE_JS" "$PAIRS_JSON" >/dev/null 2>&1 &
+      SWEEP_RAW_DIR="$RAW" SWEEP_STATUS_LOG="$RAW/status.log" node "$CAPTURE_JS" "$PAIRS_JSON" >"$cout" 2>"$cerr" &
     CAPTURE_PID=$!
     printf '%s\n' "$CAPTURE_PID" > "$RUN_DIR/capture.pid" 2>/dev/null || true
     wait "$CAPTURE_PID"; rc=$?
     CAPTURE_PID=""; rm -f "$RUN_DIR/capture.pid" 2>/dev/null || true
-    [[ "$rc" -eq 0 ]] || { log "capture END · $phase · FAILED after $(( ($(date +%s) - t0) / 60 ))m"; return 2; }
+    # rc is logged EXPLICITLY. Reaching here means NODE exited non-zero (missing module, syntax error,
+    # uncaught rejection) — typically rc=1. A guard in this function aborting logs "capture ABORT … rc=2
+    # (guard)" and never reaches this line. Before this change both paths printed the same sentence, so
+    # "capture failed" could not be told from "the runner refused to capture".
+    [[ "$rc" -eq 0 ]] || {
+      log "capture END · $phase · FAILED after $(( ($(date +%s) - t0) / 60 ))m · rc=$rc (node exited non-zero — NOT a guard abort)"
+      log "      capture stderr → $cerr"
+      log "      $(tail -5 "$cerr" 2>/dev/null | tr '\n' ' ' | cut -c1-400)"
+      return 2
+    }
   fi
   # GUARD 2 — every deck in RAW must be one WE asked for. Run-scoping should make a foreign deck
   # impossible; this proves it rather than assuming it, and it is the check that would have caught the 15
@@ -295,7 +314,7 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
     const bad=fs.readdirSync(d).filter(f=>f.endsWith(".json")&&f!=="status.log"&&!want.has(f));
     process.stdout.write(bad.join(" "));' "$RAW" 2>/dev/null || true)"
   if [[ -n "$foreign" ]]; then
-    log "capture ABORT · $phase · $RAW contains deck(s) this run never requested: $foreign"
+    log "capture ABORT · $phase · rc=2 (GUARD 2, not a node failure) · $RAW contains deck(s) this run never requested: $foreign"
     log "      (a concurrent writer is in our run scope — refusing to merge foreign decks into the baseline)"
     decide "iter ${CUR_ITER:-0} capture aborted: foreign decks in $RAW ($foreign) — another process wrote into this run's capture scope."
     return 2
@@ -723,6 +742,18 @@ run_agent_timed() {                            # $1 = seconds; rc 124 = timed ou
 # ════════════════════════════════════════════════════════════════════════════════════════════════════
 command -v node >/dev/null || die "node not found"
 [[ -f "$CAPTURE_JS" && -f "$ANALYZE_JS" && -f "$DIFF_JS" ]] || die "grader/collector missing"
+# puppeteer-core is capture.js's ONLY browser dependency, required there by ABSOLUTE path (capture.js:5).
+# It was undeclared in package.json until f8c5343, so `npm install <anything>` pruned it, and run
+# 20260817-151534 spent 69s on a frontend build and a server boot before dying at capture with the reason
+# piped to /dev/null. Checking it HERE fails in under a second, before the lock, the port, the tree or the
+# tag is touched.
+#
+# REQUIRE it — do NOT test for the directory. A half-extracted or corrupted install leaves
+# node_modules/puppeteer-core on disk and still throws MODULE_NOT_FOUND (or a syntax error) at load, which
+# is precisely the case a `[[ -d ]]` check waves through. Resolving the same ABSOLUTE path capture.js uses
+# also catches a hoisted/nested install that would resolve for the runner but not for the collector.
+node -e 'require(process.argv[1])' "$ROOT/node_modules/puppeteer-core" >/dev/null 2>&1 \
+  || die "puppeteer-core failed to load from $ROOT/node_modules/puppeteer-core — capture.js:5 requires it, so EVERY capture would die at module load. Fix: npm install puppeteer-core"
 acquire_lock                                   # Part 1: FIRST — before we touch the port, the tree, or the tag
 reap_stale_raw                                 # sweep up abandoned per-run capture dirs before making ours
 [[ -z "$(gitr status --porcelain)" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
