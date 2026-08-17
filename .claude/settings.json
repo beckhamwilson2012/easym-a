@@ -26,7 +26,8 @@
       "Bash(curl http://localhost:3001/*)"
     ],
     "deny": [
-      "Bash(git commit:*)",
+      "Bash(git add -A:*)",
+      "Bash(git add .:*)",
       "Bash(git reset:*)",
       "Bash(git checkout:*)",
       "Bash(git merge:*)",
