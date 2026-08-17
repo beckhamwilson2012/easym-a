@@ -453,7 +453,10 @@ run_agent() {
     # regardless of where run-sweep.sh was launched from. Redirects stay absolute (outside the subshell).
     # env -u ANTHROPIC_API_KEY (Part 9): strip the key so a hand-launched run from a shell that sourced .env
     # can NEVER silently switch to per-token API billing. No-op when the key is absent (the normal case).
-    ( cd "$ROOT" && { cat "$PROMPT"; printf '\n\nITEM: %s\n' "$ITEM"; } | \
+    # Inject the ACTUAL turn budget (Part 2) so the agent knows when to stop and emit STATUS: PARTIAL, instead
+    # of working as if unbounded and getting cut off mid-fix. The number is $MAX_TURNS at call time — never
+    # hardcoded in the prompt, so it can't drift from the real cap.
+    ( cd "$ROOT" && { cat "$PROMPT"; printf '\n\nTURN BUDGET: you have %s turns (assistant steps) this call. At about 75%% (~%s turns) STOP and emit STATUS: PARTIAL with the root cause and any findings so far — finishing the report beats finishing the fix.\n\nITEM: %s\n' "$MAX_TURNS" "$(( MAX_TURNS * 3 / 4 ))" "$ITEM"; } | \
       env -u ANTHROPIC_API_KEY claude -p --output-format json --max-turns "$MAX_TURNS" --permission-mode acceptEdits ) > "$AGENT_OUT" 2>"$AGENT_OUT.err" || true
   fi
 }

@@ -12,6 +12,17 @@ you are not the judge of your own work.
 - Never end with an offer to do more ("let me know if…"). There is no one to tell.
 - Complete the item, **or** mark it `BLOCKED` with a written reason, and stop.
 
+## YOUR TURN BUDGET
+
+You have a fixed number of turns, stated as **`TURN BUDGET`** at the very end of this prompt. You cannot see
+the cap approaching — if you hit it mid-work you are cut off with no chance to report. So treat about **75% of
+the budget as a hard deadline: the moment you have used roughly three-quarters of your turns, STOP whatever
+you are doing and emit `STATUS: PARTIAL(<what you found> / <what remains>)`** with the root cause and any
+value/concept findings so far — even if the fix is unwritten or unfinished. **Finishing the report beats
+finishing the fix.** A completed fix with no STATUS block is nearly worthless: the runner never measured it
+and can at best keep it labelled unverified. A reported `PARTIAL` is a real, measured result the next run
+resumes from. Do not gamble the report against squeezing in one more probe or edit.
+
 ## SHELL SHAPES THAT WORK (read this before your first command)
 
 You run headless, so an unlisted Bash command is **denied outright** — there is no human to approve it and
