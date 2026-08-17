@@ -149,6 +149,7 @@ const STATE = {
   comparing: { bg:'#7F77DD', label:'#E2E0F8', sub:'#D5D2F2', name:'Comparing' },
   stopped  : { bg:'#8C2E2D', label:'#F2CFCE', sub:'#EFC8C7', name:'Stopped'   },
   finished : { bg:'#4B7A1F', label:'#D8ECBE', sub:'#D2E8B4', name:'Finished'  },
+  unverified:{ bg:'#7A5C2E', label:'#EEDFC0', sub:'#E4D2AC', name:'Not verified' },  // kept but unmeasured — NOT Finished
   idle     : { bg:'#4A4A48', label:'#D6D4CE', sub:'#C4C2BC', name:'Idle'      },
 };
 const PILL = {
@@ -168,51 +169,22 @@ const fmtElapsed = sec => {
   return m < 60 ? m + 'm' : Math.floor(m/60) + 'h ' + (m%60) + 'm';
 };
 
-/* ── which of the six states are we in ─────────────────────────────────────
-   Pure presentation: this reads the run signals the server already reports
-   (runState / phase / iter / the log tail) and picks a face for them. It
-   decides nothing and changes no detection — the server still owns
-   RUNNING / STALE / DIED / COMPLETED. */
-function subPhase(tail) {
-  const lines = tail || [];
-  let iterAt = -1;
-  for (let i = lines.length - 1; i >= 0; i--) if (/── iter \d+/.test(lines[i])) { iterAt = i; break; }
-  const after = iterAt >= 0 ? lines.slice(iterAt + 1) : lines;
-  const has = re => after.some(l => re.test(l));
-  if (iterAt < 0) return has(/baseline:\s*\d+\s*defects/) ? 'fixing' : 'capture-before';
-  // a gate/terminal marker means the agent is done and the run is scoring it
-  if (has(/GATE:|COMMITTED|REVERTED|HALTED|BUILD_BROKEN|NO_VERDICT|TIMEOUT:|INDETERMINATE|REPLAY_SUSPECTED/)) return 'comparing';
-  if (has(/verdict: agent returned/)) return 'capture-after';       // verdict in, after-picture running
-  if (has(/forced fresh baseline re-capture/)) return 'capture-before';
-  return 'fixing';
-}
-function derive(s, pf) {
-  const live = (s && s.live) || {}, st = live.status || {}, sum = (s && s.summary) || {};
-  const hasRun = !!live.loopLogExists;
-  const rs = st.runState;
-  const done = live.pairsDone || 0, total = live.pairsTotal || 0;
-  const iter = st.iter || 1;
-  const waiting = pf ? pf.queued : null;
-  const wtxt = waiting == null ? 'Some' : String(waiting);
-
-  if (!hasRun) return { k:'idle', head:'Nothing is running',
-    sub:`${wtxt} bug${waiting === 1 ? '' : 's'} waiting. Press start when you're ready.` };
-  if (rs === 'COMPLETED') {
-    const fixed = sum.committed || 0;
-    return { k:'finished', head:`Fixed ${plural(fixed,'bug')}, ${wtxt} still waiting`,
-      sub:'Check the deck yourself before trusting this.' };
-  }
-  if (rs === 'DIED' || rs === 'STALE') return { k:'stopped', head:`Ran out of turns on item ${iter}`,
-    sub:`Your code is untouched. Item ${iter} still open.` };
-  const p = subPhase(live.logTail);
-  if (p === 'capture-before') return { k:'sweeping', head:`Checking deck ${done} of ${total}`,
-    sub:'Taking a picture before anything changes' };
-  if (p === 'capture-after') return { k:'sweeping', head:`Re-checking deck ${done} of ${total}`,
-    sub:'Taking the after picture to compare against' };
-  if (p === 'comparing') return { k:'comparing', head:'Grading before vs after',
-    sub:'Deciding whether to keep the change or throw it away' };
-  return { k:'fixing', head:`Claude Code is on item ${iter}`,
-    sub:'Writing code. No progress shown until it finishes.' };
+/* ── the status the SERVER decided (s.status) ──────────────────────────────
+   The 8-state machine lives in resolveStatus() on the server: it reads run.pid
+   liveness + the loop.log phase markers + calibration and picks ONE honest
+   state (sweeping / fixing / comparing / stopped / finished / unverified /
+   idle). The client no longer re-derives it from live.status — it renders
+   s.status as-is, so Finished-but-unverified can never be flattened into
+   Finished here. Pure presentation; decides nothing. */
+function statusView(s) {
+  const st = (s && s.status) || {};
+  return {
+    k: st.key || 'idle',
+    head: st.plain || st.headline || 'Idle',
+    lines: [...(st.lines || []), ...(st.warn ? [st.warn] : [])],
+    elapsedSec: st.elapsedSec,
+    spent: st.spentUsd,
+  };
 }
 
 /* ── plain-English blockers ─────────────────────────────────────────────── */
@@ -289,13 +261,17 @@ function SettingsPage() {
             <div className="setRow" key={r.key}>
               <div style={{flex:1,minWidth:0}}>
                 <div className="setLabel">{r.label}</div>
-                <div className="setExplain">{r.explain}</div>
+                <div className="setExplain">{r.readOnly ? r.readOnlyWhy : r.explain}</div>
               </div>
               <div className="setCtrl">
                 {r.kind === 'money' && <span className="setPrefix">$</span>}
-                <input className="setInput" type="number" min="0"
-                  value={edit[r.key] != null ? edit[r.key] : r.display}
-                  onChange={e => { setSaved(false); setEdit(x => ({ ...x, [r.key]: e.target.value })); }} />
+                {/* read-only settings render as a VALUE, not a disabled input — a greyed-out box still reads
+                    as "you may change this later"; plain text reads as "this is not set here". */}
+                {r.readOnly
+                  ? <span className="setInput" style={{border:'none',background:'none',textAlign:'right',opacity:0.75}}>{r.display}</span>
+                  : <input className="setInput" type="number" min="0"
+                      value={edit[r.key] != null ? edit[r.key] : r.display}
+                      onChange={e => { setSaved(false); setEdit(x => ({ ...x, [r.key]: e.target.value })); }} />}
               </div>
             </div>
           ))}
@@ -341,10 +317,10 @@ function SettingsPage() {
 function BugsPage({ queue }) { return <QueuePanel queue={queue} />; }
 function HistoryPage({ runs }) { return <PastRuns runs={runs} />; }
 
-function StatusCard({ view, elapsedSec, spent }) {
-  const c = STATE[view.k];
-  const el = fmtElapsed(elapsedSec);
-  const meta = view.k === 'idle' ? '' : [el, money(spent)].filter(Boolean).join(' · ');
+function StatusCard({ view }) {
+  const c = STATE[view.k] || STATE.idle;
+  const el = fmtElapsed(view.elapsedSec);
+  const meta = view.k === 'idle' ? '' : [el, view.spent != null ? money(view.spent) : null].filter(Boolean).join(' · ');
   return (
     <div className="status" style={{background:c.bg}}>
       <div className="stTop">
@@ -352,7 +328,7 @@ function StatusCard({ view, elapsedSec, spent }) {
         {meta && <div className="stMeta" style={{color:c.label}}>{meta}</div>}
       </div>
       <div className="stHead">{view.head}</div>
-      <div className="stSub" style={{color:c.sub}}>{view.sub}</div>
+      {(view.lines || []).map((l,i)=><div key={i} className="stSub" style={{color:c.sub}}>{l}</div>)}
     </div>
   );
 }
@@ -541,7 +517,7 @@ function App() {
 
   if (!s) return <div className="page"><Sidebar page={page} setPage={setPage} /><div className="main"><div className="panel">loading…</div></div></div>;
 
-  const view = derive(s, pf);
+  const view = statusView(s);
   const live = s.live || {}, sum = s.summary || {}, st = live.status || {};
   const running = ['sweeping','fixing','comparing'].includes(view.k);
   const before = sum.defectsBefore, after = sum.defectsAfter;
@@ -567,7 +543,7 @@ function App() {
          : page === 'history' ? <HistoryPage runs={s.pastRuns} />
          : (<React.Fragment>
             <div className="row">
-              <StatusCard view={view} elapsedSec={live.elapsedSec} spent={sum.spent} />
+              <StatusCard view={view} />
               <div className="tiles">
                 <Tile num={foundNum} suffix={foundSuf} label="Problems found" />
                 {running
