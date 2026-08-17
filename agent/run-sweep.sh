@@ -16,7 +16,7 @@
 # discards the whole night in one line; does not touch analyze.js / capture.js / snapshot-diff.js / app.
 #
 # TEST HOOKS (all default OFF; production never sets them): MOCK_AGENT, MOCK_CAPTURE, TEST_FROZEN,
-# FROZEN_WAIT, PAIRS_LIMIT, TEST_REGRESS_ITERS, MAX_ITER, BUDGET_USD, BASE_BRANCH.
+# FROZEN_WAIT, PAIRS_LIMIT, TEST_REGRESS_ITERS, MAX_ITER, BUDGET_USD, BASE_BRANCH, SWEEP_LOCK.
 set -uo pipefail
 
 # ── paths (ALL QUOTED — the & in EasyM&A splits unquoted) ───────────────────────────────────────────
@@ -34,24 +34,77 @@ STOP_FILE="$AGENT_DIR/STOP"
 RAW="/tmp/sweep_v2_raw"                        # capture.js hardcodes this output dir
 
 # ── config (env-overridable) ────────────────────────────────────────────────────────────────────────
-MAX_ITER="${MAX_ITER:-999}"
-MAX_TURNS="${MAX_TURNS:-60}"                   # raised 40->60: run 20260815-150838 hit the 40-turn cap mid-fix after its STEP-0 EDGAR fetch was denied
-BUDGET_USD="${BUDGET_USD:-50}"
+# ── settings config (dashboard Settings page) — a CFG_*=VALUE file the runner reads as DEFAULTS. Precedence:
+#    env var > sweep.settings > hardcoded fallback. Changes only WHERE a default comes from, never behavior.
+SWEEP_SETTINGS="${SWEEP_SETTINGS:-$AGENT_DIR/sweep.settings}"
+[[ -f "$SWEEP_SETTINGS" ]] && source "$SWEEP_SETTINGS" 2>/dev/null || true
+MAX_ITER="${MAX_ITER:-${CFG_MAX_ITER:-999}}"
+MAX_TURNS="${MAX_TURNS:-${CFG_MAX_TURNS:-60}}"  # raised 40->60: run 20260815-150838 hit the 40-turn cap mid-fix after its STEP-0 EDGAR fetch was denied
+BUDGET_USD="${BUDGET_USD:-${CFG_BUDGET_USD:-50}}"
 GAP_MS="${GAP_MS:-12000}"                      # rate-safe inter-pair spacing for capture.js
-PAIRS_LIMIT="${PAIRS_LIMIT:-0}"               # 0 = all 50; >0 caps pairs (tests)
+PAIRS_LIMIT="${PAIRS_LIMIT:-${CFG_PAIRS_LIMIT:-0}}"   # 0 = all 50; >0 caps pairs (tests)
 FROZEN_WAIT="${FROZEN_WAIT:-60}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-2700}"           # per-iteration wall-clock cap (45 min); --max-turns does NOT bound a permission-prompt hang
+BUILD_TIMEOUT="${BUILD_TIMEOUT:-300}"          # cap on `npm run build` (measured ~7s); an unattended runner must never hang here
 BASE_URL="${BASE_URL:-http://localhost:3001}"
 APP_PORT="${BASE_URL##*:}"                      # port the app server (and capture.js) listen on — parsed from BASE_URL
 BASE_BRANCH="${BASE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 RUN_DIR="$AGENT_DIR/runs/$RUN_ID"
 SERVER_LOG="/tmp/server-$RUN_ID.log"           # the restarted app server's stdout/stderr (Part 1)
+BUILD_LOG="/tmp/build-$RUN_ID.log"             # `npm run build` stdout/stderr (Part 2)
 SERVER_PID=""                                   # PID of the server WE start (kill only our own + the port holder)
+LOCK_FILE="${SWEEP_LOCK:-$AGENT_DIR/runs/.sweep.lock}"  # single-runner mutex; runs/ is gitignored so `git clean -fd` cannot eat it
+LOCK_HELD=0                                     # 1 once WE own the lock — release_lock refuses to delete another run's
 
 log()  { local l; l="$(printf '[%s] %s' "$(date +%H:%M:%S)" "$*")"; printf '%s\n' "$l"; if [[ -n "${RUN_DIR:-}" ]]; then mkdir -p "$RUN_DIR" 2>/dev/null; printf '%s\n' "$l" >> "$RUN_DIR/loop.log"; fi; }  # tee to stdout AND runs/<id>/loop.log (appended live, per call)
 die()  { printf '[FATAL] %s\n' "$*" >&2; exit 1; }
 gitr() { git -C "$ROOT" "$@"; }
+
+# ── single-runner lock (Part 1) ──────────────────────────────────────────────────────────────────────
+# Runs 20260816-165919 and 20260816-165953 launched 34s apart. Both called restart_server, so the second
+# KILLED the first's server and the first then ran its entire 88-minute baseline against the second's
+# process. Worse, both swept 50 pairs through one 500-req/15-min limiter at ~83 requests/pair, so 33 of 50
+# decks failed to build and BOTH runs reported an identical, meaningless "68 defects". Two sweeps on one
+# machine cannot produce one honest measurement — the second must refuse to start.
+#
+# The lock is a PID + RUN_ID, not a bare flag: a runner killed with SIGKILL (or a machine that lost power)
+# can never run its trap, and a bare flag would then wedge every future run until someone deleted it by
+# hand. A lock whose PID is gone is STALE — reclaimed with a log line, never treated as a permanent block.
+lock_read() {                                  # echoes "<pid> <run_id>" from the lockfile, or nothing
+  [[ -f "$LOCK_FILE" ]] && head -1 "$LOCK_FILE" 2>/dev/null
+}
+acquire_lock() {
+  mkdir -p "$(dirname "$LOCK_FILE")" 2>/dev/null || true
+  local held pid rid
+  # `set -o noclobber` makes the create atomic: two runners racing here, exactly one wins the redirect.
+  if ( set -o noclobber; printf '%s %s\n' "$$" "$RUN_ID" > "$LOCK_FILE" ) 2>/dev/null; then
+    LOCK_HELD=1; return 0
+  fi
+  held="$(lock_read)"; pid="${held%% *}"; rid="${held#* }"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    die "another sweep is already running: run $rid (pid $pid). Refusing to start.
+       Two concurrent sweeps share :$APP_PORT and one rate-limit budget — the second kills the first's
+       server and both measurements become garbage (see runs/20260816-165919 vs -165953).
+       Wait for run $rid to finish, or stop it and delete $LOCK_FILE."
+  fi
+  # stale: the owner is gone (SIGKILL / crash / reboot). Reclaim, loudly.
+  log "stale lock from run ${rid:-<unknown>} (pid ${pid:-<none>} not running) — reclaiming"
+  rm -f "$LOCK_FILE"
+  if ( set -o noclobber; printf '%s %s\n' "$$" "$RUN_ID" > "$LOCK_FILE" ) 2>/dev/null; then
+    LOCK_HELD=1; return 0
+  fi
+  die "could not acquire $LOCK_FILE after clearing a stale lock (raced by another runner?)"
+}
+release_lock() {                               # only ever removes a lock WE own (pid match) — never another run's
+  [[ "$LOCK_HELD" -eq 1 ]] || return 0
+  local held; held="$(lock_read)"
+  [[ "${held%% *}" == "$$" ]] && rm -f "$LOCK_FILE"
+  LOCK_HELD=0
+}
+# EXIT covers normal exit AND die(); INT/TERM cover Ctrl-C and `kill`. SIGKILL is untrappable by design —
+# that is exactly the case the stale-PID check above handles, so the lock can never wedge permanently.
+trap release_lock EXIT INT TERM
 
 # ── repro pairs (Part C) ─────────────────────────────────────────────────────────────────────────────
 # Every open QUEUE.md item names the pair its defect REPRODUCES on. The capture set used to be the
@@ -140,8 +193,66 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
 # (server.js / ltmCalc.js) is invisible to the after-capture unless we restart — the root cause of run
 # 20260815-150838 committing an unmeasurable no-op. rc 0 = up & accepting; rc 1 = failed to boot, and the
 # CALLER MUST NOT proceed to capture (a non-booting server = 0 analyzable pairs = a false defect drop).
+# ── frontend build (Part 2): the graders read the BUNDLE, never src/ ─────────────────────────────────
+# server.js:2624 serves build/ via express.static, and capture.js drives http://localhost:$APP_PORT. The
+# runner restarted node but NEVER rebuilt, so build/ sat at Aug 14 18:34 while src/ moved on — every
+# client-side fix an agent made was invisible to BOTH graders, permanently. bcda19a's server-side half
+# (ltmCalc.js) scored; its client-side half (SectionStandalonePL.js) could not, which is why GOOGL/AMZN
+# gross profit resolved and cost of revenue did not. The gate was silently grading a stale bundle.
+#
+# THE TRAP: `npm run build` exiting 0 is NOT proof of a fresh bundle. A build that dies late leaves the
+# PREVIOUS build/ in place, and the capture then grades stale code exactly as it did before this fix —
+# indistinguishable from success. So we verify the artifact, not the exit code.
+build_frontend() {
+  [[ -n "${MOCK_CAPTURE:-}" ]] && return 0       # tests mock the capture; there is no bundle to build
+  local t0 rc pid waited main_js mt before after idx_ref el
+  before="$(ls -t "$ROOT/build/static/js/"main.*.js 2>/dev/null | head -1)"; before="${before##*/}"
+  t0="$(date +%s)"
+  # CI=false pinned: react-scripts turns lint WARNINGS into build ERRORS when CI is truthy, so a stray
+  # CI=1 in the launchd/cron environment would fail every build on pre-existing warnings and halt the run.
+  ( cd "$ROOT" && CI=false npm run build ) > "$BUILD_LOG" 2>&1 &
+  pid=$!; waited=0
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ "$waited" -ge "$BUILD_TIMEOUT" ]]; then
+      kill_tree "$pid"; wait "$pid" 2>/dev/null
+      log "build FAILED: exceeded ${BUILD_TIMEOUT}s — killed (see $BUILD_LOG)"; return 1
+    fi
+    sleep 1; waited=$(( waited + 1 ))
+  done
+  wait "$pid"; rc=$?; el=$(( $(date +%s) - t0 ))
+  if [[ "$rc" -ne 0 ]]; then
+    log "build FAILED: npm run build rc=$rc after ${el}s (see $BUILD_LOG). Last lines:"
+    tail -5 "$BUILD_LOG" 2>/dev/null | sed 's/^/      | /'
+    return 1
+  fi
+  # 1. the bundle must EXIST
+  main_js="$(ls -t "$ROOT/build/static/js/"main.*.js 2>/dev/null | head -1)"
+  [[ -n "$main_js" ]] || { log "build FAILED: rc=0 but no build/static/js/main.*.js on disk (see $BUILD_LOG)"; return 1; }
+  # 2. the bundle must have been WRITTEN BY THIS BUILD — mtime, deliberately NOT the content hash. A fix
+  #    that is server-side only (ltmCalc.js, server.js) legitimately produces a byte-identical bundle with
+  #    the SAME hash; gating on a hash change would fail exactly the iterations that are working correctly.
+  #    mtime older than t0 means the build never rewrote it => the old bundle survived => stale. Refuse.
+  mt="$(stat -f %m "$main_js" 2>/dev/null || stat -c %Y "$main_js" 2>/dev/null || echo 0)"
+  [[ "$mt" -ge "$t0" ]] || { log "build FAILED: ${main_js##*/} was not rewritten (mtime $mt < build start $t0) — stale bundle survived a rc=0 build; refusing to capture"; return 1; }
+  # 3. the bundle must be COMPLETE — index.html has to reference a main chunk that is actually on disk.
+  #    Catches a half-written build that left index.html pointing at a hash that no longer exists.
+  idx_ref="$(grep -o 'static/js/main\.[A-Za-z0-9]*\.js' "$ROOT/build/index.html" 2>/dev/null | head -1)"
+  [[ -n "$idx_ref" ]] || { log "build FAILED: build/index.html references no main bundle (partial build?)"; return 1; }
+  [[ -f "$ROOT/build/$idx_ref" ]] || { log "build FAILED: build/index.html points at $idx_ref which is not on disk (partial build)"; return 1; }
+  after="${main_js##*/}"
+  if [[ "$before" == "$after" ]]; then
+    log "build OK · ${el}s · bundle $after (byte-identical — no client-side change this iteration)"
+  else
+    log "build OK · ${el}s · bundle ${before:-<none>} -> $after"
+  fi
+  return 0
+}
+
 restart_server() {
   [[ -n "${MOCK_CAPTURE:-}" ]] && return 0       # tests mock the capture; there is no real server to cycle
+  # Part 2: rebuild BEFORE touching the port. Order matters — a failed build returns here with the old
+  # server still up and untouched, rather than leaving us with no server AND a stale bundle.
+  build_frontend || { log "restart_server: frontend build failed — port left alone, NOT capturing"; return 1; }
   local i p holders
   # 1. kill STRICTLY by PID (Part 8): the server WE started + whatever holds :$APP_PORT right now. NEVER by
   #    process name — the dashboard on :3002 is ALSO `node server.js`, and a name-based kill terminated it
@@ -194,8 +305,8 @@ became_not_analyzable() {                       # $1 = diff json, $2 = after dir
 # ── agent verdict (Part 2) ────────────────────────────────────────────────────────────────────────────
 # The agent must return a CLEAN envelope (is_error:false) AND a status token in its OUTPUT block. A cut-off
 # or errored agent leaves real edits behind (run 20260815-150838 committed bcda19a on is_error:true, no
-# .result) — a non-empty diff is NOT a verdict. NOTE: the token set matches ITERATION_PROMPT.md:101 exactly
-# — DONE | RESOLVED_UPSTREAM | BLOCKED | FAILED — NOT PASS/FAIL, because the prompt is off-limits to edit.
+# .result) — a non-empty diff is NOT a verdict. The token set matches ITERATION_PROMPT.md's OUTPUT FORMAT
+# exactly — DONE | RESOLVED_UPSTREAM | PARTIAL | BLOCKED | FAILED — NOT PASS/FAIL.
 agent_verdict() {                              # $1 = agent json → "OK <TOKEN>" | "NO_VERDICT <reason>"
   node -e '
     const fs=require("fs"); let j;
@@ -203,9 +314,21 @@ agent_verdict() {                              # $1 = agent json → "OK <TOKEN>
     catch(e){ process.stdout.write("NO_VERDICT unreadable-envelope"); process.exit(0); }
     if(j.is_error===true){ process.stdout.write("NO_VERDICT error-envelope:"+(j.subtype||j.terminal_reason||"unknown")); process.exit(0); }
     const t=(typeof j.result==="string")?j.result:"";
-    const m=t.match(/^\s*STATUS:\s*(DONE|RESOLVED_UPSTREAM|BLOCKED|FAILED)/mi);
+    const m=t.match(/^\s*STATUS:\s*(DONE|RESOLVED_UPSTREAM|PARTIAL|BLOCKED|FAILED)/mi);
     if(!m){ process.stdout.write("NO_VERDICT no-status-token"); process.exit(0); }
     process.stdout.write("OK "+m[1].toUpperCase());
+  ' "$1"
+}
+# The parenthetical argument on a status token — PARTIAL(<resolved> / <remains>), BLOCKED(<reason>), etc.
+# Extracted literally, never inferred: for PARTIAL it is the ONLY description of what is left to do, and it
+# gets written back into the queue item so the next iteration starts from what this one actually learned.
+status_detail() {                              # $1 = agent json → the (…) text, or "" when absent
+  node -e '
+    const fs=require("fs"); let j;
+    try{ j=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); }catch(e){ process.exit(0); }
+    const t=(typeof j.result==="string")?j.result:"";
+    const m=t.match(/^\s*STATUS:\s*[A-Z_]+\s*\(([^)]*)\)/mi);
+    process.stdout.write(m?m[1].replace(/[\r\n]+/g," ").replace(/<!--|-->/g,"").trim():"");
   ' "$1"
 }
 agent_changed() { [[ -n "$(gitr status --porcelain)" ]]; }   # true if the agent left uncommitted edits (runs/ is gitignored)
@@ -253,17 +376,45 @@ queue_mark() {                                 # $1 = marker (x|~), $2 = note �
     t=t.replace(/^- \[ \] (.*)$/m,(m,rest)=>{done=true; return `- [${mk}] ${rest}  <!-- ${note} -->`;});
     fs.writeFileSync(file,t); process.exit(done?0:3);' "$QUEUE" "$1" "$2"
 }
+# Annotate the first OPEN item WITHOUT checking it off (Part 4). PARTIAL needs the item to stay actionable
+# while recording what this iteration resolved and what is left — a checkbox change would close it.
+queue_note() {                                 # $1 = note text → appends an indented line under FIRST "- [ ]"
+  node -e '
+    const fs=require("fs"); const [file,note]=process.argv.slice(1);
+    let t=fs.readFileSync(file,"utf8"); let done=false;
+    const L=t.split("\n"); const i=L.findIndex(l=>/^- \[ \] /.test(l));
+    if(i<0) process.exit(3);
+    // insert AFTER the item block (title + its indented detail lines), so got/want/why stay contiguous
+    let j=i+1; while(j<L.length && !/^- \[/.test(L[j]) && !/^## /.test(L[j]) && L[j].trim()!=="") j++;
+    L.splice(j,0,"    "+note); done=true;
+    fs.writeFileSync(file,L.join("\n")); process.exit(done?0:3);' "$QUEUE" "$1"
+}
 
 # ── revert / bookkeeping ─────────────────────────────────────────────────────────────────────────────
 revert_to() {                                  # $1 = checkpoint sha — discard the agent's work, keep the runner's log
   # Preserve runner-owned bookkeeping across the revert: a decide()/finalize note written this iteration
   # must survive `reset --hard` + `clean` (the AGENT's code changes are what we discard, not our own log).
+  #
+  # EVIDENCE IS BOOKKEEPING, NOT WORK (Part 3). agent/diagnosis/ is preserved here for the same reason.
+  # The NO_VERDICT branch copied the agent envelope into agent/diagnosis/ and logged "save envelope to
+  # diagnosis/", then called revert_to three lines later — and `git clean -fd` deleted the copy, because a
+  # new file in a tracked directory is untracked. agent/diagnosis/ has been EMPTY after every NO_VERDICT
+  # while the log claimed otherwise. The same deletion silently destroyed the agent's OWN diagnosis .md,
+  # which ITERATION_PROMPT.md calls "the durable record whether the item ends DONE, BLOCKED, or FAILED" —
+  # on every revert path (NO_VERDICT / REGRESSION / TIMEOUT / NO_CHANGE). We discard the agent's CODE, not
+  # its findings: a reverted iteration is exactly the one whose write-up we most need to read afterwards.
   [[ -f "$DECISIONS" ]] && cp "$DECISIONS" "$RUN_DIR/.decisions.bak"
   [[ -f "$CALIB" ]] && cp "$CALIB" "$RUN_DIR/.calib.bak"
+  rm -rf "$RUN_DIR/.diagnosis.bak"
+  [[ -d "$AGENT_DIR/diagnosis" ]] && cp -R "$AGENT_DIR/diagnosis" "$RUN_DIR/.diagnosis.bak" 2>/dev/null
   gitr reset --hard "$1" >/dev/null 2>&1
   gitr clean -fd >/dev/null 2>&1               # remove new untracked files; gitignored (.env, runs/) survive
   [[ -f "$RUN_DIR/.decisions.bak" ]] && cp "$RUN_DIR/.decisions.bak" "$DECISIONS"
   [[ -f "$RUN_DIR/.calib.bak" ]] && cp "$RUN_DIR/.calib.bak" "$CALIB"
+  if [[ -d "$RUN_DIR/.diagnosis.bak" ]]; then
+    mkdir -p "$AGENT_DIR/diagnosis" 2>/dev/null
+    cp -R "$RUN_DIR/.diagnosis.bak/." "$AGENT_DIR/diagnosis/" 2>/dev/null || true
+  fi
 }
 decide() {                                     # $1 = plain-English statement (not a question)
   [[ -f "$DECISIONS" ]] || printf '# Sweep decisions log\n\nPlain-English statements of tripwire-worthy changes. Logged, not gated.\n' > "$DECISIONS"
@@ -316,6 +467,7 @@ run_agent_timed() {                            # $1 = seconds; rc 124 = timed ou
 # ════════════════════════════════════════════════════════════════════════════════════════════════════
 command -v node >/dev/null || die "node not found"
 [[ -f "$CAPTURE_JS" && -f "$ANALYZE_JS" && -f "$DIFF_JS" ]] || die "grader/collector missing"
+acquire_lock                                   # Part 1: FIRST — before we touch the port, the tree, or the tag
 [[ -z "$(gitr status --porcelain)" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
 
 mkdir -p "$RUN_DIR/cap"
@@ -348,7 +500,7 @@ log "START $(date '+%Y-%m-%d %H:%M:%S')  →  PROJECTED END ~$END_HUMAN  (${SWEE
 
 log "baseline capture ($NPAIRS pairs)…"
 BASE_DIR="$RUN_DIR/cap/baseline"
-restart_server || die "server failed to boot at baseline capture (HEAD may not run) — see $SERVER_LOG"
+restart_server || die "frontend build or server boot FAILED at baseline (HEAD may not build/run) — see $BUILD_LOG and $SERVER_LOG"
 do_capture "$BASE_DIR" "baseline" || die "baseline capture failed"
 DEF_BEFORE="$(measure_defects "$BASE_DIR")" || die "analyzer CRASHED on baseline — aborting (a crash is not a defect)"
 log "baseline: $DEF_BEFORE defects across $NPAIRS pairs"
@@ -365,7 +517,12 @@ while :; do
   [[ "$CONSEC_FAIL" -ge 3 ]] && { log "halt: 3 consecutive REGRESSION/FAILED"; break; }
   awk "BEGIN{exit !($COST_TOTAL > $BUDGET_USD)}" && { log "halt: budget \$$BUDGET_USD exceeded (\$$COST_TOTAL)"; break; }
   ITEM="$(queue_next)"; [[ $? -eq 3 ]] && { log "halt: queue empty"; break; }
-  ITEM_TITLE="$(printf '%s' "$ITEM" | head -1 | sed 's/^- \[ \] //; s/\*\*//g; s/,/;/g; s/"/'"'"'/g' | cut -c1-58)"
+  # Part 3: strip the trailing HTML comment FIRST, then allow 120 chars. The 58-char cut was there to stop
+  # item 1's long <!-- REOPENED: … --> annotation flooding calibration.csv, but it amputated every title
+  # ("1. Leg-availability / LTM gross-profit blanking — 32 pai"). Dropping the comment removes the reason
+  # for a narrow cut; 120 fits all five open items whole, including their GATE-2A root, which is the part
+  # that makes a row diagnosable. Commas → ';' and '"' → "'" still keep the CSV field safe.
+  ITEM_TITLE="$(printf '%s' "$ITEM" | head -1 | sed 's/^- \[ \] //; s/<!--.*$//; s/\*\*//g; s/,/;/g; s/"/'"'"'/g; s/[[:space:]]*$//' | cut -c1-120)"
   WALL=0; TURNS=0; COST=0; DEF_AFTER="$DEF_BEFORE"
   # Part B: reset the envelope columns each iteration so a TIMEOUT / pre-agent INDETERMINATE row cannot
   # inherit the previous iteration's agent state. ABSENT = "we never got a readable envelope".
@@ -396,7 +553,7 @@ while :; do
   if [[ "$CAP_MODE" == "2N" || "$PENDING_FRESH_BASELINE" -eq 1 ]]; then
     [[ "$PENDING_FRESH_BASELINE" -eq 1 ]] && { FORCED=true; log "forced fresh baseline re-capture (HOLE 1: prior item reverted/indeterminate)"; }
     CUR_BEFORE_DIR="$RUN_DIR/cap/before-$CUR_ITER"
-    restart_server || die "server failed to boot before before-capture at iter $CUR_ITER — see $SERVER_LOG"
+    restart_server || die "frontend build or server boot FAILED before before-capture at iter $CUR_ITER — see $BUILD_LOG and $SERVER_LOG"
     if ! do_capture "$CUR_BEFORE_DIR" "before-$CUR_ITER"; then
       log "before-capture failed → INDETERMINATE (capture ≠ code); skip item, no fail-count"
       finalize INDETERMINATE "~" true; PENDING_FRESH_BASELINE=1; continue
@@ -456,21 +613,61 @@ while :; do
   if [[ "$VERDICT" == OK\ * ]]; then STATUS_TOKEN="${VERDICT#OK }"; else STATUS_TOKEN=ABSENT; fi
   if [[ "$VERDICT" != OK\ * ]]; then
     log "NO_VERDICT (${VERDICT#NO_VERDICT }) — untrustworthy agent result; revert, leave item OPEN, save envelope to diagnosis/"
+    # Part 3: the envelope lands in TWO places on purpose.
+    #   $AGENT_DIR/diagnosis — the durable, committed record; survives the revert below via revert_to's
+    #                          preserve list, and finalize's `gitr add -A` then commits it.
+    #   $RUN_DIR             — gitignored, so it survives regardless of what git does. $AGENT_OUT already
+    #                          lives here as agent-N.json; the named copy makes it findable by run+iter
+    #                          without knowing the runner's internal filename.
     mkdir -p "$AGENT_DIR/diagnosis" 2>/dev/null || true
     cp "$AGENT_OUT" "$AGENT_DIR/diagnosis/agent-$RUN_ID-iter$CUR_ITER.json" 2>/dev/null || true
-    [[ -s "$AGENT_OUT.err" ]] && cp "$AGENT_OUT.err" "$AGENT_DIR/diagnosis/agent-$RUN_ID-iter$CUR_ITER.err" 2>/dev/null || true
+    cp "$AGENT_OUT" "$RUN_DIR/envelope-iter$CUR_ITER.json" 2>/dev/null || true
+    [[ -s "$AGENT_OUT.err" ]] && { cp "$AGENT_OUT.err" "$AGENT_DIR/diagnosis/agent-$RUN_ID-iter$CUR_ITER.err" 2>/dev/null || true; cp "$AGENT_OUT.err" "$RUN_DIR/envelope-iter$CUR_ITER.err" 2>/dev/null || true; }
     decide "iter $CUR_ITER NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (${VERDICT#NO_VERDICT }); reverted, item left OPEN."
     revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 )); finalize NO_VERDICT "o" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
     log "NO_VERDICT · consecutive fail = $CONSEC_FAIL"; continue
   fi
   log "verdict: agent returned $STATUS_TOKEN"
 
-  # ── restart :$APP_PORT on the AGENT'S code before the after-capture (Part 1). BUILD_BROKEN is checked
-  #    HERE, before the defect comparison: a server that will not boot captures 0 analyzable pairs, which
-  #    would false-read as a defect drop and auto-commit — the reward-breakage hazard (GATE_SPEC §3).
+  # ── PARTIAL (Part 4): the item's defect class SPLIT — some of it resolved, the rest did not ──────────
+  # STEP 0 offered exactly three exits: reproduces / RESOLVED_UPSTREAM / BLOCKED(repro-drifted). None
+  # describes what item 1 actually became. bcda19a fixed the gross-profit half of GP/COGS-crossSurface and
+  # not the cost-of-revenue half, so on run 20260816-165919 the agent found GP already correct at turn 39
+  # (6 minutes in, "The repro does not reproduce — §7 now renders"), had no legal way to report a half-
+  # resolved class, kept investigating for another 22 turns, and died on the turn cap at 61. Run -165953
+  # repeated it exactly. Two full nights and ~$9 bought zero verdicts because the vocabulary was missing.
+  #
+  # PARTIAL is a REPORT, not a failure: the agent states what resolved and what remains, then stops. So it
+  # does NOT touch the consecutive-fail breaker — the breaker exists to stop a wrong premise, and a correct
+  # report of a split defect class is the opposite of that. The item stays OPEN, carrying what was learned.
+  if [[ "$STATUS_TOKEN" == "PARTIAL" ]]; then
+    PARTIAL_DETAIL="$(status_detail "$AGENT_OUT")"
+    log "PARTIAL: ${PARTIAL_DETAIL:-<no detail given>}"
+    # The agent's contract for PARTIAL is report-and-stop, so any edits are out of contract. Revert them:
+    # we are deliberately skipping the after-capture (there is no claimed fix to measure), and keeping
+    # unmeasured edits would silently poison the next iteration's before-snapshot.
+    if agent_changed; then
+      log "PARTIAL: agent left edits despite report-and-stop — reverting them UNMEASURED (see $RUN_DIR/agent-$CUR_ITER.json)"
+      decide "iter $CUR_ITER PARTIAL returned edits, which its contract forbids; reverted unmeasured rather than committing work no capture scored."
+    fi
+    decide "iter $CUR_ITER PARTIAL: ${PARTIAL_DETAIL:-agent reported a split defect class with no detail}; item left OPEN with the remaining half recorded, breaker untouched."
+    revert_to "$CHECKPOINT"
+    # ORDER MATTERS: QUEUE.md is TRACKED, so it is not on revert_to's preserve list — annotating before the
+    # revert would hand the note straight to `reset --hard`. Write it after, so finalize's `gitr add -A`
+    # commits it. (This is the same ordering finalize/queue_mark already relies on.)
+    [[ -n "$PARTIAL_DETAIL" ]] && { queue_note "<!-- PARTIAL run $RUN_ID iter $CUR_ITER: $PARTIAL_DETAIL -->" || log "PARTIAL: could not annotate the queue item"; }
+    WALL=$(( $(date +%s) - ITER_T0 )); finalize PARTIAL "o" "$FORCED"; PENDING_FRESH_BASELINE=1
+    log "PARTIAL · consecutive fail unchanged = $CONSEC_FAIL · next item"; continue
+  fi
+
+  # ── rebuild the bundle + restart :$APP_PORT on the AGENT'S code before the after-capture (Parts 1-2).
+  #    BUILD_BROKEN is checked HERE, before the defect comparison: a server that will not boot captures 0
+  #    analyzable pairs, which would false-read as a defect drop and auto-commit — the reward-breakage
+  #    hazard (GATE_SPEC §3). Since Part 2 restart_server also rebuilds build/, so a client-side edit that
+  #    does not compile is caught here too, and is never graded against the previous iteration's bundle.
   if ! restart_server; then
-    log "BUILD_BROKEN: :$APP_PORT did not boot on the agent's changes → revert + HALT (never scored as an improvement)"
-    decide "iter $CUR_ITER BUILD_BROKEN: server would not boot on the agent's edits; reverted to checkpoint and halted before any defect comparison."
+    log "BUILD_BROKEN: frontend build failed or :$APP_PORT did not boot on the agent's changes → revert + HALT (never scored as an improvement)"
+    decide "iter $CUR_ITER BUILD_BROKEN: the frontend bundle would not build, or the server would not boot, on the agent's edits; reverted to checkpoint and halted before any defect comparison."
     revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 )); finalize BUILD_BROKEN "o" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
     log "HALTED (BUILD_BROKEN) · consecutive fail = $CONSEC_FAIL"; break
   fi

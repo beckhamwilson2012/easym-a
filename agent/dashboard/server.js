@@ -500,7 +500,7 @@ function queueItems() {
 function buildState() {
   const runId = latestRun();
   const log = parseLoopLog(runId);
-  const budget = parseFloat(process.env.BUDGET_USD || '10');
+  const budget = settingsBudget();   // the effective "Stop at" from sweep.settings (or the runner's hardcoded default)
   return {
     agentDir: AGENT_DIR, repoRoot: REPO_ROOT, now: Date.now(),
     latestRun: runId, hasAnyRun: !!runId,
@@ -516,6 +516,81 @@ function buildState() {
     stopExists: !!statSafe(ap('STOP')),
     undo: runId ? readSafe(ap('runs', runId, 'UNDO.txt')) : null,
   };
+}
+
+// ── PART 3/5: settings the runner reads from a config file (env still overrides; hardcoded fallback stays) ─
+// The dashboard writes CFG_*=VALUE lines to agent/sweep.settings; run-sweep.sh sources it as DEFAULTS. We NEVER
+// display a hardcoded placeholder — the "current value" is the config value if set, else the runner's own
+// hardcoded fallback parsed live from run-sweep.sh. Numbers only on write (the file is sourced by bash).
+const SETTINGS_FILE = ap('sweep.settings');
+const SETTINGS_META = [
+  { key: 'BUDGET_USD',  label: 'Stop at',            kind: 'money', explain: "A hard ceiling. It stops, it doesn't spend past this." },
+  { key: 'PAIRS_LIMIT', label: 'Decks to check',     kind: 'decks', explain: 'More is slower. The 5 repro decks are always included.' },
+  { key: 'MAX_ITER',    label: 'Bugs per run',       kind: 'int',   explain: 'Stops after this many, even if more are waiting.' },
+  { key: 'MAX_TURNS',   label: 'Turn limit per bug', kind: 'int',   explain: 'How long Claude Code gets on one bug before it gives up.' },
+];
+function readSettingsFile() {
+  const txt = readSafe(SETTINGS_FILE) || ''; const o = {};
+  for (const line of txt.split('\n')) { if (/^\s*#/.test(line)) continue; const m = line.match(/^\s*CFG_(\w+)\s*=\s*(.*?)\s*$/); if (m) o[m[1]] = m[2].replace(/^["']|["']$/g, ''); }
+  return o;
+}
+function runnerDefault(v) {                          // the hardcoded fallback, parsed LIVE from run-sweep.sh
+  const txt = readSafe(ap('run-sweep.sh')) || '';
+  let m = txt.match(new RegExp('^' + v + '="\\$\\{' + v + ':-\\$\\{CFG_' + v + ':-([^}]*)\\}\\}"', 'm'));   // VAR="${VAR:-${CFG_VAR:-DEF}}"
+  if (m) return m[1];
+  m = txt.match(new RegExp('^' + v + '="\\$\\{' + v + ':-([^}]*)\\}"', 'm'));                                // VAR="${VAR:-DEF}"
+  return m ? m[1] : null;
+}
+function deckCount() { try { return fs.readdirSync(path.join(REPO_ROOT, 'docs/sweep-v2/captures')).filter(f => f.endsWith('.json')).length || 50; } catch { return 50; } }
+function currentSettings() {
+  const cfg = readSettingsFile();
+  const decks = deckCount();
+  return SETTINGS_META.map(m => {
+    const def = runnerDefault(m.key);
+    const raw = cfg[m.key] != null ? cfg[m.key] : def;                 // config value, else the live hardcoded default
+    let display = raw == null ? '' : String(raw);
+    if (m.kind === 'decks' && (raw == null || String(raw) === '0')) display = String(decks);   // PAIRS_LIMIT 0 = all
+    return { key: m.key, label: m.label, kind: m.kind, explain: m.explain, value: raw, display, fromConfig: cfg[m.key] != null, runnerDefault: def, deckCount: decks };
+  });
+}
+function settingsBudget() { const b = (currentSettings().find(x => x.key === 'BUDGET_USD') || {}).value; return parseFloat(b) || parseFloat(runnerDefault('BUDGET_USD')) || 50; }
+function writeSettings(patch) {
+  const cfg = readSettingsFile();
+  const decks = deckCount();
+  for (const m of SETTINGS_META) {
+    if (patch[m.key] == null || String(patch[m.key]).trim() === '') continue;
+    let v = String(patch[m.key]).trim();
+    if (!/^\d+(\.\d+)?$/.test(v)) continue;                            // numbers ONLY — this file is sourced by bash
+    if (m.kind === 'decks' && Number(v) >= decks) v = '0';            // "all" → PAIRS_LIMIT=0
+    cfg[m.key] = v;
+  }
+  const out = ['# Sweep settings — written by the dashboard Settings page. run-sweep.sh sources this as DEFAULTS;',
+    '# an env var at launch (e.g. BUDGET_USD=8) STILL overrides, and the hardcoded fallback applies if a key is',
+    '# missing. Numbers only (this file is sourced by bash).', ''];
+  for (const m of SETTINGS_META) if (cfg[m.key] != null) out.push(`CFG_${m.key}=${cfg[m.key]}`);
+  try { fs.writeFileSync(SETTINGS_FILE, out.join('\n') + '\n'); return { ok: true }; } catch (e) { return { error: String(e) }; }
+}
+
+// ── PART 4: launchd toggles — REAL state from `launchctl list`, NEVER cached. Read is safe and runs on load;
+// the write (bootstrap/bootout) fires ONLY on an explicit toggle, so building/reading this never loads a job.
+const LAUNCHD_JOBS = [
+  { key: 'nightly',  label: 'com.beckham.sweep',          title: 'Run every night at 6:30',        explain: 'Starts a sweep automatically each night.' },
+  { key: 'watchdog', label: 'com.beckham.sweep-watchdog', title: 'Stop a run that stalls 25 minutes', explain: 'Kills a run that has gone quiet for 25 minutes.' },
+];
+function launchctlOk() { try { execFileSync('launchctl', ['list'], { stdio: 'ignore' }); return true; } catch { return false; } }
+function jobLoaded(label) { try { execFileSync('launchctl', ['list', label], { stdio: 'ignore' }); return true; } catch { return false; } }
+function launchdView() {
+  const ok = launchctlOk();
+  const uid = process.getuid ? process.getuid() : 501;
+  const home = process.env.HOME || '';
+  const jobs = LAUNCHD_JOBS.map(j => {
+    const plist = path.join(home, 'Library/LaunchAgents', j.label + '.plist');
+    const hasPlist = !!statSafe(plist);
+    return { key: j.key, label: j.label, title: j.title, explain: j.explain,
+      loaded: ok ? jobLoaded(j.label) : false, hasPlist, controllable: ok && hasPlist,
+      onCmd: `launchctl bootstrap gui/${uid} ${plist}`, offCmd: `launchctl bootout gui/${uid}/${j.label}` };
+  });
+  return { available: ok, jobs };
 }
 
 const app = express();
@@ -562,11 +637,37 @@ app.post('/api/launch', async (req, res) => {
     const pf = await preflight();
     if (!pf.allOk) return res.status(412).json({ error: 'preflight failed', checks: pf.checks });
     const appended = appendQueuedToQueueMd(readPlan());
-    const budget = Math.max(1, parseFloat(req.body && req.body.budget) || 10);   // Part 5: per-run "Stop at $__", default 10
+    // Settings (sweep.settings) drives budget / iters / turns / decks for a dashboard launch — strip these
+    // from the spawn env so the config is authoritative here. A TERMINAL launch's own env still wins.
     const { spawn } = require('child_process');
-    const child = spawn('bash', [ap('run-sweep.sh')], { cwd: REPO_ROOT, detached: true, stdio: 'ignore', env: { ...process.env, BUDGET_USD: String(budget) } });
+    const env = { ...process.env }; ['BUDGET_USD', 'PAIRS_LIMIT', 'MAX_ITER', 'MAX_TURNS'].forEach(k => delete env[k]);
+    const child = spawn('bash', [ap('run-sweep.sh')], { cwd: REPO_ROOT, detached: true, stdio: 'ignore', env });
     child.unref();
     res.json({ launched: true, pid: child.pid, appended: appended.appended });
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
+
+// settings (Part 3) — GET the live values, POST to write agent/sweep.settings (numbers only)
+app.get('/api/settings', (_req, res) => { try { res.json({ settings: currentSettings() }); } catch (e) { res.status(500).json({ error: String(e) }); } });
+app.post('/api/settings', (req, res) => { try { const r = writeSettings(req.body || {}); if (r.error) return res.status(500).json(r); res.json({ settings: currentSettings() }); } catch (e) { res.status(500).json({ error: String(e) }); } });
+// launchd toggles (Part 4) — GET reads REAL state (never cached, never loads); POST toggles on explicit action
+app.get('/api/launchd', (_req, res) => { try { res.json(launchdView()); } catch (e) { res.status(500).json({ error: String(e) }); } });
+app.post('/api/launchd', (req, res) => {
+  try {
+    const { key, on } = req.body || {};
+    const job = LAUNCHD_JOBS.find(j => j.key === key);
+    if (!job) return res.status(400).json({ error: 'unknown job' });
+    const uid = process.getuid();
+    const plist = path.join(process.env.HOME || '', 'Library/LaunchAgents', job.label + '.plist');
+    if (!statSafe(plist)) return res.status(412).json({ error: 'plist missing', plist });
+    try {
+      if (on) execFileSync('launchctl', ['bootstrap', `gui/${uid}`, plist], { stdio: 'ignore' });
+      else    execFileSync('launchctl', ['bootout', `gui/${uid}/${job.label}`], { stdio: 'ignore' });
+    } catch (e) {
+      // shelling out to launchctl did not work in this environment — report it, do NOT fake success
+      return res.status(500).json({ error: 'launchctl failed — run it from a terminal', detail: String(e.message || e).slice(0, 200), loaded: jobLoaded(job.label) });
+    }
+    res.json({ key, loaded: jobLoaded(job.label) });          // re-read REAL state after the toggle, never assume
   } catch (e) { res.status(500).json({ error: String(e) }); }
 });
 
