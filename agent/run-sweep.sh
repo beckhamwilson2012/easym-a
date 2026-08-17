@@ -116,14 +116,21 @@ build_pairs_json() {
   ' "$ROOT/docs/sweep-v2/captures" "$PAIRS_LIMIT")"
 }
 do_capture() {                                 # $1 = dest snapshot dir, $2 = phase label; rc 2 = capture failed
-  local dest="$1" phase="$2"
+  local dest="$1" phase="$2" t0; t0="$(date +%s)"
+  log "capture START · $phase · ${NPAIRS:-?} decks (per-deck progress follows — a silent capture is the runner working, not a hang)"
   rm -rf "$RAW"; mkdir -p "$RAW" "$dest"
   if [[ -n "${MOCK_CAPTURE:-}" ]]; then
     bash "$MOCK_CAPTURE" "$RAW" "$phase" "$RUN_ID" || return 2
   else
-    GAP_MS="$GAP_MS" node "$CAPTURE_JS" "$PAIRS_JSON" >/dev/null 2>&1 || return 2
+    # LOOP_LOG + CAPTURE_PHASE → capture.js appends one line per deck to loop.log (Part 1); stdout stays /dev/null
+    GAP_MS="$GAP_MS" LOOP_LOG="$RUN_DIR/loop.log" CAPTURE_PHASE="$phase" node "$CAPTURE_JS" "$PAIRS_JSON" >/dev/null 2>&1 \
+      || { log "capture END · $phase · FAILED after $(( ($(date +%s) - t0) / 60 ))m"; return 2; }
   fi
   cp "$RAW"/*.json "$dest"/ 2>/dev/null || true
+  local n ok
+  n="$(ls "$dest"/*.json 2>/dev/null | wc -l | tr -d ' ')"
+  ok="$(node -e 'const fs=require("fs"),d=process.argv[1];let k=0;for(const f of fs.readdirSync(d)){if(!f.endsWith(".json"))continue;try{if(JSON.parse(fs.readFileSync(d+"/"+f)).ok)k++}catch(e){}}process.stdout.write(String(k))' "$dest" 2>/dev/null || echo '?')"
+  log "capture END · $phase · $n decks captured ($ok ok) · $(( ($(date +%s) - t0) / 60 ))m"
   [[ -n "$(ls -A "$dest" 2>/dev/null)" ]] || return 2
   return 0
 }
@@ -136,7 +143,10 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
 restart_server() {
   [[ -n "${MOCK_CAPTURE:-}" ]] && return 0       # tests mock the capture; there is no real server to cycle
   local i p holders
-  # 1. kill the server WE started (if any) + whatever holds the port right now (incl. one the agent spawned)
+  # 1. kill STRICTLY by PID (Part 8): the server WE started + whatever holds :$APP_PORT right now. NEVER by
+  #    process name — the dashboard on :3002 is ALSO `node server.js`, and a name-based kill terminated it
+  #    mid-run (17:05, run 20260816). `lsof -ti tcp:$APP_PORT` can only ever return a :$APP_PORT holder, so
+  #    the dashboard is structurally out of the kill set.
   holders="$(lsof -ti "tcp:$APP_PORT" 2>/dev/null || true)"
   for p in $SERVER_PID $holders; do [[ -n "$p" ]] && kill "$p" 2>/dev/null || true; done
   # 2. verify the port is ACTUALLY free with lsof (not sleep-and-hope); escalate to -9, then give up
@@ -280,8 +290,10 @@ run_agent() {
   else
     # cd to ROOT so claude reads .claude/settings.local.json (the allowlist) and edits the right tree,
     # regardless of where run-sweep.sh was launched from. Redirects stay absolute (outside the subshell).
+    # env -u ANTHROPIC_API_KEY (Part 9): strip the key so a hand-launched run from a shell that sourced .env
+    # can NEVER silently switch to per-token API billing. No-op when the key is absent (the normal case).
     ( cd "$ROOT" && { cat "$PROMPT"; printf '\n\nITEM: %s\n' "$ITEM"; } | \
-      claude -p --output-format json --max-turns "$MAX_TURNS" --permission-mode acceptEdits ) > "$AGENT_OUT" 2>"$AGENT_OUT.err" || true
+      env -u ANTHROPIC_API_KEY claude -p --output-format json --max-turns "$MAX_TURNS" --permission-mode acceptEdits ) > "$AGENT_OUT" 2>"$AGENT_OUT.err" || true
   fi
 }
 hash_result() { node -e 'try{const j=JSON.parse(require("fs").readFileSync(process.argv[1]));process.stdout.write(require("crypto").createHash("sha256").update(JSON.stringify(j.result||"")).digest("hex"))}catch(e){process.stdout.write("ERR")}' "$AGENT_OUT"; }
@@ -292,6 +304,9 @@ run_agent_timed() {                            # $1 = seconds; rc 124 = timed ou
   while kill -0 "$pid" 2>/dev/null; do
     if [[ "$waited" -ge "$secs" ]]; then kill_tree "$pid"; wait "$pid" 2>/dev/null; return 124; fi
     sleep 1; waited=$(( waited + 1 ))
+    # heartbeat every 60s (Part 1): claude -p returns NOTHING until it finishes, so an elapsed-time tick is
+    # the only honest liveness signal during the agent phase — no fake progress, just "still working, Nm in".
+    [[ $(( waited % 60 )) -eq 0 ]] && log "  claude -p working… $(( waited / 60 ))m elapsed (Claude Code returns nothing until it finishes)"
   done
   wait "$pid" 2>/dev/null; return 0
 }

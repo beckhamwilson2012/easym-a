@@ -9,6 +9,12 @@ const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const BASE = 'http://localhost:3001';
 const RAW = '/tmp/sweep_v2_raw';
 const STATUS = '/tmp/sweep_v2_status.log';
+// Progress → the runner's loop.log (Part 1): a 50-pair capture used to print one line then go silent for
+// ~88 min. The runner passes LOOP_LOG + CAPTURE_PHASE so each deck emits one honest "N/total pair ok|failed"
+// line as it lands. No progress is invented — a line appears only when a deck actually finishes.
+const LOOP_LOG = process.env.LOOP_LOG || '';
+const CAP_PHASE = process.env.CAPTURE_PHASE || 'capture';
+function plog(msg) { if (!LOOP_LOG) return; const t = new Date().toTimeString().slice(0, 8); try { fs.appendFileSync(LOOP_LOG, `[${t}] ${msg}\n`); } catch (_) {} }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const pairs = process.argv[2] ? JSON.parse(process.argv[2]) : []; // [["A","B",offerOverrideOrNull],...] (empty when required as a module for tests)
 const NOISE = /Download the React DevTools|Warning: .*defaultProps|source map|\[HMR\]|webpack|Recharts/i;
@@ -195,9 +201,13 @@ if (require.main === module) (async () => {
     process.stderr.write(' ' + (r.ok ? (d ? 'dirty' : 'ok') : 'FAIL ' + r.stage));
     return { r, d };
   };
+  let idx = 0; const total = pairs.length;
+  plog(`  ${CAP_PHASE}: ${total} decks starting`);
   for (const [A, B, off] of pairs) {
-    if (off == null && alreadyClean(A, B)) { process.stderr.write(`\n=== skip ${A}/${B} (already clean) ===`); fs.appendFileSync(STATUS, `[${new Date().toISOString()}] SKIP ${A}/${B} (already clean)\n`); continue; }
-    const { d } = await one(A, B, off, '');
+    idx++;
+    if (off == null && alreadyClean(A, B)) { process.stderr.write(`\n=== skip ${A}/${B} (already clean) ===`); fs.appendFileSync(STATUS, `[${new Date().toISOString()}] SKIP ${A}/${B} (already clean)\n`); plog(`  ${CAP_PHASE} ${idx}/${total} ${A}/${B} — skip (already clean)`); continue; }
+    const { r, d } = await one(A, B, off, '');
+    plog(`  ${CAP_PHASE} ${idx}/${total} ${A}/${B} — ${r.ok ? (d ? 'dirty' : 'ok') : 'FAILED'}`);
     if (d) retry.push([A, B, off]);
     await sleep(GAP);
   }
@@ -206,7 +216,7 @@ if (require.main === module) (async () => {
     process.stderr.write(`\n--- RETRY PASS (${retry.length}) after 90s ---`);
     fs.appendFileSync(STATUS, `[${new Date().toISOString()}] --- RETRY PASS ${retry.length}: ${retry.map(p => p[0] + '/' + p[1]).join(' ')} ---\n`);
     await sleep(90000);
-    for (const [A, B, off] of retry) { await one(A, B, off, 'RETRY:'); await sleep(GAP); }
+    for (const [A, B, off] of retry) { const { r, d } = await one(A, B, off, 'RETRY:'); plog(`  ${CAP_PHASE} retry ${A}/${B} — ${r.ok ? (d ? 'dirty' : 'ok') : 'FAILED'}`); await sleep(GAP); }
   }
   await browser.close();
   process.stderr.write('\nCAPTURE BATCH DONE\n');
