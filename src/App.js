@@ -140,6 +140,61 @@ function LargeNumericField({ label, name, value, onChange, disabled, note, place
   );
 }
 
+// ── Phase 5 (upload → Manual Entry) helpers ────────────────────────────────────
+// Page-cite line shown under an upload-prefilled field: green = clean, amber = review
+// (bundled/qualified), red = not found. A user edit replaces it with "source: user override".
+function ExtractCite({ cite, overridden }) {
+  if (overridden) return <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 10, fontStyle: 'italic' }}>✎ source: user override</div>;
+  if (!cite) return null;
+  if (cite.status === 'missing') return <div style={{ fontSize: 11, color: '#DC2626', marginTop: -8, marginBottom: 10 }}>— not found in upload — enter manually</div>;
+  const amber = cite.status === 'review';
+  return <div style={{ fontSize: 11, color: amber ? '#B45309' : '#059669', marginTop: -8, marginBottom: 10 }}>{amber ? '⚠ review · ' : '✓ '}p.{cite.page} · {cite.label}</div>;
+}
+// EBITDA is operating income + D&A, so its cite combines both underlying cites.
+function ebitdaCite(u) {
+  if (!u || !u.fields) return null;
+  const e = u.fields.ebit, d = u.fields.da;
+  if ((!e || e.value == null) && (!d || d.value == null)) return null;
+  const status = ((e && e.status === 'missing') || (d && d.status === 'missing')) ? 'missing'
+               : ((e && e.status === 'review') || (d && d.status === 'review')) ? 'review' : 'ok';
+  return { status, page: e && e.page, label: `Op income p.${e && e.page} + D&A p.${d && d.page}` };
+}
+// Dropzone that POSTs a 10-K PDF to /api/extract and pre-fills a panel's six fields.
+function UploadZone({ uploading, error, onFile }) {
+  const ref = useRef(null);
+  return (
+    <div style={{ border: '1px dashed #C7D2FE', background: '#F5F7FF', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+      <input ref={ref} type="file" accept="application/pdf" style={{ display: 'none' }}
+        onChange={e => { const f = e.target.files && e.target.files[0]; if (f) onFile(f); e.target.value = ''; }} />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 12, color: '#4338CA' }}>{uploading ? '⟳ Extracting 10-K (locate → extract → validate)…' : 'Pre-fill from a 10-K PDF — every figure page-cited'}</span>
+        <button type="button" disabled={uploading} onClick={() => ref.current && ref.current.click()}
+          style={{ background: '#4338CA', color: '#fff', border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: uploading ? 'default' : 'pointer', opacity: uploading ? 0.6 : 1, flexShrink: 0 }}>Upload PDF</button>
+      </div>
+      {error && <div style={{ fontSize: 11, color: '#DC2626', marginTop: 6 }}>{error}</div>}
+    </div>
+  );
+}
+// Editable document facts (scale/currency/fiscal-year-end) parsed from the uploaded filing.
+function DocFactsPanel({ facts, onChange }) {
+  if (!facts) return null;
+  const cell = (label, key, opts) => (
+    <div style={{ flex: 1, minWidth: 88 }}>
+      <label style={{ display: 'block', fontSize: 10, color: '#6B7280', marginBottom: 2 }}>{label}</label>
+      {opts
+        ? <select value={facts[key] || ''} onChange={e => onChange({ ...facts, [key]: e.target.value })} style={{ width: '100%', fontSize: 12, padding: '3px 4px', border: '1px solid #D1D5DB', borderRadius: 4 }}>{opts.map(o => <option key={o} value={o}>{o}</option>)}</select>
+        : <input value={facts[key] || ''} onChange={e => onChange({ ...facts, [key]: e.target.value })} style={{ width: '100%', fontSize: 12, padding: '3px 4px', border: '1px solid #D1D5DB', borderRadius: 4 }} />}
+    </div>
+  );
+  return (
+    <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: 8, marginBottom: 12, display: 'flex', gap: 8 }}>
+      {cell('Scale', 'scale', ['millions', 'thousands', 'billions'])}
+      {cell('Currency', 'currency')}
+      {cell('Fiscal year end', 'fiscalYearEnd')}
+    </div>
+  );
+}
+
 // eslint-disable-next-line no-unused-vars
 function Hint({ children, onUse }) {
   return (
@@ -502,8 +557,58 @@ function App() {
   // Basis-resolved inputs the deck reads (non-GAAP when both reconcile, else GAAP) + the basis label.
   const [resolvedInputs, setResolvedInputs] = useState(null);
   const [accretionBasis, setAccretionBasis] = useState('GAAP');
+  // Phase 5 — upload/extract state per panel. ADDITIVE: the ticker and manual paths below are unchanged.
+  const [uploadA, setUploadA] = useState(null);   // /api/extract result: { fields, docFacts, located }
+  const [uploadB, setUploadB] = useState(null);
+  const [uploadingA, setUploadingA] = useState(false);
+  const [uploadingB, setUploadingB] = useState(false);
+  const [uploadErrA, setUploadErrA] = useState('');
+  const [uploadErrB, setUploadErrB] = useState('');
+  const [docFactsA, setDocFactsA] = useState(null);
+  const [docFactsB, setDocFactsB] = useState(null);
+  const [overrideA, setOverrideA] = useState({});  // form-field name -> user edited a pre-filled value
+  const [overrideB, setOverrideB] = useState({});
 
   const handleChange = (e) => setInputs(prev => ({ ...prev, [e.target.name]: parseFloat(e.target.value) || 0 }));
+  // Phase 5 — wrap a field's onChange to also mark it a user override (so its page cite becomes "user override").
+  const changeWithOverride = (panel) => (e) => { (panel === 'A' ? setOverrideA : setOverrideB)(o => ({ ...o, [e.target.name]: true })); handleChange(e); };
+
+  // Phase 5 — POST a 10-K PDF to /api/extract and pre-fill the panel's six fields (converted to $M). A
+  // missing field keeps its current value (never forced to 0); its cite shows "not found — enter manually".
+  const handleExtract = (file, panel) => {
+    const setUploading = panel === 'A' ? setUploadingA : setUploadingB;
+    const setUpload    = panel === 'A' ? setUploadA : setUploadB;
+    const setErr       = panel === 'A' ? setUploadErrA : setUploadErrB;
+    const setDocFacts  = panel === 'A' ? setDocFactsA : setDocFactsB;
+    const setOverride  = panel === 'A' ? setOverrideA : setOverrideB;
+    setUploading(true); setErr('');
+    const fd = new FormData(); fd.append('file', file);
+    fetch(apiUrl('/api/extract'), { method: 'POST', body: fd })
+      .then(r => r.json().then(j => ({ ok: r.ok, j })))
+      .then(({ ok, j }) => {
+        if (!ok || !j || !j.ok) { setErr((j && j.error) || 'Extraction failed.'); setUploading(false); return; }
+        setUpload(j); setDocFacts(j.docFacts); setOverride({});
+        const f = j.fields, P = panel, toM = v => v == null ? null : Math.round(v / 1e6);
+        const ebitM = toM(f.ebit.value), daM = toM(f.da.value);
+        const ebitdaM = (ebitM != null && daM != null) ? ebitM + daM : ebitM;   // EBITDA = operating income + D&A
+        setInputs(prev => ({ ...prev,
+          [`company${P}Revenue`]:         toM(f.revenue.value)   ?? prev[`company${P}Revenue`],
+          [`company${P}OperatingIncome`]: ebitM                  ?? prev[`company${P}OperatingIncome`],
+          [`company${P}EBITDA`]:          ebitdaM                ?? prev[`company${P}EBITDA`],
+          [`company${P}NetIncome`]:       toM(f.netIncome.value) ?? prev[`company${P}NetIncome`],
+          [`company${P}Cash`]:            toM(f.cash.value)      ?? prev[`company${P}Cash`],
+          [`company${P}Debt`]:            toM(f.totalDebt.value) ?? prev[`company${P}Debt`],
+        }));
+        setUploading(false);
+      })
+      .catch(e => { setErr('Upload failed: ' + e.message); setUploading(false); });
+  };
+  // Phase 5 — a panel's six required fields are present. Uploaded → all six extracted; else the manual
+  // path is unchanged in kind (a real entry has revenue + EBITDA). Gates the Manual-Entry Build button.
+  const sixReady = (upload, P) => {
+    if (upload && upload.fields) return ['revenue', 'ebit', 'da', 'netIncome', 'cash', 'totalDebt'].every(k => upload.fields[k] && upload.fields[k].value != null);
+    return inputs[`company${P}Revenue`] > 0 && inputs[`company${P}EBITDA`] > 0;
+  };
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
 
   // Auto-set cash% default when bank mode activates/deactivates
@@ -1275,24 +1380,38 @@ function App() {
               <div style={col2}>
                 <div style={cardStyle}>
                   <h2 style={sectionTitle}>Company A — Acquirer</h2>
-                  <LargeNumericField label="Annual Revenue ($M)" name="companyARevenue" value={inputs.companyARevenue} onChange={handleChange} placeholder="Enter revenue in millions" />
-                  <LargeNumericField label="EBITDA ($M)" name="companyAEBITDA" value={inputs.companyAEBITDA} onChange={handleChange} />
-                  <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={handleChange} placeholder="Enter net income in millions" />
+                  <UploadZone uploading={uploadingA} error={uploadErrA} onFile={f => handleExtract(f, 'A')} />
+                  <DocFactsPanel facts={docFactsA} onChange={setDocFactsA} />
+                  <LargeNumericField label="Annual Revenue ($M)" name="companyARevenue" value={inputs.companyARevenue} onChange={changeWithOverride('A')} placeholder="Enter revenue in millions" />
+                  <ExtractCite cite={uploadA && uploadA.fields.revenue} overridden={overrideA.companyARevenue} />
+                  <LargeNumericField label="EBITDA ($M)" name="companyAEBITDA" value={inputs.companyAEBITDA} onChange={changeWithOverride('A')} />
+                  <ExtractCite cite={ebitdaCite(uploadA)} overridden={overrideA.companyAEBITDA} />
+                  <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={changeWithOverride('A')} placeholder="Enter net income in millions" />
+                  <ExtractCite cite={uploadA && uploadA.fields.netIncome} overridden={overrideA.companyANetIncome} />
                   <InputField label="Shares Outstanding (millions)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
                   <InputField label="Earnings Per Share ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
-                  <LargeNumericField label="Cash on Hand ($M)" name="companyACash" value={inputs.companyACash} onChange={handleChange} />
-                  <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={handleChange} />
+                  <LargeNumericField label="Cash on Hand ($M)" name="companyACash" value={inputs.companyACash} onChange={changeWithOverride('A')} />
+                  <ExtractCite cite={uploadA && uploadA.fields.cash} overridden={overrideA.companyACash} />
+                  <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={changeWithOverride('A')} />
+                  <ExtractCite cite={uploadA && uploadA.fields.totalDebt} overridden={overrideA.companyADebt} />
                   <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceA" value={inputs.currentSharePriceA} onChange={handleChange} placeholder="e.g., 749.28" />
                 </div>
                 <div style={cardStyle}>
                   <h2 style={sectionTitle}>Company B — Target</h2>
-                  <LargeNumericField label="Annual Revenue ($M)" name="companyBRevenue" value={inputs.companyBRevenue} onChange={handleChange} placeholder="Enter revenue in millions" />
-                  <LargeNumericField label="EBITDA ($M)" name="companyBEBITDA" value={inputs.companyBEBITDA} onChange={handleChange} />
-                  <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={handleChange} placeholder="Enter net income in millions" />
+                  <UploadZone uploading={uploadingB} error={uploadErrB} onFile={f => handleExtract(f, 'B')} />
+                  <DocFactsPanel facts={docFactsB} onChange={setDocFactsB} />
+                  <LargeNumericField label="Annual Revenue ($M)" name="companyBRevenue" value={inputs.companyBRevenue} onChange={changeWithOverride('B')} placeholder="Enter revenue in millions" />
+                  <ExtractCite cite={uploadB && uploadB.fields.revenue} overridden={overrideB.companyBRevenue} />
+                  <LargeNumericField label="EBITDA ($M)" name="companyBEBITDA" value={inputs.companyBEBITDA} onChange={changeWithOverride('B')} />
+                  <ExtractCite cite={ebitdaCite(uploadB)} overridden={overrideB.companyBEBITDA} />
+                  <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={changeWithOverride('B')} placeholder="Enter net income in millions" />
+                  <ExtractCite cite={uploadB && uploadB.fields.netIncome} overridden={overrideB.companyBNetIncome} />
                   <InputField label="Shares Outstanding (millions)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
                   <InputField label="Earnings Per Share ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />
-                  <LargeNumericField label="Cash on Hand ($M)" name="companyBCash" value={inputs.companyBCash} onChange={handleChange} />
-                  <LargeNumericField label="Total Debt ($M)" name="companyBDebt" value={inputs.companyBDebt} onChange={handleChange} />
+                  <LargeNumericField label="Cash on Hand ($M)" name="companyBCash" value={inputs.companyBCash} onChange={changeWithOverride('B')} />
+                  <ExtractCite cite={uploadB && uploadB.fields.cash} overridden={overrideB.companyBCash} />
+                  <LargeNumericField label="Total Debt ($M)" name="companyBDebt" value={inputs.companyBDebt} onChange={changeWithOverride('B')} />
+                  <ExtractCite cite={uploadB && uploadB.fields.totalDebt} overridden={overrideB.companyBDebt} />
                   <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceB" value={inputs.currentSharePriceB} onChange={handleChange} placeholder="e.g., 749.28" />
                 </div>
               </div>
@@ -1381,7 +1500,9 @@ function App() {
                   })()}
                 </div>
               </div>
-              <button onClick={handleSubmit} style={{ width: '100%', padding: 16, background: '#0F2244', color: '#fff', border: 'none', borderRadius: 10, fontSize: 16, fontWeight: 'bold', cursor: 'pointer' }}>
+              <button onClick={handleSubmit} disabled={!(sixReady(uploadA, 'A') && sixReady(uploadB, 'B'))}
+                title={!(sixReady(uploadA, 'A') && sixReady(uploadB, 'B')) ? 'All six required fields (revenue, EBITDA, net income, cash, debt) must be present for both companies — enter them or upload a 10-K.' : undefined}
+                style={{ width: '100%', padding: 16, background: (sixReady(uploadA, 'A') && sixReady(uploadB, 'B')) ? '#0F2244' : '#9CA3AF', color: '#fff', border: 'none', borderRadius: 10, fontSize: 16, fontWeight: 'bold', cursor: (sixReady(uploadA, 'A') && sixReady(uploadB, 'B')) ? 'pointer' : 'not-allowed' }}>
                 Run Analysis →
               </button>
             </div>
