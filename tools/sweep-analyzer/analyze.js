@@ -46,17 +46,34 @@ function labeled(text, labelRe) {
   }
   return null;
 }
-// dashboard TILE: label / ⓘ / value on separate lines. Returns the first money-formatted line after
-// the label (skips "ⓘ" and "(Y1)"-type suffixes that pollute a same-line match). Handles +$, ($), $XB/M.
+// dashboard TILE: label / ⓘ / value on separate lines. Returns the money value of the FIRST
+// NON-LAYOUT line after the label — and null the moment that line is not money.
+//
+// It used to scan the whole 3-line window for a money match, skipping every line that did not look like
+// money. A tile rendering "N/A" — which is exactly what fmtMoneyTable/fmtMoneyAccounting return on a
+// null input (deckTokens.js:33,61) — was therefore skipped like a layout glyph, and the scan ran on into
+// the NEXT tile and returned ITS value as this one's. Run 20260817-153300: BRK.B's "Acquirer Net Income
+// N/A" read Target Net Income $11.3B, so check 11 recomputed 11,300+11,300+1,385-4,012 = $19.97B and
+// flagged the deck for honestly rendering "—". The deck was right; the parser invented the input.
+// A tile that renders N/A has NO value. That is not the same as the next tile's value.
+//
+// PARSING, NOT GRADING: what counts as a defect is unchanged. This only stops a fabricated number from
+// reaching a check. Classification follows snapshot-diff.js:46, which already models the distinction —
+// —/N/A/n/m are a DASH state, distinct from $0 and from blank. Only true layout is skippable (a blank
+// line, the ⓘ glyph, a "(Y1)"/"(incl. …)" parenthetical); the first real token decides, and a non-money
+// token decides null.
+const TILE_LAYOUT = /^(?:|ⓘ|\(Y1\)|\(incl\.[^)]*\))$/;
+const TILE_MONEY  = /^[+(]?-?\$[\d.,]+\s*[BM]?\)?$/;
 function tileVal(body, labelRe) {
   const lines = clean(body).split('\n');
   for (let i = 0; i < lines.length; i++) {
-    if (labelRe.test(lines[i])) {
-      for (let k = i + 1; k < Math.min(i + 4, lines.length); k++) {
-        const v = lines[k].trim();
-        if (/^[+(]?-?\$[\d.,]+\s*[BM]?\)?$/.test(v)) return money(v.replace('+', ''));
-      }
+    if (!labelRe.test(lines[i])) continue;
+    for (let k = i + 1; k < Math.min(i + 4, lines.length); k++) {
+      const v = lines[k].trim();
+      if (TILE_LAYOUT.test(v)) continue;                       // layout — keep looking inside THIS tile
+      return TILE_MONEY.test(v) ? money(v.replace('+', '')) : null;  // first real token decides
     }
+    return null;                                               // window held nothing but layout
   }
   return null;
 }
