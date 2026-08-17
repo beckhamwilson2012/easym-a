@@ -135,6 +135,26 @@
     null, so those rendered numbers come from a different code path that the run artifacts do not
     identify. Establishing which surface renders them is part of this item, not a premise for it.
 
+- [ ] **6. A bad verdict destroys the agent's code before anything records it** — HARNESS defect, not an
+      app defect. **OUT OF AGENT SCOPE — MINE to fix, supervised**: the fix is in `run-sweep.sh`, so an
+      agent handed this item would be editing the harness that grades it, exactly the conflict the 429
+      item in Discovered is held back for. Filed here for visibility, not for the loop to pick up.
+  - pair: BRK.B/PGR · observed: on **every** revert path — NO_VERDICT, REGRESSION, TIMEOUT, NO_CHANGE —
+    `revert_to` (`run-sweep.sh:613`) runs BEFORE `finalize` (`:646`) and does `git reset --hard` +
+    `git clean -fd`. It deliberately preserves `DECISIONS.md`, `calibration.csv` and `agent/diagnosis/`
+    (`:625-636`) — findings survive, **code does not**, and no copy is taken. Run 20260817-153300's 2d
+    fix (`server.js` + `src/App.js`) existed only in the working tree 15:47→15:52 and was never committed
+    anywhere: `d34c77e` holds DECISIONS/QUEUE/calibration/diagnosis and no code. Same loss in
+    20260816-202617 (the Stage 7A-4 debt branch, turn-cap death) and 20260816-222441 — **three fixes.**
+    153300's was afterwards proven CORRECT: `f2e8034` showed its REGRESSION was a `tileVal` phantom, and
+    re-gated it scores 1.50 → 1.50 · expected: the agent's diff is written OUTSIDE the revert path before
+    `revert_to` runs — e.g. `$RUN_DIR/agent-iter<N>.diff`, since `runs/` is gitignored and survives
+    `clean -fd` — on EVERY terminal verdict. Reverting the tree is right; destroying the only copy of the
+    work is not · source: `run-sweep.sh:613-637` `revert_to`, and the `PARTIAL_UNVERIFIED` branch at
+    `:962-966` which is the ONLY path that keeps a diff ("KEEPING it, NOT reverting") and covers only the
+    cut-off case. The bad-verdict case has no equivalent. A fix that scores badly must stay recoverable,
+    because **the score can itself be wrong** — 153300 is the proof that it can.
+
 - [ ] **2c. Three hand-maintained debt-concept lists have drifted apart** — (root: debt-dropped, same
       family as 2a). Filed after 2a/2b but NOT downstream of them: this is the vocabulary 2a's fix widened
       in only one of the three places that keep a copy of it.
@@ -179,6 +199,38 @@
 ## Closed
 
 ## Discovered
+
+- **`UNDO.txt` leads with a command that is safe alone and destructive in sequence.** The file the runner
+  writes at every run start (`run-sweep.sh`, the `cat > "$RUN_DIR/UNDO.txt"` heredoc) reads:
+  `git checkout <base> && git branch -D sweep/auto-<id> && git tag -d restore/pre-sweep-<id>`.
+  The first clause is a perfectly ordinary command someone may legitimately want on its own; nothing in
+  the line marks where "go back" ends and "destroy the run" begins, and a partial paste or a copied first
+  clause leaves no signal about which of the two was actually run. **It cost a branch on 2026-08-17:**
+  `sweep/auto-20260817-153300` and its `restore/pre-sweep-20260817-153300` tag were both deleted while the
+  intent was only to change branch, taking the 2d diagnosis out of reach (`d34c77e` survives only because
+  it was tagged afterwards). This is a hazard in the RECOVERY tool, which is the worst place for one.
+  (pair: — (no deck repro; harness artifact, filed here rather than Open so the runner never BLOCKs an
+  iteration on it) · observed: a 3-clause `&&` chain whose first clause is independently meaningful and
+  whose later clauses are irreversible, with no marker distinguishing partial from complete execution ·
+  expected: a form that CANNOT be half-run — see the two candidate shapes below · source:
+  `run-sweep.sh` UNDO.txt heredoc)
+
+  PROPOSED SHAPES — either satisfies "cannot be half-run"; the first is preferred.
+
+  1. **A script, not a line.** The runner writes `$RUN_DIR/undo.sh` (executable, gitignored with `runs/`)
+     and UNDO.txt says only `bash agent/runs/<id>/undo.sh`. There is no first clause to run by accident:
+     the unit of execution IS the whole undo. The script can then afford to be safe in ways a pasteable
+     line cannot — refuse to run if HEAD is not the sweep branch, refuse if the tree is dirty, print what
+     it is about to delete and require `--yes`, and report each step. A destructive tool should be able to
+     say no; a `&&` chain never can.
+  2. **A leading no-op that makes partial execution obvious**, if a one-liner must be kept:
+     `test -n "$UNDO_20260817_153300" && git checkout … && git branch -D … && git tag -d …`
+     The chain is inert unless the variable is set, so a partial paste does nothing at all rather than
+     doing the first destructive-adjacent step. Weaker than (1) — it guards the whole line, not the
+     boundary between clauses, and it still relies on the reader not stripping the guard.
+
+  NOT proposed: reordering so the destructive clauses come first (makes a partial run worse), or dropping
+  `git checkout` from the line (leaves the user on a branch that the next clause deletes).
 
 - loadA build failure — THREE pairs failed identically: **KO/NSRGY, V/PYPL, WBD/PARA** (`ok=false,
   stage=loadA, sections=0`). RESOLVED: root cause was a transient **429 rate-limit BURST** hitting three

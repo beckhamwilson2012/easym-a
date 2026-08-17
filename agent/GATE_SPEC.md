@@ -38,11 +38,44 @@ runner counted `flags.length` and threw the distinction away. `sev:'build'` is t
 `high`, `mid` and `token` are all emitted after that return, i.e. only on decks that
 built.
 
-Why it mattered: five recorded baselines read **8 / 68 / 68 / 13 / 25** while REAL
+Why it mattered: five recorded baselines read **8 / 67 / 67 / 13 / 25** while REAL
 defects per analyzable pair sat flat at **1.60 / 2.00 / 2.00 / 1.67 / 2.00**. The
 count was measuring how many decks survived the rate limiter, not the code. Because
 the denominator moves, **the gate compares defects PER ANALYZABLE PAIR**, not raw
 counts.
+
+<!-- CORRECTED 2026-08-17 — this is a GRADER CHANGE, NOT DRIFT. Read this before
+     concluding the baseline moved.
+     The two middle figures were originally recorded as 68 / 68. They re-measure as
+     67 / 67 after commit f2e8034, which fixed `tileVal` in analyze.js. The whole
+     difference is ONE phantom flag per run:
+       SHEL/OXY — "dashboard renders Combined EBITDA $17.80B (>0) yet the
+       Debt/EBITDA tile says Combined EBITDA is non-positive"
+     The dashboard rendered no such thing. The Combined EBITDA tile rendered "N/A",
+     and the old parser scanned past it onto the NEXT tile, reading Shell's
+     Acquirer Net Income ($17.8B) as the combined EBITDA. The flag's own premise was
+     false. Same phantom removed one flag each from runs 20260816-165919 and
+     -165953; the other three baselines are unchanged.
+     Re-measured over the archived deck dirs (defects = sev!='build'):
+       run                analyzable   defects 68-era -> now   density -> now
+       20260815-150838        5            8 ->  8             1.60 -> 1.60
+       20260816-165919       17           35 -> 34             2.06 -> 2.00
+       20260816-165953       17           35 -> 34             2.06 -> 2.00
+       20260816-202617        6           10 -> 10             1.67 -> 1.67
+       20260816-222441        5           10 -> 10             2.00 -> 2.00
+     UNRESOLVED, recorded rather than smoothed over: the density figures in the
+     sentence above (2.00 / 2.00 for the two middle runs) match the POST-fix
+     measurement, not the pre-fix 2.06. Either they were derived by a method other
+     than defects/analyzable, or they were written after some other correction. The
+     raw-count correction 68 -> 67 is unambiguous and is what this note fixes; the
+     density line is left exactly as written because I could not reproduce how 2.00
+     was originally obtained, and overwriting a figure I cannot derive would be a
+     worse error than leaving the discrepancy visible. -->
+
+The 312-flag full-corpus no-op proof for f2e8034 (10 archived deck dirs, 123 decks:
+6 flags removed, 0 added, every other flag byte-identical) is the evidence that the
+parser change altered nothing except the phantoms. What constitutes a defect did not
+change; only a fabricated input to the checks was removed.
 
 ### 2b-enforcement. Excluding build failures REQUIRES condition (b)
 
