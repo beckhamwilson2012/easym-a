@@ -17,14 +17,19 @@
      2a and 2b were ONE item until 2026-08-17. They are separate defects, not one: fixing 2a populates debt
      for IRDM/TM/CART and 2b's `|| 0` never fires for them — but it still fires for ANY filer whose debt is
      genuinely unavailable, turning "unknown" into "$0 repaid". Neither fix removes the other.
-     2c and 2d were added 2026-08-17 and are FILED after 2a/2b, but neither is downstream of them — file
-     position is not work order here:
-       2c is the debt-concept VOCABULARY that 2a's fix (67574d7) widened in only one of the three places
-          that keep a copy of it. It is upstream of every debt consumer, /quote and SS16 alike.
-       2d is the SAME null-is-not-zero defect as 2b, one layer earlier: 2b coerces one null at the render
-          boundary, 2d ships zeros for the whole payload before any render runs.
-     Do 2c before any further debt-concept work, and 2d before 2b — 2b's `|| 0` can never fire on a value
-     the stub has already turned into a real 0, so fixing 2b alone leaves the stub publishing zeros. -->
+     2c and 2d were added 2026-08-17. 2d was MOVED above 2b the same day, so the file now reads
+     1, 2a, 2d, 2b, 2c. The labels are deliberately NOT in alphabetical order and must not be "tidied"
+     back into sequence — position IS the schedule. queue_next() picks the topmost `- [ ]` and reads
+     nothing else: not this comment, not the labels, not the prose. Anything that must happen in a
+     particular order has to be expressed as POSITION, or it does not happen.
+       2d now leads because it is the SAME null-is-not-zero defect as 2b, one layer earlier: 2b coerces
+          one null at the render boundary, 2d ships zeros for the whole payload before any render runs.
+          2b's `|| 0` can never fire on a value the stub has already turned into a real 0, so fixing 2b
+          first would leave the stub publishing zeros. File order and work order now agree for it.
+       2c is the ONE remaining place where they do not agree. It is the debt-concept VOCABULARY that 2a's
+          fix (67574d7) widened in only one of the three places that keep a copy of it, so it is upstream
+          of every debt consumer (/quote and SS16 alike) — but it is still FILED last of the 2-series.
+          Do 2c before any further debt-concept work regardless of where it sits here, or move it up. -->
 
 - [x] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
   - pair: GOOGL/AMZN · observed: §7 LTM rendered **—** for both Cost of Revenue and Gross Profit while
@@ -93,6 +98,29 @@
       unchanged deliberately.** A wrong expected is worse than an unclassified one: an absent figure
       blocks grading, a wrong one makes a correct fix grade as a failure.
 
+- [ ] **2d. Unresolved companies get a zeroed payload stub instead of nulls** — (root: null-is-not-zero,
+      at the payload level). MOVED above 2b 2026-08-17: this is FIRST in file and first in work order.
+      Upstream of 2b and of every per-field guard — 2b coerces ONE null at the render boundary; this
+      ships zeros for the WHOLE payload before any render runs.
+  - pair: BRK.B/PGR · observed: when no provider resolves a ticker, `/quote` emits a whole-payload
+    default carrying **0** for revenue, ebitda, netIncome, shares, eps, cash AND debt, with `name`
+    falling back to the ticker string, `dataSource:"none"`, and `ltm.reason:"no data source resolved"`.
+    Zero is a real number to every downstream consumer, so a BRK.B deck publishes **$0 revenue for
+    Berkshire Hathaway** as though it were sourced — a fabricated figure, not a gap · expected: **null
+    for every unresolved field**, so the render shows honest dashes and the stub is distinguishable from
+    a company that genuinely reports zero · source: the `/quote` no-provider default payload — the object
+    carrying `dataSource:"none"` / `ltm.reason:"no data source resolved"`.
+    CRITICAL — **this defect is invisible to the analyzer.** `docs/sweep-v2/captures/BRK.B_PGR.json` is
+    **`ok:true`**: that deck built successfully and BOTH graders scored it clean. Nothing in the current
+    gate can see it, because a zeroed payload renders as a well-formed deck full of real-looking numbers.
+    Any check added for this MUST key on **`dataSource:"none"` specifically**, not on implausible values —
+    a plausibility heuristic misses it exactly as the graders did, and would also fire on filers that
+    legitimately report zero.
+    This is the app's own **"null is not zero"** invariant (charter: "Unavailable data is an honest blank —
+    never zero, never a substituted proxy") violated at the PAYLOAD level. The fix is upstream of every
+    individual field guard, 2b's `|| 0` included — fixing 2b alone leaves this stub publishing zeros,
+    because `|| 0` never fires on a value the stub already turned into a real 0.
+
 - [ ] **2b. Unavailable target debt coerced to $0 at the render boundary** — (GATE-2A root: debt-dropped).
       Downstream of 2a, but INDEPENDENT: it fires for any filer whose debt is genuinely unavailable.
   - pair: RKLB/IRDM · observed: with `companyBDebt = null`, `src/utils/dealCalc.js:104`
@@ -121,28 +149,6 @@
     drop-in:** its list OMITS `LongTermNotesPayable` and `DebtLongtermAndShorttermCombinedAmount`, both
     of which 67574d7 added to `server.js`. Importing the module as written would silently NARROW
     `server.js` and regress 2a. Reconcile to the UNION first, then switch all three call sites.
-
-- [ ] **2d. Unresolved companies get a zeroed payload stub instead of nulls** — (root: null-is-not-zero,
-      at the payload level). Filed after 2b but UPSTREAM of it, and of every per-field guard: 2b coerces
-      ONE null at the render boundary; this ships zeros for the WHOLE payload before any render runs.
-  - pair: BRK.B/PGR · observed: when no provider resolves a ticker, `/quote` emits a whole-payload
-    default carrying **0** for revenue, ebitda, netIncome, shares, eps, cash AND debt, with `name`
-    falling back to the ticker string, `dataSource:"none"`, and `ltm.reason:"no data source resolved"`.
-    Zero is a real number to every downstream consumer, so a BRK.B deck publishes **$0 revenue for
-    Berkshire Hathaway** as though it were sourced — a fabricated figure, not a gap · expected: **null
-    for every unresolved field**, so the render shows honest dashes and the stub is distinguishable from
-    a company that genuinely reports zero · source: the `/quote` no-provider default payload — the object
-    carrying `dataSource:"none"` / `ltm.reason:"no data source resolved"`.
-    CRITICAL — **this defect is invisible to the analyzer.** `docs/sweep-v2/captures/BRK.B_PGR.json` is
-    **`ok:true`**: that deck built successfully and BOTH graders scored it clean. Nothing in the current
-    gate can see it, because a zeroed payload renders as a well-formed deck full of real-looking numbers.
-    Any check added for this MUST key on **`dataSource:"none"` specifically**, not on implausible values —
-    a plausibility heuristic misses it exactly as the graders did, and would also fire on filers that
-    legitimately report zero.
-    This is the app's own **"null is not zero"** invariant (charter: "Unavailable data is an honest blank —
-    never zero, never a substituted proxy") violated at the PAYLOAD level. The fix is upstream of every
-    individual field guard, 2b's `|| 0` included — fixing 2b alone leaves this stub publishing zeros,
-    because `|| 0` never fires on a value the stub already turned into a real 0.
 
 - [ ] **3. False "Combined EBITDA is non-positive"** — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.
   - pair: NET/DDOG · observed: deck renders "Combined EBITDA is non-positive" while combined EBITDA is
