@@ -141,6 +141,7 @@ const PILL = {
   NOW : { background:'#BA7517', color:'#0D0D0D' },
   WAIT: { background:'#2A2A2A', color:'#8A8A8A' },
   DONE: { background:'#4B7A1F', color:'#0D0D0D' },
+  SKIP: { background:'#2A2A2A', color:'#6A6A6A' },
 };
 
 const post = (url, body) => fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) }).then(r=>r.json());
@@ -311,36 +312,27 @@ function LaunchCard({ pf, running, budget, stopExists, refresh, undo }) {
   );
 }
 
-function QueuePanel({ plan, onChange }) {
-  const items = (plan && plan.items) || [];
-  const [armed, setArmed] = useState(false);
-  useEffect(()=>{ if(!armed) return; const t=setTimeout(()=>setArmed(false),5000); return ()=>clearTimeout(t); },[armed]);
-  const clear = () => {
-    if (!armed) { setArmed(true); return; }
-    fetch('/api/plan',{method:'DELETE'}).then(()=>{ setArmed(false); onChange&&onChange(); }).catch(()=>setArmed(false));
-  };
-  const pillFor = st => st === 'running' ? 'NOW' : st === 'done' ? 'DONE'
-    : st === 'blocked' ? 'HOLD' : st === 'skipped' ? 'SKIP' : 'WAIT';
+// Reads the REAL queue — agent/QUEUE.md (s.queue), the same source the "Bugs queued" tile counts. It used
+// to read plan.json (the paste-staging area, usually empty), so the panel said "Nothing here yet" while the
+// tile said "5 queued". One source now.
+function QueuePanel({ queue }) {
+  const items = queue || [];
+  const pillFor = st => st === 'working' ? 'NOW' : st === 'done' ? 'DONE' : st === 'parked' ? 'SKIP' : 'WAIT';
   return (
     <div className="panel">
-      <div style={{display:'flex',alignItems:'baseline',gap:10}}>
-        <div style={{flex:1}}>
-          <div className="secLabel">What the agent will work on</div>
-          <div className="secSub">In order. Each one has to be reproducible before it gets touched.</div>
-        </div>
-        {items.length > 0 &&
-          <button className="mini" style={{color: armed ? '#8C2E2D' : 'var(--t-5)'}} onClick={clear}>
-            {armed ? `Discard all ${items.length}` : 'Clear'}
-          </button>}
-      </div>
+      <div className="secLabel">What the agent will work on</div>
+      <div className="secSub">In order, from the queue. Each one has to reproduce before it gets touched.</div>
       <div style={{marginTop:10}}>
         {items.length === 0
-          ? <div className="qEmpty">Nothing here yet — add a bug below.</div>
-          : items.map((it,i)=>{ const p = pillFor(it.status); return (
-              <div className="qRow" key={i}>
-                <span className="pill" style={PILL[p] || PILL.WAIT}>{p}</span>
-                <span className={'qTitle' + (it.status==='running' ? ' on' : '')}>{it.desc}</span>
-                <span className="qPair">{it.pair || '—'}</span>
+          ? <div className="qEmpty">Nothing in the queue.</div>
+          : items.map((it,i)=>{ const p = pillFor(it.state); return (
+              <div className="qRow" key={i} style={{alignItems:'flex-start'}}>
+                <span className="pill" style={{...(PILL[p] || PILL.WAIT), marginTop:1}}>{p}</span>
+                <div style={{flex:1,minWidth:0}}>
+                  <div className={'qTitle' + (it.state==='working' ? ' on' : '')}>{it.title}</div>
+                  {it.caveat && <div className="secSub" style={{marginTop:3,whiteSpace:'normal'}}>{it.caveat}</div>}
+                </div>
+                <span className="qPair" style={{marginTop:1}}>{it.pair || '—'}</span>
               </div>
             ); })}
       </div>
@@ -471,7 +463,7 @@ function App() {
             refresh={refresh} undo={s.undo} />
         </div>
 
-        <QueuePanel plan={s.plan} onChange={refresh} />
+        <QueuePanel queue={s.queue} />
 
         <div className={'row top' + (addOpen ? ' col' : '')}>
           <AddBug open={addOpen} setOpen={setAddOpen} onQueue={refresh} />
