@@ -625,13 +625,26 @@ while :; do
   # not be written into calibration.csv's agent_status_token column as if it were one.
   if [[ "$VERDICT" == OK\ * ]]; then STATUS_TOKEN="${VERDICT#OK }"; else STATUS_TOKEN=ABSENT; fi
   if [[ "$VERDICT" != OK\ * ]]; then
-    # ── Part 1: turn-cap death WITH work on disk → PARK it, don't delete it. Run 20260816-202617 diagnosed
-    #    item 2, WROTE the fix to server.js, and died at turn 61 while verifying — NO_VERDICT then reverted a
-    #    complete $5 fix to nothing. This narrow exception (error_max_turns AND a non-empty diff) keeps the
-    #    work, labelled UNVERIFIED, instead of deleting it. It makes NO claim the work is good: the item stays
-    #    OPEN, it counts toward the consecutive-fail breaker, and the gate never measured it. An EMPTY diff, or
-    #    ANY other error subtype, still reverts below — this is not a path to committing junk.
-    if [[ "$AGENT_SUBTYPE" == "error_max_turns" ]] && agent_changed; then
+    # ── CUT OFF MID-FIX, WITH WORK ON DISK → PARK it, don't delete it. Run 20260816-202617 diagnosed item 2,
+    #    WROTE the fix to server.js, and died at turn 61 while verifying — NO_VERDICT reverted a complete $5
+    #    fix to nothing. This exception keeps the work, labelled UNVERIFIED, instead of deleting it. It makes
+    #    NO claim the work is good: the item stays OPEN, it counts toward the consecutive-fail breaker, and
+    #    the gate never measured it. An EMPTY diff still reverts below — this is not a path to committing junk.
+    #
+    #    THE CONDITION IS is_error, NOT A SUBTYPE LIST. It was `AGENT_SUBTYPE == error_max_turns`, which is a
+    #    statement about ONE way of being cut off, and the very next death came through a different door: run
+    #    20260816-222441 slept mid-response at turn 38 of 60 and reported subtype "success" with
+    #    terminal_reason "api_error" — so the check was false and the agent's brand-new
+    #    server/data/debtConcepts.js, written on its FINAL turn, was deleted by `git clean -fd`.
+    #    is_error:true IS the "the agent was cut off before it could report" signal, whatever cut it off —
+    #    turn cap, API error, sleep, execution error. Enumerating subtypes means re-losing work every time a
+    #    new one appears. A clean envelope that merely lacks a STATUS token is NOT covered: that agent ran to
+    #    completion and chose not to report, which is a different (and answerable) failure.
+    if [[ "$AGENT_IS_ERROR" == "true" ]] && agent_changed; then
+      # Name the real cause, the same way the dashboard does: subtype unless it is the useless literal
+      # "success", in which case terminal_reason carries the truth.
+      CUTOFF="$AGENT_SUBTYPE"
+      [[ "$CUTOFF" == "success" || "$CUTOFF" == "ABSENT" ]] && CUTOFF="${AGENT_TERMINAL:-unknown}"
       FILES="$(gitr status --porcelain | sed 's/^...//' | tr '\n' ' ')"
       # capture the work into $RUN_DIR (gitignored) BEFORE finalize commits, so nothing git does can lose it
       gitr diff HEAD > "$RUN_DIR/partial-iter$CUR_ITER.diff" 2>/dev/null || true
@@ -639,9 +652,9 @@ while :; do
       SID="$(json_field "$AGENT_OUT" session_id)"
       TRANSCRIPT="$(find "$HOME/.claude/projects" -maxdepth 2 -name "$SID.jsonl" 2>/dev/null | head -1)"
       [[ -n "$TRANSCRIPT" ]] && tail -c 60000 "$TRANSCRIPT" > "$RUN_DIR/partial-iter$CUR_ITER.transcript-tail.jsonl" 2>/dev/null || true
-      log "PARTIAL_UNVERIFIED: hit the turn cap with work on disk → KEEPING it (files: $FILES), NOT reverting"
-      decide "iter $CUR_ITER PARTIAL_UNVERIFIED: agent hit the turn cap (error_max_turns) with a non-empty diff; committed UNVERIFIED (cut off mid-fix, never measured), item left OPEN. Files: $FILES"
-      finalize PARTIAL_UNVERIFIED "o" "$FORCED" "Cut off at the turn cap (error_max_turns) with work on disk — committed UNVERIFIED. The runner never measured this; the queue item stays OPEN. Files touched: $FILES. Diff + transcript tail saved under $RUN_DIR."
+      log "PARTIAL_UNVERIFIED: cut off ($CUTOFF) at turn $TURNS with work on disk → KEEPING it (files: $FILES), NOT reverting"
+      decide "iter $CUR_ITER PARTIAL_UNVERIFIED: agent was cut off ($CUTOFF) at turn $TURNS with a non-empty diff; committed UNVERIFIED (cut off mid-fix, never measured), item left OPEN. Files: $FILES"
+      finalize PARTIAL_UNVERIFIED "o" "$FORCED" "Cut off mid-fix ($CUTOFF) at turn $TURNS with work on disk — committed UNVERIFIED. The runner never measured this; the queue item stays OPEN. Files touched: $FILES. Diff + transcript tail saved under $RUN_DIR."
       PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
       log "PARTIAL_UNVERIFIED · consecutive fail = $CONSEC_FAIL"; continue
     fi
