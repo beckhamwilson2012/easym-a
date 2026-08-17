@@ -31,7 +31,7 @@ PROMPT="$AGENT_DIR/ITERATION_PROMPT.md"
 CALIB="$AGENT_DIR/calibration.csv"
 DECISIONS="$AGENT_DIR/DECISIONS.md"
 STOP_FILE="$AGENT_DIR/STOP"
-RAW="/tmp/sweep_v2_raw"                        # capture.js hardcodes this output dir
+# RAW is defined AFTER RUN_ID (below) because it is now run-scoped — see RAW_ROOT/RAW there.
 
 # ── config (env-overridable) ────────────────────────────────────────────────────────────────────────
 # ── settings config (dashboard Settings page) — a CFG_*=VALUE file the runner reads as DEFAULTS. Precedence:
@@ -59,6 +59,18 @@ APP_PORT="${BASE_URL##*:}"                      # port the app server (and captu
 BASE_BRANCH="${BASE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 RUN_DIR="$AGENT_DIR/runs/$RUN_ID"
+# ── RAW is RUN-SCOPED ────────────────────────────────────────────────────────────────────────────────
+# It used to be one directory, /tmp/sweep_v2_raw, shared by every run that ever executed. Run
+# 20260816-212606's orphaned capture kept writing failure stubs into it while run -222441 was capturing,
+# and -222441's `cp "$RAW"/*.json "$dest"/` swept 15 foreign stubs into its own baseline. That is the
+# entire difference between its recorded baseline of 25 and its true baseline of 10 across 5 pairs.
+# SWEEP_RAW_DIR carries the scope into capture.js, which is the actual WRITER — scoping only this side
+# would have left the writer pointed at the shared directory and changed nothing.
+RAW_ROOT="${SWEEP_RAW_ROOT:-/tmp/sweep_v2_raw}"
+RAW="$RAW_ROOT/$RUN_ID"
+# Worker scratch: repo-local and gitignored (agent/runs/ is in .gitignore), so `git clean -fd` spares it —
+# and unlike /tmp it is neither reboot-mortal nor shared between runs. See ITERATION_PROMPT.md.
+SCRATCH_DIR="$RUN_DIR/scratch"
 SERVER_LOG="/tmp/server-$RUN_ID.log"           # the restarted app server's stdout/stderr (Part 1)
 BUILD_LOG="/tmp/build-$RUN_ID.log"             # `npm run build` stdout/stderr (Part 2)
 SERVER_PID=""                                   # PID of the server WE start (kill only our own + the port holder)
@@ -140,6 +152,21 @@ reap_stale_capture() {                         # $1 = the stale run's RUN_ID
     *)
       log "stale capture.pid $cpid from run $rid is no longer capture.js (pid reused) — left alone" ;;
   esac
+}
+
+# Per-run capture dirs are never deleted at the end of a run (they are evidence, and a killed run cannot
+# clean up after itself), so without a reaper /tmp accumulates one directory per sweep forever. Age-based
+# and bounded to OUR root only — it never touches a directory outside $RAW_ROOT, and never the current run.
+RAW_KEEP_DAYS="${RAW_KEEP_DAYS:-3}"
+reap_stale_raw() {
+  [[ -d "$RAW_ROOT" ]] || return 0
+  local d n=0
+  while IFS= read -r d; do
+    [[ -z "$d" || "$d" == "$RAW" ]] && continue          # never the run we are about to start
+    rm -rf "$d" 2>/dev/null && n=$(( n + 1 ))
+  done < <(find "$RAW_ROOT" -mindepth 1 -maxdepth 1 -type d -mtime "+$RAW_KEEP_DAYS" 2>/dev/null)
+  [[ "$n" -gt 0 ]] && log "reaped $n capture dir(s) older than ${RAW_KEEP_DAYS}d from $RAW_ROOT"
+  return 0
 }
 
 # Everything THIS runner spawned, killed on our way out. The app server is deliberately spared: it is not a
@@ -233,6 +260,12 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
   RUN_PHASE="capture:$phase"
   log "capture START · $phase · ${NPAIRS:-?} decks (per-deck progress follows — a silent capture is the runner working, not a hang)"
   rm -rf "$RAW"; mkdir -p "$RAW" "$dest"
+  # GUARD 1 — the dir we are about to capture into must be EMPTY. rm -rf can fail silently (permissions,
+  # a busy mount), and capturing on top of leftovers is how a baseline acquires decks it never produced.
+  if [[ -n "$(ls -A "$RAW" 2>/dev/null)" ]]; then
+    log "capture ABORT · $phase · $RAW is not empty after clearing — refusing to capture on top of $(ls -1 "$RAW" | wc -l | tr -d ' ') existing file(s)"
+    return 2
+  fi
   if [[ -n "${MOCK_CAPTURE:-}" ]]; then
     bash "$MOCK_CAPTURE" "$RAW" "$phase" "$RUN_ID" || return 2
   else
@@ -243,12 +276,29 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
     # runner: run 20260816-212606's capture.js survived its parent by 4 minutes and competed with run
     # -222441's baseline for :$APP_PORT and one rate-limit budget, which is why -222441 captured 20 decks
     # with only 5 ok. Identity, not process name — see reap_stale_capture().
-    GAP_MS="$GAP_MS" LOOP_LOG="$RUN_DIR/loop.log" CAPTURE_PHASE="$phase" node "$CAPTURE_JS" "$PAIRS_JSON" >/dev/null 2>&1 &
+    GAP_MS="$GAP_MS" LOOP_LOG="$RUN_DIR/loop.log" CAPTURE_PHASE="$phase" \
+      SWEEP_RAW_DIR="$RAW" SWEEP_STATUS_LOG="$RAW/status.log" node "$CAPTURE_JS" "$PAIRS_JSON" >/dev/null 2>&1 &
     CAPTURE_PID=$!
     printf '%s\n' "$CAPTURE_PID" > "$RUN_DIR/capture.pid" 2>/dev/null || true
     wait "$CAPTURE_PID"; rc=$?
     CAPTURE_PID=""; rm -f "$RUN_DIR/capture.pid" 2>/dev/null || true
     [[ "$rc" -eq 0 ]] || { log "capture END · $phase · FAILED after $(( ($(date +%s) - t0) / 60 ))m"; return 2; }
+  fi
+  # GUARD 2 — every deck in RAW must be one WE asked for. Run-scoping should make a foreign deck
+  # impossible; this proves it rather than assuming it, and it is the check that would have caught the 15
+  # stubs run -222441 inherited. A foreign deck means something else is writing into our scope — fail
+  # loudly instead of silently merging it into the baseline.
+  local foreign
+  foreign="$(PAIRS="$PAIRS_JSON" node -e '
+    const fs=require("fs"),d=process.argv[1];
+    const want=new Set(JSON.parse(process.env.PAIRS||"[]").map(p=>`${p[0]}_${p[1]}.json`));
+    const bad=fs.readdirSync(d).filter(f=>f.endsWith(".json")&&f!=="status.log"&&!want.has(f));
+    process.stdout.write(bad.join(" "));' "$RAW" 2>/dev/null || true)"
+  if [[ -n "$foreign" ]]; then
+    log "capture ABORT · $phase · $RAW contains deck(s) this run never requested: $foreign"
+    log "      (a concurrent writer is in our run scope — refusing to merge foreign decks into the baseline)"
+    decide "iter ${CUR_ITER:-0} capture aborted: foreign decks in $RAW ($foreign) — another process wrote into this run's capture scope."
+    return 2
   fi
   cp "$RAW"/*.json "$dest"/ 2>/dev/null || true
   local n ok
@@ -352,12 +402,53 @@ restart_server() {
 }
 
 # ── graders ──────────────────────────────────────────────────────────────────────────────────────────
-measure_defects() {                            # $1 = snapshot dir; echoes int; rc 2 = analyzer CRASHED
+# ── DEFECTS ARE NOT DECKS THAT NEVER RENDERED ────────────────────────────────────────────────────────
+# This used to echo flags.length — EVERY flag, sev ignored — so a pair that never built scored exactly the
+# same as a pair that rendered a wrong number. The analyzer has always drawn that distinction (analyze.js:137
+# emits sev:'build' and RETURNS, so the other 23 checks never run and it prints "recompute N/A — no deck");
+# the count simply threw it away. That is why the five recorded baselines read 8 / 68 / 68 / 13 / 25 while
+# REAL defects per analyzable pair sat flat at 1.60 / 2.00 / 2.00 / 1.67 / 2.00.
+#
+# sev:'build' is the ONLY non-analyzable marker: analyze.js emits it at exactly one site (:138), inside
+# `if (!rec.ok)`. The other sevs — high, mid, token — are all emitted AFTER that early return, i.e. only on
+# decks that DID build, so none of them can be confused for a capture failure.
+#
+# THIS IS COUNTING, NOT GRADING. What constitutes a defect is unchanged; a build failure simply stops being
+# counted as one and becomes an EXCLUDED SAMPLE, reported separately so it can never hide.
+#
+# echoes TAB-separated: defects <TAB> analyzable <TAB> not_analyzable <TAB> na_list <TAB> ok_list
+# rc 2 = analyzer CRASHED (a crash is not a defect — callers still die on it)
+measure_defects() {                            # $1 = snapshot dir
   local dir="$1" flags="$RUN_DIR/flags-$$.json"
   if ! RAW_DIR="$dir" FLAGS="$flags" EXPECTED="$RUN_DIR/expected-$$.json" node "$ANALYZE_JS" >/dev/null 2>&1; then
     return 2
   fi
-  node -e 'process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1])).length))' "$flags"
+  DECK_DIR="$dir" node -e '
+    const fs=require("fs");
+    const flags=JSON.parse(fs.readFileSync(process.argv[1]));
+    const defects=flags.filter(f=>f.sev!=="build").length;
+    // The analyzable/not-analyzable SETS come from the decks themselves, not from the flag list: a deck
+    // that built cleanly emits no flag at all, so counting flag pairs would miss every clean pair.
+    const dir=process.env.DECK_DIR; const ok=[], na=[];
+    for(const f of fs.readdirSync(dir)){
+      if(!f.endsWith(".json")) continue;
+      try{ const j=JSON.parse(fs.readFileSync(dir+"/"+f)); (j.ok?ok:na).push(j.pair||f.replace(/\.json$/,"")); }
+      catch(e){ na.push(f.replace(/\.json$/,"")); }
+    }
+    ok.sort(); na.sort();
+    process.stdout.write([defects, ok.length, na.length, na.join(","), ok.join(",")].join("\t"));
+  ' "$flags"
+}
+# defects per analyzable pair, 2dp — the gate value. Zero analyzable pairs yields "0" and is caught by the
+# analyzable-floor check at the gate, never divided by.
+density() { awk -v d="$1" -v n="$2" 'BEGIN{ if (n+0<=0) { print "0.00" } else { printf "%.2f", d/n } }'; }
+# §2(b): is $2's analyzable set a SUPERSET of $1's? Echoes the pairs that were analyzable BEFORE and are
+# not AFTER (empty = superset holds). Both args are comma-separated pair lists.
+lost_analyzable() {                            # $1 = before ok_list, $2 = after ok_list
+  BEFORE="$1" AFTER="$2" node -e '
+    const b=(process.env.BEFORE||"").split(",").filter(Boolean);
+    const a=new Set((process.env.AFTER||"").split(",").filter(Boolean));
+    process.stdout.write(b.filter(p=>!a.has(p)).join(","));'
 }
 run_diff() { node "$DIFF_JS" "$1" "$2" --out "$3" 2>/dev/null; }   # $1=before $2=after $3=out.json
 json_field() { node -e 'try{process.stdout.write(String(JSON.parse(require("fs").readFileSync(process.argv[1]))[process.argv[2]]))}catch(e){process.stdout.write(process.argv[3]||"")}' "$1" "$2" "${3:-}"; }
@@ -491,13 +582,17 @@ decide() {                                     # $1 = plain-English statement (n
   [[ -f "$DECISIONS" ]] || printf '# Sweep decisions log\n\nPlain-English statements of tripwire-worthy changes. Logged, not gated.\n' > "$DECISIONS"
   printf '\n- [%s · run %s · iter %s] %s\n' "$(date +%H:%M:%S)" "$RUN_ID" "${CUR_ITER:-?}" "$1" >> "$DECISIONS"
 }
-calib_hdr() { [[ -f "$CALIB" ]] || echo "run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture,agent_is_error,agent_subtype,agent_status_token" > "$CALIB"; }
+# analyzable_pairs / not_analyzable are appended LAST so every existing reader keeps its column offsets.
+# defects_before/after are now REAL defects only (sev!='build'); the capture failures they used to include
+# live in not_analyzable, where they can be seen instead of silently inflating the defect count.
+calib_hdr() { [[ -f "$CALIB" ]] || echo "run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture,agent_is_error,agent_subtype,agent_status_token,analyzable_pairs,not_analyzable" > "$CALIB"; }
 finalize() {                                   # $1=status $2=marker (x=done · ~=parked · o=leave OPEN) $3=forced $4=optional commit-body note
   calib_hdr
   [[ "$2" == "x" || "$2" == "~" ]] && { queue_mark "$2" "$1 run $RUN_ID" || true; }   # "o" ⇒ leave the item OPEN (NO_VERDICT/BUILD_BROKEN/UNVERIFIED/NO_CHANGE/PARTIAL_UNVERIFIED)
-  printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$RUN_ID" "$CUR_ITER" "$ITEM_TITLE" "$1" "$WALL" "$TURNS" "$COST" "$DEF_BEFORE" "$DEF_AFTER" "$CAP_MODE" "$3" \
-    "${AGENT_IS_ERROR:-ABSENT}" "${AGENT_SUBTYPE:-ABSENT}" "${STATUS_TOKEN:-ABSENT}" >> "$CALIB"
-  local msg="sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER"
+  printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$RUN_ID" "$CUR_ITER" "$ITEM_TITLE" "$1" "$WALL" "$TURNS" "$COST" "$DEF_BEFORE" "$DEF_AFTER" "$CAP_MODE" "$3" \
+    "${AGENT_IS_ERROR:-ABSENT}" "${AGENT_SUBTYPE:-ABSENT}" "${STATUS_TOKEN:-ABSENT}" \
+    "${ANA_AFTER:-${ANA_BEFORE:-}}" "${NA_AFTER:-${NA_BEFORE:-}}" >> "$CALIB"
+  local msg="sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER over ${ANA_AFTER:-${ANA_BEFORE:-?}} analyzable pair(s)"
   [[ -n "${4:-}" ]] && msg+=$'\n\n'"$4"
   gitr add -A >/dev/null 2>&1
   gitr commit -q -m "$msg" >/dev/null 2>&1 || true
@@ -524,9 +619,10 @@ finalize_abnormal() {
   cost=""
   awk "BEGIN{exit !(${COST_TOTAL:-0} > 0)}" && cost="${COST_TOTAL}"
   phase="$(printf '%s' "killed during $RUN_PHASE" | sed 's/,/;/g; s/"/'"'"'/g' | cut -c1-120)"
-  printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
+  printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' \
     "$RUN_ID" "${CUR_ITER:-0}" "$phase" KILLED "$wall" "" "$cost" \
-    "${DEF_BEFORE:-}" "" "${CAP_MODE:-}" false ABSENT ABSENT ABSENT >> "$CALIB"
+    "${DEF_BEFORE:-}" "" "${CAP_MODE:-}" false ABSENT ABSENT ABSENT \
+    "${ANA_BEFORE:-}" "${NA_BEFORE:-}" >> "$CALIB"
   log "KILLED: wrote a ledger row (phase $RUN_PHASE · ${wall}s · cost ${cost:-unknown}) — an abnormal end must not be invisible"
   decide "run ended abnormally during $RUN_PHASE after ${wall}s; wrote a KILLED row to calibration.csv (cost ${cost:-unknown — the run died before its agent call returned})."
   # Commit ONLY the two bookkeeping files. Not `add -A`: whatever the agent had on disk when we died is not
@@ -551,7 +647,12 @@ run_agent() {
     # Inject the ACTUAL turn budget (Part 2) so the agent knows when to stop and emit STATUS: PARTIAL, instead
     # of working as if unbounded and getting cut off mid-fix. The number is $MAX_TURNS at call time — never
     # hardcoded in the prompt, so it can't drift from the real cap.
-    ( cd "$ROOT" && { cat "$PROMPT"; printf '\n\nTURN BUDGET: you have %s turns (assistant steps) this call. At about 75%% (~%s turns) STOP and emit STATUS: PARTIAL with the root cause and any findings so far — finishing the report beats finishing the fix.\n\nITEM: %s\n' "$MAX_TURNS" "$(( MAX_TURNS * 3 / 4 ))" "$ITEM"; } | \
+    # SCRATCH is injected, never hardcoded in the prompt: it is run-scoped, so two runs can never collide on
+    # a probe filename. Run 20260816-222441 wrote /tmp/probe_irdm.js and /tmp/probe_gm.js, both of which
+    # already existed from run -202617; the Write tool refuses an unread existing file, so BOTH writes failed
+    # and the agent then ran -202617's probe code believing it was its own.
+    mkdir -p "$SCRATCH_DIR" 2>/dev/null || true
+    ( cd "$ROOT" && { cat "$PROMPT"; printf '\n\nSCRATCH DIR: %s — write every probe/scratch file there, NOT /tmp. It is created, empty, private to this run, and gitignored, so a probe name can never collide with another run and `git clean -fd` will not delete it.\n\nTURN BUDGET: you have %s turns (assistant steps) this call. At about 75%% (~%s turns) STOP and emit STATUS: PARTIAL with the root cause and any findings so far — finishing the report beats finishing the fix.\n\nITEM: %s\n' "$SCRATCH_DIR" "$MAX_TURNS" "$(( MAX_TURNS * 3 / 4 ))" "$ITEM"; } | \
       env -u ANTHROPIC_API_KEY claude -p --output-format json --max-turns "$MAX_TURNS" --permission-mode acceptEdits ) > "$AGENT_OUT" 2>"$AGENT_OUT.err" || true
   fi
 }
@@ -576,6 +677,7 @@ run_agent_timed() {                            # $1 = seconds; rc 124 = timed ou
 command -v node >/dev/null || die "node not found"
 [[ -f "$CAPTURE_JS" && -f "$ANALYZE_JS" && -f "$DIFF_JS" ]] || die "grader/collector missing"
 acquire_lock                                   # Part 1: FIRST — before we touch the port, the tree, or the tag
+reap_stale_raw                                 # sweep up abandoned per-run capture dirs before making ours
 [[ -z "$(gitr status --porcelain)" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
 
 mkdir -p "$RUN_DIR/cap"
@@ -610,8 +712,13 @@ log "baseline capture ($NPAIRS pairs)…"
 BASE_DIR="$RUN_DIR/cap/baseline"
 restart_server || die "frontend build or server boot FAILED at baseline (HEAD may not build/run) — see $BUILD_LOG and $SERVER_LOG"
 do_capture "$BASE_DIR" "baseline" || die "baseline capture failed"
-DEF_BEFORE="$(measure_defects "$BASE_DIR")" || die "analyzer CRASHED on baseline — aborting (a crash is not a defect)"
-log "baseline: $DEF_BEFORE defects across $NPAIRS pairs"
+MEAS="$(measure_defects "$BASE_DIR")" || die "analyzer CRASHED on baseline — aborting (a crash is not a defect)"
+IFS=$'\t' read -r DEF_BEFORE ANA_BEFORE NA_BEFORE NA_LIST_BEFORE OK_LIST_BEFORE <<< "$MEAS"
+# ONE POPULATION, NOT TWO. This line used to print DEF_BEFORE (computed from every deck found ON DISK)
+# against NPAIRS (the count REQUESTED in PAIRS_JSON). Run 20260816-222441 logged "25 defects across 5 pairs"
+# while 20 decks sat on disk — 15 of them foreign stubs from another run. Both numbers now come from the
+# decks actually analysed, and the not-analyzable half is named rather than folded into the total.
+log "baseline: $DEF_BEFORE defects across $ANA_BEFORE analyzable pairs ($(density "$DEF_BEFORE" "$ANA_BEFORE") per pair) · $NA_BEFORE not-analyzable of $NPAIRS requested${NA_LIST_BEFORE:+ — $NA_LIST_BEFORE}"
 
 # ════════════════════════════════════════════════════════════════════════════════════════════════════
 # ITERATION LOOP
@@ -666,7 +773,9 @@ while :; do
       log "before-capture failed → INDETERMINATE (capture ≠ code); skip item, no fail-count"
       finalize INDETERMINATE "~" true; PENDING_FRESH_BASELINE=1; continue
     fi
-    DEF_BEFORE="$(measure_defects "$CUR_BEFORE_DIR")" || die "analyzer CRASHED on before-capture"
+    MEAS="$(measure_defects "$CUR_BEFORE_DIR")" || die "analyzer CRASHED on before-capture"
+    IFS=$'\t' read -r DEF_BEFORE ANA_BEFORE NA_BEFORE NA_LIST_BEFORE OK_LIST_BEFORE <<< "$MEAS"
+    log "before-capture: $DEF_BEFORE defects across $ANA_BEFORE analyzable ($(density "$DEF_BEFORE" "$ANA_BEFORE")/pair) · $NA_BEFORE not-analyzable${NA_LIST_BEFORE:+ — $NA_LIST_BEFORE}"
     PENDING_FRESH_BASELINE=0
   fi
 
@@ -823,14 +932,40 @@ while :; do
     finalize INDETERMINATE "~" "$FORCED"; PENDING_FRESH_BASELINE=1; continue
   fi
   DIFF_OUT="$RUN_DIR/diff-$CUR_ITER.json"; run_diff "$CUR_BEFORE_DIR" "$AFTER_DIR" "$DIFF_OUT"
-  DEF_AFTER="$(measure_defects "$AFTER_DIR")" || die "analyzer CRASHED on after-capture"
+  MEAS="$(measure_defects "$AFTER_DIR")" || die "analyzer CRASHED on after-capture"
+  IFS=$'\t' read -r DEF_AFTER ANA_AFTER NA_AFTER NA_LIST_AFTER OK_LIST_AFTER <<< "$MEAS"
   if [[ -n "${TEST_REGRESS_ITERS:-}" && ",${TEST_REGRESS_ITERS}," == *",${CUR_ITER},"* ]]; then DEF_AFTER=$(( DEF_AFTER + 1 )); fi  # TEST-ONLY
   REVERT_SIGNAL="$(json_field "$DIFF_OUT" revert_signal false)"
   WALL=$(( $(date +%s) - ITER_T0 ))
 
   # ── THE GATE (per GATE_SPEC) ──
-  if [[ "$DEF_AFTER" -gt "$DEF_BEFORE" ]]; then
-    log "GATE: defects $DEF_BEFORE -> $DEF_AFTER (rose) → REGRESSION"
+  DEN_BEFORE="$(density "$DEF_BEFORE" "$ANA_BEFORE")"; DEN_AFTER="$(density "$DEF_AFTER" "$ANA_AFTER")"
+  log "GATE: $DEF_BEFORE/$ANA_BEFORE = $DEN_BEFORE per pair  ->  $DEF_AFTER/$ANA_AFTER = $DEN_AFTER per pair (not-analyzable $NA_BEFORE -> $NA_AFTER)"
+  # ── CONDITION (b) FIRST — GATE_SPEC §2(b): "`analyzable_pairs_set` is a superset of
+  #    `baseline_analyzable_pairs_set`", and §3: "it requires that no pair which was analyzable at baseline
+  #    becomes not-analyzable. Do not remove condition (b) in any future edit; without it the gate is
+  #    gameable by breakage."
+  #
+  #    It is checked BEFORE condition (a) and it is not optional, because excluding build failures from the
+  #    numerator (which this change does) is exactly what would otherwise reward breaking a capture: break
+  #    a deck, its defects leave the numerator AND its pair leaves the denominator, and density improves.
+  #    §2(b) closes that door. A pair analyzable before and not after is a REGRESSION, never an excluded
+  #    sample — the two land together or neither does.
+  LOST="$(lost_analyzable "$OK_LIST_BEFORE" "$OK_LIST_AFTER")"
+  if [[ -n "$LOST" ]]; then
+    log "GATE §2(b) VIOLATED: pair(s) analyzable BEFORE and not AFTER: $LOST → REGRESSION (not an excluded sample)"
+    decide "iter $CUR_ITER REGRESSION per GATE_SPEC §2(b): $LOST was analyzable in the before-capture and is not in the after-capture; a lost sample is breakage, not an improvement."
+    revert_to "$CHECKPOINT"; finalize REGRESSION "~" "$FORCED" "GATE_SPEC §2(b): $LOST became not-analyzable. Density would have read $DEN_BEFORE -> $DEN_AFTER, but a pair that stopped rendering is breakage, not a fix."
+    PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "REVERTED (REGRESSION §2(b)) · consecutive fail = $CONSEC_FAIL"
+  elif [[ "$ANA_AFTER" -eq 0 ]]; then
+    # No analyzable pairs ⇒ nothing was measured. Never scoreable as an improvement (GATE_SPEC §3's
+    # reward-breakage hazard in its purest form: zero decks means zero defects).
+    log "GATE: 0 analyzable pairs after — nothing was measured → INDETERMINATE"
+    revert_to "$CHECKPOINT"; finalize INDETERMINATE "~" "$FORCED"; PENDING_FRESH_BASELINE=1
+    log "INDETERMINATE (no analyzable pairs) · consecutive fail unchanged = $CONSEC_FAIL"
+  elif awk -v a="$DEN_AFTER" -v b="$DEN_BEFORE" 'BEGIN{exit !(a>b)}'; then
+    log "GATE: density $DEN_BEFORE -> $DEN_AFTER (rose) → REGRESSION"
     revert_to "$CHECKPOINT"; finalize REGRESSION "~" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
     log "REVERTED (REGRESSION) · consecutive fail = $CONSEC_FAIL"
   elif [[ "$REVERT_SIGNAL" == "true" ]]; then
@@ -840,11 +975,20 @@ while :; do
       log "INDETERMINATE ($BNA_REASON) — retrying the CAPTURE before touching code (THE TRAP)…"
       RETRY_DIR="$RUN_DIR/cap/after-$CUR_ITER-retry"
       if do_capture "$RETRY_DIR" "after-$CUR_ITER-retry" && run_diff "$CUR_BEFORE_DIR" "$RETRY_DIR" "$DIFF_OUT"; then
-        RS2="$(json_field "$DIFF_OUT" revert_signal true)"; DA2="$(measure_defects "$RETRY_DIR")" || DA2=$(( DEF_BEFORE + 1 ))
-        if [[ "$RS2" == "false" && "$DA2" -le "$DEF_BEFORE" ]]; then
-          log "capture retry RECOVERED $BNA_PAIR → normal comparison → COMMIT"
-          AFTER_DIR="$RETRY_DIR"; DEF_AFTER="$DA2"
-          finalize DONE "x" "$FORCED"; CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; CONSEC_FAIL=0
+        RS2="$(json_field "$DIFF_OUT" revert_signal true)"
+        if MEAS2="$(measure_defects "$RETRY_DIR")"; then
+          IFS=$'\t' read -r DA2 ANA2 NA2 NA_LIST2 OK_LIST2 <<< "$MEAS2"
+        else
+          DA2=$(( DEF_BEFORE + 1 )); ANA2="$ANA_BEFORE"; OK_LIST2="$OK_LIST_BEFORE"   # analyzer crash ⇒ treat as worse
+        fi
+        # §2(b) applies to the RETRY capture too — a retry that "recovers" by losing a DIFFERENT pair is
+        # still breakage. Density, not raw count, for the same reason as the main gate.
+        LOST2="$(lost_analyzable "$OK_LIST_BEFORE" "${OK_LIST2:-}")"
+        DEN2="$(density "$DA2" "${ANA2:-0}")"
+        if [[ "$RS2" == "false" && -z "$LOST2" ]] && awk -v a="$DEN2" -v b="$DEN_BEFORE" 'BEGIN{exit !(a<=b)}'; then
+          log "capture retry RECOVERED $BNA_PAIR → density $DEN_BEFORE -> $DEN2, §2(b) holds → COMMIT"
+          AFTER_DIR="$RETRY_DIR"; DEF_AFTER="$DA2"; ANA_AFTER="${ANA2:-0}"; OK_LIST_AFTER="${OK_LIST2:-}"
+          finalize DONE "x" "$FORCED"; CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; ANA_BEFORE="$ANA_AFTER"; OK_LIST_BEFORE="$OK_LIST_AFTER"; CONSEC_FAIL=0
         else
           log "capture retry EXHAUSTED → revert conservatively, status INDETERMINATE (NOT a fail)"
           revert_to "$CHECKPOINT"; finalize INDETERMINATE "~" "$FORCED"; PENDING_FRESH_BASELINE=1
@@ -860,10 +1004,10 @@ while :; do
       revert_to "$CHECKPOINT"; finalize REGRESSION "~" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
       log "REVERTED (REGRESSION) · consecutive fail = $CONSEC_FAIL"
     fi
-  elif [[ "$DEF_AFTER" -lt "$DEF_BEFORE" ]]; then
-    # strict improvement + no revert_signal + a verdict is present (Part 2 passed) → COMMIT and CLOSE the item
-    log "GATE: defects $DEF_BEFORE->$DEF_AFTER (improved), no revert_signal, verdict $STATUS_TOKEN → COMMIT"
-    finalize DONE "x" "$FORCED"; CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; CONSEC_FAIL=0
+  elif awk -v a="$DEN_AFTER" -v b="$DEN_BEFORE" 'BEGIN{exit !(a<b)}'; then
+    # strict improvement in DENSITY + §2(b) holds + no revert_signal + a verdict is present → COMMIT
+    log "GATE: density $DEN_BEFORE->$DEN_AFTER (improved), §2(b) holds, no revert_signal, verdict $STATUS_TOKEN → COMMIT"
+    finalize DONE "x" "$FORCED"; CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; ANA_BEFORE="$ANA_AFTER"; OK_LIST_BEFORE="$OK_LIST_AFTER"; CONSEC_FAIL=0
     log "COMMITTED (item closed) iter $CUR_ITER"
   elif agent_changed; then
     # equal count + non-empty agent diff → the work MAY be correct but is UNMEASURED (e.g. a server-side fix

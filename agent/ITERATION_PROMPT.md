@@ -39,11 +39,18 @@ You run headless, so an unlisted Bash command is **denied outright** — there i
 no second chance. Run `20260816-165919` lost 13 of its 61 turns (~17% of the budget) rediscovering these by
 trial and error. Use these shapes and spend the turns on the item instead.
 
-- **Scratch scripts: `Write` the file, then `node` it.** A `cat > f <<'EOF'` heredoc is a shell write and is
-  **denied**. The `Write` tool is auto-accepted, so `Write /tmp/probe.js` then `node /tmp/probe.js` always
-  works and costs the same two turns.
+- **Scratch scripts go in the SCRATCH DIR, never `/tmp`.** The exact path is given as **`SCRATCH DIR:`** at
+  the end of this prompt. `Write` the file there, then `node` it. A `cat > f <<'EOF'` heredoc is a shell
+  write and is **denied**; the `Write` tool is auto-accepted, so Write-then-`node` always works and costs
+  the same two turns.
+  **Why not `/tmp`:** it is shared by every run and the names collide. Run `20260816-222441` wrote
+  `/tmp/probe_irdm.js` and `/tmp/probe_gm.js`, both left over from run `20260816-202617`. The `Write` tool
+  refuses to overwrite a file it has not read, so **both writes failed** — and the agent then ran the
+  *previous run's* probe code believing it was its own, and reasoned from its output. The scratch dir is
+  private to your run, created empty, and gitignored, so neither collision nor `git clean -fd` can touch it.
 - **Grep your own scratch output with `Read`, not `grep`.** Pattern search is confined to the project
-  directory, so `grep … /tmp/out.md` is blocked even though `cat`/`Read` on it is fine.
+  directory. The scratch dir is inside it, so `grep` works there — but `grep … /tmp/out.md` is blocked
+  even though `cat`/`Read` on it is fine.
 - **Prefer `cd "<root>" && <cmd>` over `git -C <path> <cmd>`.** `cd` is allowed and compound commands are
   checked per segment, so `cd … && git log` works; `git -C … log` does **not** match the `git log` rule.
 - **Probing the running app:** `node -e "fetch('http://localhost:3001/api/…')…"` always works. Plain

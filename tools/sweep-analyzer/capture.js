@@ -1,14 +1,22 @@
 // STAGE 10 sweep v2 — CAPTURE ONLY. Build each deck (Puppeteer) + fetch the raw
 // per-company oracle (/quote,/api/price) at build time, save a durable raw record
-// per pair to /tmp/sweep_v2_raw/{A}_{B}.json. Analysis is a separate pass so an
+// per pair to $SWEEP_RAW_DIR/{A}_{B}.json (default /tmp/sweep_v2_raw). Analysis is a separate pass so an
 // expensive live build is never lost. Backoff on failure; never abort the batch.
 const puppeteer = require('/Users/beckhamwilson/Desktop/EasyM&A/ma-app/node_modules/puppeteer-core');
 const http = require('http');
 const fs = require('fs');
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const BASE = 'http://localhost:3001';
-const RAW = '/tmp/sweep_v2_raw';
-const STATUS = '/tmp/sweep_v2_status.log';
+// SWEEP_RAW_DIR run-scopes this directory. The default is unchanged, so any other caller behaves exactly
+// as before — this is path plumbing, not a change to what a deck contains or to what counts as dirty.
+//
+// Why it exists: /tmp/sweep_v2_raw was ONE directory shared by every run. Run 20260816-212606's orphaned
+// capture kept writing failure stubs into it while run -222441 captured, and -222441's `cp "$RAW"/*.json`
+// swept 15 foreign stubs into its own baseline — a "25 defect" baseline whose true value was 10. The
+// writer is here (156, 197) and the resume read is here (184), so scoping the runner's copy alone would
+// not have stopped it.
+const RAW = process.env.SWEEP_RAW_DIR || '/tmp/sweep_v2_raw';
+const STATUS = process.env.SWEEP_STATUS_LOG || '/tmp/sweep_v2_status.log';
 // Progress → the runner's loop.log (Part 1): a 50-pair capture used to print one line then go silent for
 // ~88 min. The runner passes LOOP_LOG + CAPTURE_PHASE so each deck emits one honest "N/total pair ok|failed"
 // line as it lands. No progress is invented — a line appears only when a deck actually finishes.

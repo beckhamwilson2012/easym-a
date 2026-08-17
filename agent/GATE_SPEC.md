@@ -24,6 +24,34 @@ A pair is **analyzable** when its `checks_run == 24`. A `checks_run == 1` means
 the deck **build failed** and the pair is **NOT-ANALYZABLE** — a state that is
 **distinct from CLEAN** and must never be scored as clean.
 
+### 2a. The count is defects, not decks that never rendered
+
+`defect_count` counts flags with **`sev != 'build'`**. A pair whose deck never built
+contributes **no defect** — it is an **excluded sample**, reported separately as
+`not_analyzable` with its pair list, never folded into the total.
+
+This is **counting, not grading**: what constitutes a defect is unchanged. The
+analyzer always drew this line — `analyze.js:137` emits `sev:'build'` and returns,
+so the other 23 checks never run and it prints *"recompute N/A — no deck"* — but the
+runner counted `flags.length` and threw the distinction away. `sev:'build'` is the
+**only** non-analyzable marker, emitted at exactly one site inside `if (!rec.ok)`;
+`high`, `mid` and `token` are all emitted after that return, i.e. only on decks that
+built.
+
+Why it mattered: five recorded baselines read **8 / 68 / 68 / 13 / 25** while REAL
+defects per analyzable pair sat flat at **1.60 / 2.00 / 2.00 / 1.67 / 2.00**. The
+count was measuring how many decks survived the rate limiter, not the code. Because
+the denominator moves, **the gate compares defects PER ANALYZABLE PAIR**, not raw
+counts.
+
+### 2b-enforcement. Excluding build failures REQUIRES condition (b)
+
+Excluding a failed deck from the numerator also removes its pair from the
+denominator. On its own that **rewards breaking a capture** — precisely the hole §3
+describes. So condition (b) is evaluated **first, before (a)**, and a pair that was
+analyzable before and is not after is a **REGRESSION**, never an excluded sample.
+The two land together or neither does.
+
 ## 3. Why condition (b) exists — do not remove it
 
 A build-failed pair contributes **0 defects from its 23 unrun checks**. Gating on
@@ -104,6 +132,38 @@ must represent a wrong premise, never a correct report or a network event.
 | `TIMEOUT` | parked `[~]` | +1 | Agent exceeded `ITER_TIMEOUT` wall-clock and was tree-killed. |
 | `BUILD_BROKEN` | stays OPEN | +1 | The bundle would not build, or the server would not boot, on the agent's edits. Reverted **and halts the run**. |
 | `FAILED` | parked `[~]` | +1 | Two attempts exhausted, or a confirmed replay. |
+| `PARTIAL_UNVERIFIED` | stays OPEN | +1 | Agent was **cut off mid-fix** (`is_error:true` — turn cap, API error, sleep) **with a non-empty diff**. See §6a. |
+| `KILLED` | untouched | untouched | The run ended abnormally — `die()`, Ctrl-C, `kill`, failed setup. Written from the EXIT trap. See §6b. |
+
+### §6a. `PARTIAL_UNVERIFIED` — and the one thing it does that nothing else does
+
+**It is the only non-`DONE` status that commits the agent's actual code.** Every other
+failure path calls `revert_to`; this one deliberately does not, then calls
+`finalize`, whose `gitr add -A` sweeps the working tree into the commit.
+
+That is intentional — run `20260816-202617` diagnosed item 2, wrote the fix, and
+died at turn 61 while verifying, and `NO_VERDICT` reverted a complete $5 fix to
+nothing — but it means **unmeasured agent code reaches the branch**. The gate never
+scored it: the item stays OPEN, the run's breaker increments, and the commit body
+says so. Treat such a commit as a draft someone must still review, never as a pass.
+
+It fires on `is_error:true` AND a non-empty diff, not on a subtype list. An empty
+diff, or a *clean* envelope merely missing a `STATUS:` token, still reverts.
+
+### §6b. `KILLED` — the run that never reached `finalize`
+
+`finalize` only runs at the end of a completed iteration, so a run killed before
+that left **no trace at all**: run `20260816-212606` ran 37 minutes, died during its
+baseline capture, and had no calibration row and no envelope. A ledger that omits
+its failures understates both cost and failure rate.
+
+`KILLED` rows carry the phase the run died in and elapsed seconds. **The cost field
+is empty when unknown** — a run killed mid-agent never learns what that call cost,
+and writing `0` would be a lie that also drags down the ledger total. It cannot
+cover `SIGKILL`; nothing can.
+
+A `KILLED` row is **not** evidence that any item was worked. Consumers must exclude
+it before concluding a run reached an iteration.
 
 ## 7. PARTIAL — the defect class split
 
@@ -180,7 +240,33 @@ increments the breaker, and preserves the envelope to `agent/diagnosis/` and
 result is a wrong premise: three in a row means the agent is not completing work and
 the run should stop rather than spend the night.
 
-## 10. Known blind spots
+## 10. Capture scope is per-run — resume does NOT carry across runs
+
+The capture directory is **`$SWEEP_RAW_DIR` = `/tmp/sweep_v2_raw/<RUN_ID>`**, one per
+run. It used to be a single shared `/tmp/sweep_v2_raw`, and run `20260816-212606`'s
+orphaned capture wrote failure stubs into it while run `-222441` was capturing;
+`-222441` then copied 15 foreign decks into its own baseline. That is the whole
+difference between its recorded baseline of **25** and its true baseline of **10
+across 5 pairs**.
+
+**This is intended measurement isolation, not a regression.** Two consequences follow
+directly from it, and both are correct:
+
+1. **`alreadyClean()` resume no longer carries across runs.** A relaunch under a NEW
+   `RUN_ID` starts cold and re-captures every pair. Resume within a run is unaffected
+   (and was already moot — `do_capture` clears the directory before every phase).
+   A run must only ever be graded on decks it produced itself; inheriting a previous
+   run's decks is the bug, not a feature.
+2. **Two guards enforce it rather than assume it.** The directory must be empty after
+   clearing, and every deck in it must be a pair *this run requested* — checked
+   against `PAIRS_JSON` before the copy. A foreign deck **aborts the capture**; it is
+   never merged.
+
+Per-run directories are evidence and are not deleted at the end of a run, so a
+reaper removes ones older than `RAW_KEEP_DAYS` (default 3), bounded to the sweep's
+own root and never the current run.
+
+## 11. Known blind spots
 
 **Neither grader checks whether a number is plausible.** The analyzer matches known
 defect patterns — it answers "does this output look like a shape I was taught to
