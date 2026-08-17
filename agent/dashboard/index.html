@@ -432,7 +432,9 @@ function AddBug({ open, setOpen, onQueue }) {
   const [saved, setSaved] = useState(false);
   useEffect(()=>{ setRes(null); setSaved(false); }, [text]);
   const check = () => post('/api/parse', { text }).then(d => { setRes(d); setSaved(false); });
-  const add = () => post('/api/plan', { text }).then(d => { setRes(d); setSaved(true); onQueue(); });
+  // Add → /api/queue writes complete items straight into QUEUE.md (the store the panel reads), so they show
+  // immediately without a launch. saved reflects what was actually added; incomplete items are held, not saved.
+  const add = () => post('/api/queue', { text }).then(d => { setRes(d); setSaved((d && d.added) > 0); onQueue(); });
 
   if (!open) return (
     <div className="panel strip" onClick={()=>setOpen(true)}>

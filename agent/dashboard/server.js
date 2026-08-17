@@ -378,27 +378,48 @@ function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
   const s = log.status;
   const rows = cal.rows.filter(r => r.run_id === runId);
   const last = rows[rows.length - 1];
-  const iterN = last ? last.iter : (s.iter || 1);
-  const pair = last ? pairIn(last.item) : (s.currentItem ? pairIn(s.currentItem) : null);
-  const itemLabel = `item ${iterN}${pair ? ` (${pair})` : ''}`;
+  // Bug 2: did the run ever reach an iteration? (a logged "── iter N" OR a finalize row). If NOT, it died in
+  // baseline capture before working any bug — make NO per-item claim: no "item 1" fallback, no invented
+  // "still open". Decision (reported): such a run is STILL shown — a sweep dying before it starts is real
+  // signal, usually the rate-limit cascade — but honestly, as "before it started work", naming no item.
+  const reachedWork = (s.iter != null) || rows.length > 0;
+  if (!reachedWork) {
+    return {
+      key: 'stopped', color: 'red', headline: 'Stopped',
+      plain: 'Stopped — the run ended before it started work.',
+      lines: ['It stopped during the baseline capture, before working any bug — nothing was changed and no item was touched.'],
+      elapsedSec: elapsed, spentUsd: spent,
+    };
+  }
+  const iterN = last ? last.iter : s.iter;
   const status = last ? last.status : null;
+  const itemText = last ? last.item : (s.currentItem || '');
+  // Read the item's REAL state (open/closed/parked) + real title/pair from QUEUE.md — never assumed.
+  const found = queueItemLookup(itemText);
+  const pair = found ? found.pair : pairIn(itemText);
+  const name = found ? `“${found.title}”${pair ? ` (${pair})` : ''}`
+    : (itemText ? `“${plainTitle(itemText)}”${pair ? ` (${pair})` : ''}` : `iteration ${iterN}`);
   const REASON = {
-    NO_VERDICT: `Claude Code ran out of turns on ${itemLabel}`,
-    TIMEOUT: `Claude Code hit the time limit on ${itemLabel}`,
+    NO_VERDICT: `Claude Code ran out of turns on ${name}`,
+    TIMEOUT: `Claude Code hit the time limit on ${name}`,
     BUILD_BROKEN: `the change stopped the app from starting`,
     REGRESSION: `the change made the deck worse and was thrown away`,
-    FAILED: `Claude Code could not fix ${itemLabel}`,
-    NO_CHANGE: `Claude Code changed nothing on ${itemLabel}`,
+    FAILED: `Claude Code could not fix ${name}`,
+    NO_CHANGE: `Claude Code changed nothing on ${name}`,
     INDETERMINATE: `the check could not run (rate-limited)`,
   };
-  const why = forcedWhy || REASON[status] || `the run stopped on ${itemLabel}`;
+  const why = forcedWhy || REASON[status] || `the run stopped on ${name}`;
   const reverted = !s.complete || ['NO_VERDICT', 'TIMEOUT', 'BUILD_BROKEN', 'REGRESSION', 'NO_CHANGE', 'FAILED', 'INDETERMINATE'].includes(status);
+  const stateLine = !found ? `${name}: no longer in the queue.`
+    : found.state === 'closed' ? `${name}: now closed in the queue.`
+    : found.state === 'parked' ? `${name}: parked in the queue.`
+    : `${name}: still open.`;
   return {
     key: 'stopped', color: 'red', headline: 'Stopped',
     plain: `Stopped — ${why}.`,
     lines: [
       `Your code: ${reverted ? 'untouched (reverted to where it was)' : 'committed — check the deck'}.`,
-      `${itemLabel.charAt(0).toUpperCase() + itemLabel.slice(1)}: still open.`,
+      stateLine,
       notesExist() ? 'Notes: agent/diagnosis/.' : null,
     ].filter(Boolean),
     elapsedSec: elapsed, spentUsd: spent,
@@ -470,6 +491,26 @@ function queuePair(blk) {
 }
 const titleKey = s => String(s || '').replace(/\*\*/g, '').replace(/^\s*-\s*\[[^\]]\]\s*/, '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 18);
 const keyOverlap = (a, b) => !!a && !!b && (a.startsWith(b.slice(0, 12)) || b.startsWith(a.slice(0, 12)));
+// Find the QUEUE.md item matching a run's item text — REAL marker state + pair + title, read from the file,
+// never assumed (Bug 2). Searches the WHOLE file (not just ## Open) so a closed item in a later section still
+// resolves to 'closed'. Returns null when the item is no longer present.
+function queueItemLookup(itemText) {
+  const txt = readSafe(ap('QUEUE.md')); if (!txt || !String(itemText || '').trim()) return null;
+  const L = txt.split('\n');
+  const wantKey = titleKey(itemText);
+  const wantPair = pairIn(itemText);
+  for (let i = 0; i < L.length; i++) {
+    const mk = L[i].match(/^-\s*\[([ xX~])\]\s*(.+)$/); if (!mk) continue;
+    const body = [L[i]]; for (let j = i + 1; j < L.length; j++) { if (/^-\s*\[/.test(L[j]) || /^## /.test(L[j])) break; body.push(L[j]); }
+    const blk = body.join('\n');
+    const bpair = queuePair(blk);
+    if ((wantPair && bpair === wantPair) || keyOverlap(wantKey, titleKey(mk[2]))) {
+      const m = mk[1].toLowerCase();
+      return { state: m === 'x' ? 'closed' : (m === '~' ? 'parked' : 'open'), pair: bpair, title: plainTitle(mk[2]) };
+    }
+  }
+  return null;
+}
 function queueItems() {
   const txt = readSafe(ap('QUEUE.md')); if (!txt) return [];
   const open = (txt.split(/^## Open/m)[1] || '').split(/^## /m)[0];
@@ -643,6 +684,18 @@ app.get('/api/plan', (_req, res) => { try { res.json(planPreview(readPlan())); }
 // with no way to reset short of editing the file by hand. Clearing touches plan.json ONLY — QUEUE.md,
 // calibration.csv and the run history are never rewritten from here.
 app.delete('/api/plan', (_req, res) => { try { writePlan([]); res.json(planPreview([])); } catch (e) { res.status(500).json({ error: String(e) }); } });
+
+// Add-a-bug → write straight to QUEUE.md (the store the panel reads via s.queue), so a pasted item appears
+// IMMEDIATELY without launching a sweep (Bug 1). Four-field validation is preserved: appendQueuedToQueueMd
+// writes only items parsed as complete (status 'queued' = pair+observed+expected+source all present);
+// incomplete items are HELD and returned in the preview so the UI names what's missing, never written.
+app.post('/api/queue', (req, res) => {
+  try {
+    const parsed = parsePlan((req.body && req.body.text) || '');
+    const r = appendQueuedToQueueMd(parsed);
+    res.json({ added: r.appended || 0, error: r.error || null, ...planPreview(parsed) });
+  } catch (e) { res.status(500).json({ error: String(e) }); }
+});
 // LAUNCH — the only write action beyond plan.json. Server-side gated on preflight; appends queued items to
 // QUEUE.md (append-only) and spawns run-sweep.sh detached. Refuses on any failed precondition.
 app.post('/api/launch', async (req, res) => {
