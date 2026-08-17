@@ -14,6 +14,8 @@ const { computeLTM, scaleShares, COGS_CONCEPTS } = require('./server/services/lt
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
+const multer = require('multer'); // Phase 1 upload pipeline — multipart parsing (PDF/XLSX only)
+const { extractPdf, extractXlsx } = require('./server/services/uploadExtract'); // per-page text (pdftotext/tesseract/SheetJS)
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
 const app = express();
@@ -2613,6 +2615,104 @@ app.post('/api/chat', express.json({ limit: '4kb' }), async (req, res) => {
     console.error('chat error', e.message);
     res.status(500).json({ error: 'Could not answer right now.' });
   }
+});
+
+// ── POST /api/upload — Phase 1 document ingestion (PDF / XLSX → per-page text) ────────────────────
+// NO model call, NO financial parsing: this endpoint's sole product is per-page text. Guardrails:
+//   • multipart, ONE file, 25 MB hard cap (multer limits)
+//   • PDF and XLSX ONLY — rejected by extension AND Content-Type (fileFilter) AND magic bytes (below)
+//   • tight per-IP hourly limit + a hard GLOBAL daily cap (an open endpoint spends CPU now and API
+//     budget in later phases). Both in-memory (reset on restart — fine for one process) + env-tunable.
+//   • the uploaded temp file is ALWAYS deleted — success, extraction failure, or bad-magic reject.
+const UPLOAD_TMP = path.join(os.tmpdir(), 'easyma-uploads');
+fs.mkdirSync(UPLOAD_TMP, { recursive: true });
+
+// ext + Content-Type allowlist per type; magic = the leading bytes the real file MUST carry.
+const UPLOAD_TYPES = {
+  pdf:  { ext: '.pdf',  mimes: ['application/pdf'],
+          magic: [Buffer.from('%PDF-')] },
+  xlsx: { ext: '.xlsx', mimes: ['application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'],
+          magic: [Buffer.from([0x50, 0x4B, 0x03, 0x04])] },   // xlsx is a ZIP container → "PK\x03\x04"
+};
+function uploadTypeOf(file) {
+  const name = (file.originalname || '').toLowerCase();
+  for (const [k, spec] of Object.entries(UPLOAD_TYPES)) {
+    if (name.endsWith(spec.ext) && spec.mimes.includes(file.mimetype)) return k;   // BOTH ext and Content-Type
+  }
+  return null;
+}
+
+const uploadMw = multer({
+  storage: multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOAD_TMP),
+    filename:    (req, file, cb) => cb(null, `${require('crypto').randomUUID()}${UPLOAD_TYPES[uploadTypeOf(file)]?.ext || ''}`),
+  }),
+  limits: { fileSize: 25 * 1024 * 1024, files: 1, fields: 4 },
+  fileFilter: (req, file, cb) => {
+    const t = uploadTypeOf(file);
+    if (!t) { const e = new Error('Only PDF and XLSX files are accepted.'); e.status = 415; return cb(e); }
+    req.uploadType = t;
+    cb(null, true);
+  },
+}).single('file');
+
+// Per-IP: uploads are the heaviest public route. Global daily cap: one counter across ALL ips.
+const uploadPerIp = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: Number(process.env.UPLOAD_MAX_PER_IP_HR || 15),
+  standardHeaders: true, legacyHeaders: false,
+  message: { error: 'Upload limit reached for your address. Try again in an hour.' },
+});
+const UPLOAD_DAILY_CAP = Number(process.env.UPLOAD_DAILY_CAP || 200);
+let uploadDay = null, uploadDayCount = 0;
+function uploadDayRollover() { const d = new Date().toISOString().slice(0, 10); if (d !== uploadDay) { uploadDay = d; uploadDayCount = 0; } }
+function uploadDailyGate(req, res, next) {
+  uploadDayRollover();
+  if (uploadDayCount >= UPLOAD_DAILY_CAP) return res.status(429).json({ error: 'Daily upload capacity reached. Try again tomorrow.' });
+  next();
+}
+
+app.post('/api/upload', uploadPerIp, uploadDailyGate, (req, res) => {
+  uploadMw(req, res, async (mErr) => {
+    const cleanup = () => { if (req.file && req.file.path) fs.promises.unlink(req.file.path).catch(() => {}); };
+    try {
+      if (mErr) {
+        cleanup();
+        if (mErr.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File exceeds the 25 MB limit.' });
+        if (mErr.status === 415)             return res.status(415).json({ error: mErr.message });
+        return res.status(400).json({ error: mErr.message || 'Upload failed.' });
+      }
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded — send one file under field name "file".' });
+
+      // Content-Type is client-supplied and spoofable; verify the REAL leading bytes before spending work.
+      const type = req.uploadType;
+      const fd = await fs.promises.open(req.file.path, 'r');
+      const head = Buffer.alloc(8);
+      try { await fd.read(head, 0, 8, 0); } finally { await fd.close(); }
+      const magicOk = UPLOAD_TYPES[type].magic.some(m => head.subarray(0, m.length).equals(m));
+      if (!magicOk) { cleanup(); return res.status(415).json({ error: `File content is not a valid ${type.toUpperCase()}.` }); }
+
+      uploadDayRollover(); uploadDayCount++;   // count only real, validated work against the daily cap
+      const started = Date.now();
+      const result = type === 'pdf' ? await extractPdf(req.file.path) : extractXlsx(req.file.path);
+      cleanup();
+
+      return res.json({
+        ok: true,
+        type,
+        filename: req.file.originalname,
+        bytes: req.file.size,
+        pageCount: result.pageCount,
+        ocrPages: result.pages.filter(p => p.source === 'ocr').map(p => p.page),  // pages that fell through to Tesseract
+        ms: Date.now() - started,
+        pages: result.pages,     // per-page text — the Phase-1 product (no model, no parsing)
+      });
+    } catch (e) {
+      cleanup();
+      console.error('UPLOAD_ERR', e.message);
+      return res.status(422).json({ error: 'Could not extract text from the file.', detail: e.message.slice(0, 300) });
+    }
+  });
 });
 
 // ── Serve the built React client — production runs same-origin as ONE service ───

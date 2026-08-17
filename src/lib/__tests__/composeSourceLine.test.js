@@ -44,7 +44,11 @@ describe('composeSourceLine()', () => {
     expect(result).not.toContain('Market data as of');
   });
 
-  test('price+assumption slide: cites Finnhub+Yahoo, assumption clause, as-of date', () => {
+  test('non-headline feeds (Finnhub/Yahoo) verify the price but are NOT named by the allowlist', () => {
+    // price verifies via Finnhub cross-checked by Yahoo — both are opportunistic feeds excluded from
+    // HEADLINE_SOURCES (they rate-limit / 403, so naming them would make the same deck cite different
+    // sources run-to-run). Neither is surfaced by name; with no headline source among the used fields
+    // there is no "Source:" prefix and no market "as of" clause — only the assumption clause remains.
     const fields = {
       price:      makeVerified('finnhub', { finnhub: 189.30, yahoo: 189.28 }),
       week52High: makeVerified('finnhub', { finnhub: 198.23, yahoo: 198.10 }),
@@ -54,11 +58,11 @@ describe('composeSourceLine()', () => {
       ['price', 'week52High', 'week52Low', 'dcfRange', 'precedentRange'],
       fields, '2026-06-03'
     );
-    expect(result).toContain('Finnhub market data');
-    expect(result).toContain('Yahoo Finance');
-    expect(result).toContain('transaction assumptions');
-    expect(result).toContain('Market data as of');
-    expect(result).toContain('June 3, 2026');
+    expect(result).not.toContain('Finnhub');
+    expect(result).not.toContain('Yahoo');
+    expect(result).not.toContain('Source:');             // no headline source among the used fields
+    expect(result).toContain('transaction assumptions'); // dcfRange / precedentRange
+    expect(result).not.toContain('Market data as of');   // no headline market source cited
   });
 
   test('pure-assumption slide: no Source: prefix, only assumption clause', () => {
@@ -93,21 +97,19 @@ describe('composeSourceLine()', () => {
     expect(result).toContain('SEC EDGAR');
   });
 
-  test('citation order: EDGAR (fundamental) before market-data sources (CNBC before Yahoo)', () => {
+  test('citation order: EDGAR (fundamental) before market-data (CNBC); Yahoo cross-check not named', () => {
     const fields = {
       revenue: makeSingle('edgar', 5215),
-      // price now verifies via CNBC (SOT) cross-checked against Yahoo
+      // price verifies via CNBC (SOT, a headline source) cross-checked against Yahoo (non-headline)
       price:   makeVerified('cnbc', { cnbc: 189.30, yahoo: 189.28 }),
     };
     const result = composeSourceLine(['revenue', 'price'], fields, '2026-06-03');
     const ei = result.indexOf('SEC EDGAR');
     const ci = result.indexOf('CNBC');
-    const yi = result.indexOf('Yahoo');
     expect(ei).toBeGreaterThan(-1);
     expect(ci).toBeGreaterThan(-1);
-    expect(yi).toBeGreaterThan(-1);
-    expect(ei).toBeLessThan(ci);   // EDGAR (fundamental) cited first
-    expect(ci).toBeLessThan(yi);   // CNBC (SOT) before its Yahoo cross-check
+    expect(ei).toBeLessThan(ci);            // EDGAR (fundamental) cited before market data
+    expect(result).not.toContain('Yahoo');  // opportunistic cross-check feed is not surfaced by name
   });
 
   test('null fields object → assumption only', () => {
