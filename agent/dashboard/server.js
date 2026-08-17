@@ -406,7 +406,12 @@ function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
   // baseline capture before working any bug — make NO per-item claim: no "item 1" fallback, no invented
   // "still open". Decision (reported): such a run is STILL shown — a sweep dying before it starts is real
   // signal, usually the rate-limit cascade — but honestly, as "before it started work", naming no item.
-  const reachedWork = (s.iter != null) || rows.length > 0;
+  // A KILLED row does NOT mean work was reached. The runner now writes one on any abnormal end (so a run
+  // that died mid-capture stops being invisible to the ledger), and such a row can carry iter 0 with no
+  // item at all — counting it here would resurrect exactly the invented "item 1 / still open" claim this
+  // guard exists to prevent. Only finalize()'s per-iteration rows prove an item was actually worked.
+  const workRows = rows.filter(r => r.status !== 'KILLED');
+  const reachedWork = (s.iter != null) || workRows.length > 0;
   if (!reachedWork) {
     return {
       key: 'stopped', color: 'red', headline: 'Stopped',
@@ -430,6 +435,7 @@ function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
     FAILED: `Claude Code could not fix ${name}`,
     NO_CHANGE: `Claude Code changed nothing on ${name}`,
     INDETERMINATE: `the check could not run (rate-limited)`,
+    KILLED: `the run was killed before it finished`,
   };
   // NO_VERDICT is the runner's catch-all for an untrustworthy envelope (turn cap, API error, no status token…).
   // The REAL cause is IN the envelope — read terminal_reason/subtype, never assume "ran out of turns".
