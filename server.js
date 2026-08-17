@@ -11,6 +11,7 @@ const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deck
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares, COGS_CONCEPTS } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
+const { resolveTotalDebt } = require('./server/services/debtConcepts'); // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
@@ -690,35 +691,24 @@ async function fetchFromEDGAR(symbol, cik) {
   // lease fallback; companies whose total `LongTermDebt` is present (MSFT/AMZN/…) use it and never sum.
   const ltdSiblingSum = useIfrs ? null : siblingSum(bsPick(['LongTermDebtNoncurrent']), bsPick(['LongTermDebtCurrent']), true);
 
+  // Total debt via the SHARED resolver (server/services/debtConcepts) — sums the explicit noncurrent +
+  // current LT-debt portions (INCLUDING current maturities) so the deal EV, the comps peers, and §16
+  // (edgarClient) resolve IDENTICALLY. The aggregate `LongTermDebt` is NOT trusted first: some filers tag
+  // it noncurrent-only (MCD $39,973 dropped $725 of current maturities), and KO/COST don't tag it at all.
+  // COMMERCIAL PAPER / short-term borrowings are NOT included (see debtConcepts.js) — not "all money owed".
+  // The resolver's value is PRIMARY; the tails below remain for filers it can't reach (it returns null):
+  //   • convertTotal — convertibles tagged outside the LongTermDebt family (SHOP).
+  //   • non-LongTermDebt TOTAL-debt concepts — IRDM tags ONLY LongTermLineOfCredit at its interim anchor
+  //     (missing it once published net CASH against a $1.75B-of-borrowings filing); GME LongTermNotesPayable;
+  //     DebtLongtermAndShorttermCombinedAmount (PGR) is a total → tried first. `SeniorNotes`/`ShortTermBorrowings`
+  //     stay OUT (subset / short-term). Widen this list rather than adding a per-ticker branch.
+  // OPERATING LEASES stay OUT (operating obligations, not borrowings; AMZN ~$76.6B). The lease concept the
+  // resolver uses (LongTermDebtAndCapitalLeaseObligations, KO) is FINANCE-lease-inclusive BORROWING — do
+  // NOT add OperatingLeaseLiability*. (ltdSiblingSum above is now subsumed by the resolver's NC+Cur sum.)
+  const debtRes = useIfrs ? null : resolveTotalDebt(bsPick);
   const debt = useIfrs
     ? pickMatched(ifrs, ['LongtermBorrowings', 'Borrowings', 'NoncurrentPortionOfLongtermBorrowings'], revenueEntry?.end)
-    // Resolution order — parent → disjoint-sibling sum → lease-inclusive fallback → convertible fallback:
-    //   1. LongTermDebt — the TOTAL (already includes the current portion). Preferred whenever present.
-    //   2. ltdSiblingSum — LTD-NC + LTD-Cur, ONLY when LTD-NC is present (7A-3 current-portion recovery).
-    //   3. LongTermDebtAndCapitalLeaseObligations — some filers (KO) report long-term debt only under this
-    //      lease-inclusive concept. Period-matched like the rest, so a stale lease tag (ADBE 2021, RRGB 2018)
-    //      is still rejected; a stale/absent LTD-NC leaves ltdSiblingSum null so this fires unchanged for KO.
-    //   4. convertTotal — convertibles tagged outside the LongTermDebt family (SHOP).
-    //   5. non-LongTermDebt TOTAL-debt concepts (Stage 7A-4). A filer whose borrowings are a term loan or a
-    //      revolver draw often stops tagging the `LongTermDebt` family in its 10-Qs and reports the same
-    //      total under a facility/notes name instead — IRDM tags `LongTermDebt` $1,757,124,000 @2025-12-31
-    //      and `LongTermLineOfCredit` at the IDENTICAL value on the same instant, then in the 10-Qs tags
-    //      ONLY the line-of-credit pair ($1,749M @2026-06-30). Missing this step returned debt=null at the
-    //      interim anchor, which §2 coerced to $0 and published as net CASH $184M against a filing showing
-    //      $1.75B of borrowings. Each alias is a TOTAL (includes its own current portion), evidenced by an
-    //      exact overlap with the concept it replaces: IRDM LongTermLineOfCredit == LongTermDebt at both
-    //      2024-12-31 and 2025-12-31; GME LongTermNotesPayable $4,166M @2026-05-02 vs §16 EDGAR $4,164M
-    //      @2026-01-31. `DebtLongtermAndShorttermCombinedAmount` (PGR $8,387M) is a total by definition and
-    //      so is tried FIRST of the three — a filer tagging it AND a facility name must not resolve to the
-    //      narrower facility figure. Component-only concepts stay OUT: `SeniorNotes` (EA $1,485M vs FMP
-    //      $1,854M at the SAME date → a subset, would understate) and `ShortTermBorrowings` (JPM — short-term
-    //      by definition). Residual limit, unchanged in kind by this step: a filer carrying bonds under a
-    //      concept none of 1-5 names plus a revolver under one that they do will still resolve to the
-    //      revolver alone and understate. Widen this list rather than adding a per-ticker branch.
-    // OPERATING LEASES stay OUT of net debt by deliberate convention — operating obligations, not borrowings
-    // (AMZN's ~$76.6B operating-lease liability is why this is STATED, not silently omitted). The lease concept
-    // in step 3 is FINANCE-lease-inclusive BORROWING (a different thing) — do not add OperatingLeaseLiability*.
-    : (bsPick(['LongTermDebt']) ?? ltdSiblingSum ?? bsPick(['LongTermDebtAndCapitalLeaseObligations']) ?? convertTotal
+    : (debtRes.value ?? convertTotal
        ?? bsPick(['DebtLongtermAndShorttermCombinedAmount', 'LongTermLineOfCredit', 'LongTermNotesPayable']));
 
   // Total assets at the balance-sheet anchor (7A Item 2) — resolved via bsPick, i.e. pickInstantAt at the SAME

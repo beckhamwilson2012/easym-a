@@ -1,5 +1,6 @@
 'use strict';
 const { get } = require('../utils/httpGet');
+const { resolveTotalDebt } = require('./debtConcepts'); // shared total-debt resolution (deal EV / comps / §16 identical)
 
 const factsCache = new Map();
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours — fundamentals change quarterly
@@ -113,9 +114,15 @@ async function fetchFields(cik) {
   // end (parity fix): KO's lease concept IS tagged at the current FY end → kept ($42.12B); JPM's only tag is
   // a discontinued `LongTermDebt` @2013 → no match at 2025 → null → FMP cross-check fills current-primary
   // (was the 12-yr-stale $267.9B). Clean filers (CRM/ADBE/HD) unchanged — their debt is at Revenue's end.
-  const debtEntry = pickAtEnd(ns, useIfrs
+  // Total debt via the SHARED resolver (server/services/debtConcepts) — identical resolution to /quote and
+  // the comps peers, so §16 agrees with the deck. GAAP: sum noncurrent + current LT debt (incl current
+  // maturities; commercial paper NOT included — see debtConcepts.js). IFRS: unchanged (borrowings concepts).
+  const debtRes = useIfrs
+    ? (() => { const e = pickAtEnd(ns, ['LongtermBorrowings', 'Borrowings', 'NoncurrentPortionOfLongtermBorrowings'], refEnd); return { value: e ? e.val : null, review: false }; })()
+    : resolveTotalDebt(names => { const e = pickAtEnd(ns, names, refEnd); return e ? e.val : null; });
+  const debtRepEntry = pickAtEnd(ns, useIfrs
     ? ['LongtermBorrowings', 'Borrowings', 'NoncurrentPortionOfLongtermBorrowings']
-    : ['LongTermDebt', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations'], refEnd);
+    : ['LongTermDebtNoncurrent', 'LongTermDebt', 'LongTermDebtAndCapitalLeaseObligations'], refEnd);
 
   // §16 expansion (Pass A) — four EDGAR-SOT vs FMP-cross rows, PERIOD-MATCHED to revenue's end so a
   // discontinued tag can't strand a stale value. EPS is per-share (USD/shares, NOT inM); GrossProfit /
@@ -160,7 +167,7 @@ async function fetchFields(cik) {
     operatingIncome:   makeField(opIncomeEntry),
     netIncome:         makeField(netIncomeEntry),
     cash:              makeField(cashEntry),
-    totalDebt:         makeField(debtEntry),
+    totalDebt:         debtRes.value != null ? { value: inM(debtRes.value), asOf: refEnd, period: debtRepEntry ? { fy: debtRepEntry.fy, fp: debtRepEntry.fp, form: debtRepEntry.form, end: refEnd } : { end: refEnd }, source: 'edgar', ...(debtRes.review ? { review: true, reviewReason: debtRes.basis } : {}) } : null,
     grossProfit:             makeField(grossEntry),
     epsDiluted:              makeField(epsEntry, false),  // per-share — NOT inM
     totalAssets:             makeField(assetsEntry),
