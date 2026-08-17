@@ -754,6 +754,18 @@ command -v node >/dev/null || die "node not found"
 # also catches a hoisted/nested install that would resolve for the runner but not for the collector.
 node -e 'require(process.argv[1])' "$ROOT/node_modules/puppeteer-core" >/dev/null 2>&1 \
   || die "puppeteer-core failed to load from $ROOT/node_modules/puppeteer-core — capture.js:5 requires it, so EVERY capture would die at module load. Fix: npm install puppeteer-core"
+# The Chrome binary is capture.js's OTHER undeclared external assumption (declared at capture.js:8, used
+# at capture.js:199). Unlike the missing module it would not fail at load — it would fail at deck 1, after
+# a build, a server boot and a baseline already in flight.
+#
+# DERIVED from capture.js, never retyped. That literal already exists in THREE places —
+# tools/sweep-analyzer/capture.js:8, tools/noop-ab/run.js:16, server/harness/edgar.js:8 — and hardcoding a
+# fourth copy here would add another site to miss when Chrome moves, while also letting the preflight
+# drift from the path the collector actually launches. Reading the constant out of the collector keeps
+# them the same path by construction.
+CHROME_BIN="$(node -e 'const fs=require("fs");const m=fs.readFileSync(process.argv[1],"utf8").match(/^const CHROME *= *(["\x27])(.*?)\1/m);process.stdout.write(m?m[2]:"")' "$CAPTURE_JS" 2>/dev/null)"
+[[ -n "$CHROME_BIN" ]] || die "could not read the CHROME constant from $CAPTURE_JS — the preflight cannot verify a browser it cannot locate; confirm capture.js:8 still reads: const CHROME = '<path>'"
+[[ -x "$CHROME_BIN" ]] || die "Chrome is not executable at $CHROME_BIN (path read from capture.js:8) — every deck would fail at browser launch. Fix: install Google Chrome at that path, or update the CHROME constant in $CAPTURE_JS"
 acquire_lock                                   # Part 1: FIRST — before we touch the port, the tree, or the tag
 reap_stale_raw                                 # sweep up abandoned per-run capture dirs before making ours
 [[ -z "$(gitr status --porcelain)" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
