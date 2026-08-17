@@ -1028,12 +1028,24 @@ app.get('/quote', async (req, res) => {
     }
 
     if (!result) {
-      console.log(`[${symbol}] All sources failed — returning zeros`);
-      return res.json({
+      // "Null is not zero", at the PAYLOAD level. No provider resolved this ticker, so every
+      // financial field is ABSENT — not zero. Emitting 0 here published a fabricated figure
+      // ($0 revenue for a real filer) that renders as a well-formed number downstream and is
+      // indistinguishable from a company that genuinely reports 0; it also pre-empts every
+      // per-field `|| 0` guard, which never fires on a value already turned into a real 0.
+      // Build the stub from the canonical field() factory (status 'missing') and return it through
+      // the SAME unwrapCompany boundary as every resolved result — no parallel exit — so the wire
+      // shape is a bare null and every read site renders an honest blank.
+      // Consumers must detect this stub by `dataSource: 'none'`, NEVER by value: a plausibility
+      // heuristic both misses it and misfires on filers that legitimately report zero.
+      console.log(`[${symbol}] All sources failed — returning nulls (absent, not zero)`);
+      const absent = () => field(null, { source: 'none' });
+      return res.json(unwrapCompany({
         name: symbol, dataSource: 'none', companyType: 'standard',
-        revenue: 0, ebitda: 0, netIncome: 0, shares: 0, eps: 0, cash: 0, debt: 0,
+        revenue: absent(), ebitda: absent(), netIncome: absent(), shares: absent(),
+        eps: absent(), cash: absent(), debt: absent(),
         ltm: { trusted: false, fallback: 'annual', reason: 'no data source resolved' },
-      });
+      }));
     }
 
     // LTM is EDGAR-only (Stage 1). Non-EDGAR results (FMP/Yahoo fallback — e.g. NSRGY, no CIK) never got
