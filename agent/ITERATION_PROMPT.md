@@ -61,6 +61,23 @@ trial and error. Use these shapes and spend the turns on the item instead.
 - **Never retry a denied command more than once.** A denial is a *rule* mismatch, not a transient error;
   the identical command will be denied identically. Change the shape or change the approach.
 
+## ENVIRONMENT — facts, so you do not spend turns discovering them
+
+- **Probe recipe** (single command, no `&&`): `node -e "fetch('http://127.0.0.1:3001/quote?symbol=IRDM').then(r=>r.json()).then(j=>console.log(JSON.stringify(j)))"`
+- **Working paths:** `/quote?symbol=X` · `/api/pnl/X` · `/api/price/X` · `/api/profile/X` · `/api/verified/X`.
+- **`/api/quote` DOES NOT EXIST.** Unmatched paths hit the SPA catch-all and return `<!doctype html>`, so
+  `r.json()` throws `Unexpected token '<'`. That error means a wrong path, never a broken server.
+- **`{"error":"Too many requests. Try again shortly."}`** is the app's own 500-per-15-minutes limiter.
+  **Wait 60s and retry the same probe.** Do NOT read the limiter config, do NOT investigate it, do NOT
+  report it as a defect — it is not one, and it is not your item.
+- **Bash: one command per call.** Compound commands (`&&`, `;`) and redirection outside the project
+  directory are denied. Write the file with `Write`, then run it in a second call.
+- **`Write` fails on an existing file you have not read** ("File has not been read yet"). Use a fresh
+  filename — never reuse a probe name.
+- **NEVER restart `:3001`, `kill` a node process, or re-run the capture.** The harness owns the restart and
+  performs it *after* you exit. When the fix is written, report it and STOP. Run `20260816-202617` spent its
+  last three turns on a denied `kill`, trying to verify its own work, and lost the finished fix.
+
 ## SCOPE
 
 - Work **exactly one item**: the one named at the END of this prompt. Nothing else.
@@ -80,6 +97,22 @@ trial and error. Use these shapes and spend the turns on the item instead.
 
 **Before diagnosing anything**, reproduce the item's stated defect using the pair, observed value, and
 expected value in the item. Print the live value.
+
+### STEP 0 TERMINATES ON ONE VALUE — this is mechanical, not a judgement call
+
+**ONE live value matching the item's stated observation ENDS STEP 0.** Write
+`Repro confirmed: <value>` and go straight to diagnosis. Do **not** gather a second confirming value, do
+**not** probe the item's "other instances", do **not** re-run the same probe to be sure. One match is the
+whole of the evidence STEP 0 requires.
+
+**If two probe attempts do not reproduce it, STOP the item.** Write `Repro FAILED: <what you got>` and emit
+`STATUS: BLOCKED(no-repro)`. Two attempts, not three, and never a third framing of the same probe.
+**Never diagnose an unreproduced defect** — a fix built on a premise you could not observe is a guess.
+
+*Why this is a hard rule:* run `20260816-202617` had its repro in hand at turn **19** (`debt: null`, exactly
+as the item stated) and did not declare it until turn **40**. Twenty-one turns — a third of the entire
+budget — went to re-confirming something already true. It then died at the cap with the fix written but
+never reported. Confidence is not the exit condition. **One matching value is.**
 
 - **Still reproduces** (live value matches "observed") → proceed to diagnose.
 - **Does NOT reproduce** (live value now matches "expected", or the defect condition no longer holds) →

@@ -10,8 +10,13 @@
 <!-- ORDER IS UPSTREAM-FIRST. Two shared-cause chains run through these items; fixing a downstream symptom
      while its cause is live creates the parallel code path the charter forbids:
        null/blank target GROSS PROFIT : item 1 (§7 LTM GP blank) is upstream of item 4 (§8 combined GM skips it)
-       null target/combined DEBT      : item 2 (target debt dropped) is upstream of item 3 (false EBITDA message)
-     Do item 1 before 4, and item 2 before 3. -->
+       null target/combined DEBT      : 2a (EDGAR misses the debt) → 2b (null rendered as $0) → item 3 (false
+                                        EBITDA message). 2a is the DATA gap; 2b is the COERCION that lies
+                                        about it; item 3 is the message that fires off the resulting null.
+     Do item 1 before 4, and 2a before 2b before 3.
+     2a and 2b were ONE item until 2026-08-17. They are separate defects, not one: fixing 2a populates debt
+     for IRDM/TM/CART and 2b's `|| 0` never fires for them — but it still fires for ANY filer whose debt is
+     genuinely unavailable, turning "unknown" into "$0 repaid". Neither fix removes the other. -->
 
 - [x] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
   - pair: GOOGL/AMZN · observed: §7 LTM rendered **—** for both Cost of Revenue and Gross Profit while
@@ -37,16 +42,34 @@
     <!-- was: "target (AMZN) gross profit renders — on §7 while §2 shows gross margin 50.3% and §8 shows
          target GP $415,634M — analyzer #18 GP ASYMMETRY". Retired 2026-08-16: no longer reproduces. -->
 
-- [ ] **2. Target debt dropped via null preferred path** — 6 pairs (GATE-2A root: debt-dropped). Corrupts EV/leverage.
-  - pair: RKLB/IRDM · observed: `/quote?symbol=IRDM` debt=**null** → deal-model preferred path
-    `companyBDebt=null`, coerced to **$0** in the EV/net-debt sum; §2 shows IRDM Net Debt/(Cash) = **(184)**
-    [net cash $184M], EV **$5,059M**, EV/EBITDA **12.0x** — all omit the debt · expected: §16 Data
-    Verification shows Total Debt **$1.8B** (EDGAR★ + FMP, ✓ verified); true net debt ≈ **+$1,616M**, true EV
-    ≈ **$6,859M**, true EV/EBITDA ≈ **16.2x** · source: `/quote` IRDM debt=null vs §16 $1.8B (EDGAR★+FMP) —
-    RUN-findings.md GT-1 / check #20; `dealCalc.js:183` `combinedDebt = (companyADebt!=null && companyBDebt!=null) ? … : null`.
+- [ ] **2a. EDGAR concept-family gap — TOTAL-debt concepts outside the LongTermDebt family** — 6 pairs
+      (GATE-2A root: debt-dropped). Upstream of 2b. This is the DATA gap: the debt never arrives.
+  - pair: RKLB/IRDM · observed: `/quote?symbol=IRDM` returns `"debt": null` with
+    `"dataSource":"sec_edgar"`, `"cash":184`, `"bsAsOf":"2026-06-30"` — live value captured by run
+    20260816-202617 at turn 19 · expected: `debt` populated ≈ **$1.8B**, per §16 Data Verification
+    (EDGAR★ + FMP, ✓ verified) · source: `server.js:699` — the resolution chain is
+    `bsPick(['LongTermDebt']) ?? ltdSiblingSum ?? bsPick(['LongTermDebtAndCapitalLeaseObligations']) ?? convertTotal`,
+    and none of the four branches covers a TOTAL-debt concept tagged outside the LongTermDebt family.
+    IRDM's borrowings are a term loan; a revolver draw fails the same way. Run 20260816-202617 diagnosed
+    this and wrote a fifth branch ("Stage 7A-4, non-LongTermDebt TOTAL-debt concepts") at its turn 75,
+    which was reverted when the run died at the turn cap — see `agent/runs/20260816-202617/`.
     Other instances: TM/GM (`/quote` debt=null, §16 $130.30B), CART/DASH (`/quote` debt=null, §16 $3.30B).
 
-- [ ] **3. False "Combined EBITDA is non-positive"** — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of item 2.
+- [ ] **2b. Unavailable target debt coerced to $0 at the render boundary** — (GATE-2A root: debt-dropped).
+      Downstream of 2a, but INDEPENDENT: it fires for any filer whose debt is genuinely unavailable.
+  - pair: RKLB/IRDM · observed: with `companyBDebt = null`, `src/utils/dealCalc.js:104`
+    `const targetDebtRepaid = num(inputs.companyBDebt) || 0;` yields **0** — an unknown debt is rendered
+    as "$0 repaid" in sources & uses rather than as absent · expected: an unavailable figure renders
+    **blank/null, never $0** (charter: "Unavailable data is an honest blank — never zero, never a
+    substituted proxy"); a real $0 and an absent value must render differently · source:
+    `src/utils/dealCalc.js:104` (`|| 0`). Note the sibling lines 180/183/184 already do this correctly —
+    they guard with `!= null` and propagate null — so line 104 is the outlier, not the pattern.
+    NOT SOURCED, deliberately: the §2 figures from the old combined item (EV $5,059M, EV/EBITDA 12.0x,
+    Net Debt/(Cash) (184)) are NOT attributed here. `dealCalc.js:180` returns **null** for EV when debt is
+    null, so those rendered numbers come from a different code path that the run artifacts do not
+    identify. Establishing which surface renders them is part of this item, not a premise for it.
+
+- [ ] **3. False "Combined EBITDA is non-positive"** — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.
   - pair: NET/DDOG · observed: deck renders "Combined EBITDA is non-positive" while combined EBITDA is
     actually **POSITIVE $57M** (§10: A $-17M + B $5M + synY1 $70M = $58M mine, $57M rendered); the message
     fires on a null `combinedDebt`, NOT on EBITDA sign · expected: no non-positive message when combined
@@ -54,7 +77,7 @@
     `note = results.debtEBITDA === 'N/A' ? 'Combined EBITDA is non-positive' : null` (does not branch on
     EBITDA); `dealCalc.js:184` `debtEBITDA = (combinedEBITDA>0 && combinedDebt!=null) ? … : null` → 'N/A'
     whenever `combinedDebt` is null; `dealCalc.js:183` combinedDebt null if EITHER debt null. RUN-findings.md
-    NET/DDOG #23; GATE-2B.2. NOTE: shares the null-combinedDebt trigger with item 2, but the message logic is
+    NET/DDOG #23; GATE-2B.2. NOTE: shares the null-combinedDebt trigger with 2a/2b, but the message logic is
     independently wrong (fires on ANY null combinedDebt, incl. acquirer-null) — fix the message, not just the data.
 
 - [ ] **4. Combined gross margin understated via null target GP** — 6 pairs (GATE-2A root: B-nullInSum). Downstream of item 1.
