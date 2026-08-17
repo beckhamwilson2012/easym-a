@@ -39,7 +39,15 @@ RAW="/tmp/sweep_v2_raw"                        # capture.js hardcodes this outpu
 SWEEP_SETTINGS="${SWEEP_SETTINGS:-$AGENT_DIR/sweep.settings}"
 [[ -f "$SWEEP_SETTINGS" ]] && source "$SWEEP_SETTINGS" 2>/dev/null || true
 MAX_ITER="${MAX_ITER:-${CFG_MAX_ITER:-999}}"
-MAX_TURNS="${MAX_TURNS:-${CFG_MAX_TURNS:-60}}"  # raised 40->60: run 20260815-150838 hit the 40-turn cap mid-fix after its STEP-0 EDGAR fetch was denied
+# MAX_TURNS is DELIBERATELY NOT config-backed — no CFG_MAX_TURNS, so sweep.settings cannot raise it and the
+# dashboard cannot either. An env var at launch still wins, for supervised terminal runs.
+#   40->60 already failed. Run 20260815-150838 died at the 40-turn cap; the cap was raised to 60 and runs
+#   20260816-165919 and -165953 then died at 61, both on the SAME item, for reasons more turns cannot fix:
+#   STEP 0 had no way to report a half-resolved defect class (fixed by the PARTIAL exit) and the client-side
+#   half of the fix was unmeasurable because the runner never rebuilt build/ (fixed by build_frontend).
+#   Raising the cap buys a longer, more expensive NO_VERDICT. If an item needs more than 60 turns, the item
+#   is wrong — split it, or give STEP 0 the vocabulary to stop early. Change this line, not a settings page.
+MAX_TURNS="${MAX_TURNS:-60}"
 BUDGET_USD="${BUDGET_USD:-${CFG_BUDGET_USD:-50}}"
 GAP_MS="${GAP_MS:-12000}"                      # rate-safe inter-pair spacing for capture.js
 PAIRS_LIMIT="${PAIRS_LIMIT:-${CFG_PAIRS_LIMIT:-0}}"   # 0 = all 50; >0 caps pairs (tests)

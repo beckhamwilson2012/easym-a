@@ -527,8 +527,15 @@ const SETTINGS_META = [
   { key: 'BUDGET_USD',  label: 'Stop at',            kind: 'money', explain: "A hard ceiling. It stops, it doesn't spend past this." },
   { key: 'PAIRS_LIMIT', label: 'Decks to check',     kind: 'decks', explain: 'More is slower. The 5 repro decks are always included.' },
   { key: 'MAX_ITER',    label: 'Bugs per run',       kind: 'int',   explain: 'Stops after this many, even if more are waiting.' },
-  { key: 'MAX_TURNS',   label: 'Turn limit per bug', kind: 'int',   explain: 'How long Claude Code gets on one bug before it gives up.' },
+  // READ-ONLY on purpose. Displayed, never written — there is no CFG_MAX_TURNS in run-sweep.sh, so writing
+  // one here would do nothing anyway. Raising the cap has already been tried and is not the fix: 40->60 was
+  // raised after run 20260815-150838 died at 40, and runs 20260816-165919/-165953 then died at 61 on the
+  // SAME item, for reasons more turns cannot address (no PARTIAL exit; an unmeasurable frontend). A cap
+  // that is one click away gets raised in the moment instead of the item getting fixed. Terminal only.
+  { key: 'MAX_TURNS',   label: 'Turn limit per bug', kind: 'int',   explain: 'How long Claude Code gets on one bug before it gives up.',
+    readOnly: true, readOnlyWhy: 'Set in run-sweep.sh. Raising it was already tried twice and did not help — MAX_TURNS=90 from the terminal for a one-off.' },
 ];
+const SETTING_IS_WRITABLE = m => !m.readOnly;
 function readSettingsFile() {
   const txt = readSafe(SETTINGS_FILE) || ''; const o = {};
   for (const line of txt.split('\n')) { if (/^\s*#/.test(line)) continue; const m = line.match(/^\s*CFG_(\w+)\s*=\s*(.*?)\s*$/); if (m) o[m[1]] = m[2].replace(/^["']|["']$/g, ''); }
@@ -550,7 +557,8 @@ function currentSettings() {
     const raw = cfg[m.key] != null ? cfg[m.key] : def;                 // config value, else the live hardcoded default
     let display = raw == null ? '' : String(raw);
     if (m.kind === 'decks' && (raw == null || String(raw) === '0')) display = String(decks);   // PAIRS_LIMIT 0 = all
-    return { key: m.key, label: m.label, kind: m.kind, explain: m.explain, value: raw, display, fromConfig: cfg[m.key] != null, runnerDefault: def, deckCount: decks };
+    return { key: m.key, label: m.label, kind: m.kind, explain: m.explain, value: raw, display, fromConfig: cfg[m.key] != null, runnerDefault: def, deckCount: decks,
+      readOnly: !!m.readOnly, readOnlyWhy: m.readOnlyWhy || null };
   });
 }
 function settingsBudget() { const b = (currentSettings().find(x => x.key === 'BUDGET_USD') || {}).value; return parseFloat(b) || parseFloat(runnerDefault('BUDGET_USD')) || 50; }
@@ -558,6 +566,9 @@ function writeSettings(patch) {
   const cfg = readSettingsFile();
   const decks = deckCount();
   for (const m of SETTINGS_META) {
+    // Read-only keys are dropped on the way IN (a hand-rolled POST cannot set them) and scrubbed from the
+    // file on the way OUT, so a value written before the key became read-only cannot linger and take effect.
+    if (!SETTING_IS_WRITABLE(m)) { delete cfg[m.key]; continue; }
     if (patch[m.key] == null || String(patch[m.key]).trim() === '') continue;
     let v = String(patch[m.key]).trim();
     if (!/^\d+(\.\d+)?$/.test(v)) continue;                            // numbers ONLY — this file is sourced by bash
@@ -566,8 +577,10 @@ function writeSettings(patch) {
   }
   const out = ['# Sweep settings — written by the dashboard Settings page. run-sweep.sh sources this as DEFAULTS;',
     '# an env var at launch (e.g. BUDGET_USD=8) STILL overrides, and the hardcoded fallback applies if a key is',
-    '# missing. Numbers only (this file is sourced by bash).', ''];
-  for (const m of SETTINGS_META) if (cfg[m.key] != null) out.push(`CFG_${m.key}=${cfg[m.key]}`);
+    '# missing. Numbers only (this file is sourced by bash).',
+    '# MAX_TURNS is NOT here and must not be added: run-sweep.sh reads no CFG_MAX_TURNS, so a line here would',
+    '# be inert. The turn cap is terminal-only (MAX_TURNS=90 ./run-sweep.sh) — see run-sweep.sh for why.', ''];
+  for (const m of SETTINGS_META) if (SETTING_IS_WRITABLE(m) && cfg[m.key] != null) out.push(`CFG_${m.key}=${cfg[m.key]}`);
   try { fs.writeFileSync(SETTINGS_FILE, out.join('\n') + '\n'); return { ok: true }; } catch (e) { return { error: String(e) }; }
 }
 
@@ -637,8 +650,11 @@ app.post('/api/launch', async (req, res) => {
     const pf = await preflight();
     if (!pf.allOk) return res.status(412).json({ error: 'preflight failed', checks: pf.checks });
     const appended = appendQueuedToQueueMd(readPlan());
-    // Settings (sweep.settings) drives budget / iters / turns / decks for a dashboard launch — strip these
-    // from the spawn env so the config is authoritative here. A TERMINAL launch's own env still wins.
+    // Settings (sweep.settings) drives budget / iters / decks for a dashboard launch — strip these from the
+    // spawn env so the config is authoritative here. A TERMINAL launch's own env still wins.
+    // MAX_TURNS is stripped for a DIFFERENT reason: it is not settings-backed at all, so stripping it stops
+    // the dashboard's own environment from leaking a cap into the run. A dashboard launch therefore always
+    // gets run-sweep.sh's hardcoded 60, and the only way to change it is a terminal env var.
     const { spawn } = require('child_process');
     const env = { ...process.env }; ['BUDGET_USD', 'PAIRS_LIMIT', 'MAX_ITER', 'MAX_TURNS'].forEach(k => delete env[k]);
     const child = spawn('bash', [ap('run-sweep.sh')], { cwd: REPO_ROOT, detached: true, stdio: 'ignore', env });
