@@ -331,19 +331,26 @@ function buildPastRuns() {
   const by = new Map();
   rows.forEach(r => {
     const id = r.run_id; if (!id) return;
-    if (!by.has(id)) by.set(id, { runId: id, tried: 0, kept: 0, cost: 0 });
+    if (!by.has(id)) by.set(id, { runId: id, tried: 0, kept: 0, cost: 0, before: null, after: null });
     const g = by.get(id);
     g.tried++;
-    if (r.status === 'DONE' || r.status === 'RESOLVED_UPSTREAM') g.kept++;
+    // "kept" = actually improved (a DONE that lowered the count) or resolved upstream — never a no-op/UNVERIFIED
+    if ((r.status === 'DONE' && Number(r.defects_after) < Number(r.defects_before)) || r.status === 'RESOLVED_UPSTREAM') g.kept++;
     g.cost += parseFloat(r.cost_usd) || 0;
+    const b = Number(r.defects_before), a = Number(r.defects_after);
+    if (g.before == null && Number.isFinite(b)) g.before = b;   // first row's before
+    if (Number.isFinite(a)) g.after = a;                        // last row's after
   });
   return [...by.values()].reverse().map(g => {
     const m = String(g.runId).match(/^(\d{4})(\d{2})(\d{2})/);
+    const improved = g.kept >= 1;
     return {
       runId: g.runId,
       date: m ? `${MON[+m[2] - 1] || m[2]} ${+m[3]}` : g.runId,
-      desc: g.kept ? `Fixed ${g.kept} of ${g.tried}` : `Nothing kept of ${g.tried}`,
+      desc: improved ? `Fixed ${g.kept} of ${g.tried}` : `Nothing kept of ${g.tried}`,
+      defects: (g.before != null && g.after != null) ? `${g.before} → ${g.after}` : null,
       cost: g.cost,
+      muted: !improved,                                          // improved nothing / stopped early → muted (Part 7)
     };
   });
 }
@@ -451,26 +458,39 @@ function plainTitle(rawTitle) {
   t = t.split(/\s+—\s+/)[0].replace(/\([^)]*\)/g, '');
   return stripInternal(t) || rawTitle.replace(/\*\*/g, '').trim();
 }
+// label-first pair read — NEVER a greedy scan. item 1's title carries "GATE-2A root: GP/COGS-crossSurface",
+// which a free pairIn() reads as the pair "GP/COGS"; the real repro pair is on the `pair:` label (GOOGL/AMZN).
+function queuePair(blk) {
+  const TICK = '[A-Z][A-Z0-9.]{0,5}';
+  let m = blk.match(new RegExp('\\bpair\\s*:\\s*(' + TICK + ')\\s*/\\s*(' + TICK + ')'));
+  if (m) return (m[1] + '/' + m[2]).toUpperCase();
+  const title = (blk.split('\n')[0] || '').replace(/^\s*-\s*\[[^\]]\]\s*/, '').replace(/\*\*/g, '').replace(/^\d+[.)]\s*/, '').trim();
+  m = title.match(new RegExp('^(' + TICK + ')\\s*/\\s*(' + TICK + ')\\b'));
+  return m ? (m[1] + '/' + m[2]).toUpperCase() : null;
+}
+const titleKey = s => String(s || '').replace(/\*\*/g, '').replace(/^\s*-\s*\[[^\]]\]\s*/, '').toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 18);
+const keyOverlap = (a, b) => !!a && !!b && (a.startsWith(b.slice(0, 12)) || b.startsWith(a.slice(0, 12)));
 function queueItems() {
   const txt = readSafe(ap('QUEUE.md')); if (!txt) return [];
   const open = (txt.split(/^## Open/m)[1] || '').split(/^## /m)[0];
   const L = open.split('\n');
   const cal = parseCalibration();
   const log = parseLoopLog(latestRun());
-  const curPair = (log.status.currentItem && !log.status.complete) ? pairIn(log.status.currentItem) : null;
+  const curKey = (log.status.currentItem && !log.status.complete) ? titleKey(log.status.currentItem) : null;
   const items = [];
   for (let i = 0; i < L.length; i++) {
     const mk = L[i].match(/^-\s*\[([ xX~])\]\s*(.+)$/); if (!mk) continue;
     const body = [L[i]]; for (let j = i + 1; j < L.length; j++) { if (/^-\s*\[/.test(L[j]) || /^## /.test(L[j])) break; body.push(L[j]); }
     const blk = body.join('\n');
     const checked = mk[1].toLowerCase() === 'x';
-    const pair = pairIn(blk);
+    const pair = queuePair(blk);
+    const tkey = titleKey(mk[2]);
     let state = checked ? 'done' : (mk[1] === '~' ? 'parked' : 'waiting');
-    if (!checked && pair && curPair && pair === curPair) state = 'working';
+    if (!checked && keyOverlap(curKey, tkey)) state = 'working';
     let caveat = null;
     if (/downstream of item|if item \d|once .* (?:is )?(?:done|populated|fixed)|stops being null|upstream of/i.test(blk))
       caveat = 'may fix itself once an earlier item is done';
-    if (pair && cal.rows.some(r => ['NO_VERDICT', 'UNVERIFIED', 'TIMEOUT', 'FAILED'].includes(r.status) && pairIn(r.item) === pair))
+    if (cal.rows.some(r => ['NO_VERDICT', 'UNVERIFIED', 'TIMEOUT', 'FAILED'].includes(r.status) && keyOverlap(titleKey(r.item), tkey)))
       caveat = "reopened — last attempt wasn't verified";
     items.push({ title: plainTitle(mk[2]), pair, state, caveat });
   }
@@ -542,8 +562,9 @@ app.post('/api/launch', async (req, res) => {
     const pf = await preflight();
     if (!pf.allOk) return res.status(412).json({ error: 'preflight failed', checks: pf.checks });
     const appended = appendQueuedToQueueMd(readPlan());
+    const budget = Math.max(1, parseFloat(req.body && req.body.budget) || 10);   // Part 5: per-run "Stop at $__", default 10
     const { spawn } = require('child_process');
-    const child = spawn('bash', [ap('run-sweep.sh')], { cwd: REPO_ROOT, detached: true, stdio: 'ignore', env: { ...process.env, BUDGET_USD: String(pf.budgetUsd) } });
+    const child = spawn('bash', [ap('run-sweep.sh')], { cwd: REPO_ROOT, detached: true, stdio: 'ignore', env: { ...process.env, BUDGET_USD: String(budget) } });
     child.unref();
     res.json({ launched: true, pid: child.pid, appended: appended.appended });
   } catch (e) { res.status(500).json({ error: String(e) }); }
