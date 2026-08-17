@@ -387,6 +387,17 @@ function livePhase(tail) {                        // last phase marker in the ta
   return { phase, deck, iter, item, agentMin };
 }
 function notesExist() { try { return fs.readdirSync(ap('diagnosis')).some(f => /\.(md|json|err)$/.test(f)); } catch { return false; } }
+// The REAL failure cause from a run's agent envelope — READ, not assumed. subtype names the specific error
+// kind only when it's a real error subtype; 'success' or absent means the SDK set none (e.g. an api_error that
+// only terminal_reason carries), so fall back to terminal_reason. Run 20260816-222441 died at turn 38 on an
+// api_error with subtype:"success" — this is why the status must read the envelope, not map NO_VERDICT blindly.
+function agentEnvelopeReason(runId, iterN) {
+  let j = null;
+  try { j = JSON.parse(readSafe(ap('runs', runId, `agent-${iterN}.json`)) || readSafe(ap('diagnosis', `agent-${runId}-iter${iterN}.json`)) || 'null'); } catch {}
+  if (!j || j.is_error !== true) return null;
+  const sub = j.subtype, term = j.terminal_reason;
+  return (sub && sub !== 'success') ? sub : (term || sub || null);
+}
 function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
   const s = log.status;
   const rows = cal.rows.filter(r => r.run_id === runId);
@@ -413,7 +424,6 @@ function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
   const name = found ? `“${found.title}”${pair ? ` (${pair})` : ''}`
     : (itemText ? `“${plainTitle(itemText)}”${pair ? ` (${pair})` : ''}` : `iteration ${iterN}`);
   const REASON = {
-    NO_VERDICT: `Claude Code ran out of turns on ${name}`,
     TIMEOUT: `Claude Code hit the time limit on ${name}`,
     BUILD_BROKEN: `the change stopped the app from starting`,
     REGRESSION: `the change made the deck worse and was thrown away`,
@@ -421,7 +431,19 @@ function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
     NO_CHANGE: `Claude Code changed nothing on ${name}`,
     INDETERMINATE: `the check could not run (rate-limited)`,
   };
-  const why = forcedWhy || REASON[status] || `the run stopped on ${name}`;
+  // NO_VERDICT is the runner's catch-all for an untrustworthy envelope (turn cap, API error, no status token…).
+  // The REAL cause is IN the envelope — read terminal_reason/subtype, never assume "ran out of turns".
+  const FAIL = {
+    error_max_turns: `Claude Code ran out of turns on ${name}`,
+    api_error: `the run hit an API error on ${name}`,
+    error_during_execution: `Claude Code errored out on ${name}`,
+  };
+  let why;
+  if (forcedWhy) why = forcedWhy;
+  else if (status === 'NO_VERDICT') {
+    const real = agentEnvelopeReason(runId, iterN);
+    why = FAIL[real] || (real ? `Claude Code stopped with no usable result (${real}) on ${name}` : `Claude Code returned no usable result on ${name}`);
+  } else why = REASON[status] || `the run stopped on ${name}`;
   const reverted = !s.complete || ['NO_VERDICT', 'TIMEOUT', 'BUILD_BROKEN', 'REGRESSION', 'NO_CHANGE', 'FAILED', 'INDETERMINATE'].includes(status);
   const stateLine = !found ? `${name}: no longer in the queue.`
     : found.state === 'closed' ? `${name}: now closed in the queue.`
