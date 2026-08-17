@@ -39,11 +39,12 @@ How to read the page:
 - Find the PERIOD column headers (e.g. year headers like "2013  2014  2015", often under "Year Ended December 31,"). Record them left-to-right in periodColumns.
 - Column alignment: split each row on runs of 2+ spaces. The "$" glyph FLOATS — it may lead a column or trail the previous number; treat "$" as a free token and align each number to its period column by POSITION, never by fixed character offset.
 - For EACH line-item row, output ONE object PER period column that actually has a printed number:
-  - verbatimLabel: the row's label text, exactly as printed (trimmed).
+  - verbatimLabel: this row's OWN label text, EXACTLY as printed, and NOTHING else. Do NOT prepend a parent header, do NOT enrich or disambiguate it. If two rows print the same label ("Continuing operations"), repeat it verbatim — that is correct. Provenance means this figure traces to THIS printed text.
+  - parentLabel: if this row is a sub-item indented under a section header (e.g. "Basic net income (loss) per share of Class A and B common stock:"), the EXACT text of that header. If there is no parent header, use "".
   - periodLabel: the exact period header of that column (e.g. "2013").
   - rawValue: the cell EXACTLY as printed — keep commas, keep parentheses, keep any "$". Do NOT sign-flip, strip, round, or scale it.
   - page: the page number you were given.
-  - isPerShare: true if this line is a PER-SHARE amount (it sits under a "per share" heading or the label says per share). This is a classification flag only — do not change the number. (Downstream code uses it to skip the scale.)
+  - isPerShare: true if this line is a PER-SHARE amount (it sits under a "per share" heading or the label says per share). This is a classification flag only — do not change the number. (Downstream code cross-checks it and uses the document's scale fact to decide scaling.)
 - If a column has no printed value for a row, emit NOTHING for that column.
 - Transcribe only numbers that are PRINTED. A printed subtotal/total line is fine to transcribe (you are reading it). NEVER produce a total you had to add up yourself.
 - Do NOT apply any reporting scale (millions/thousands). Transcribe the raw printed digits.
@@ -62,13 +63,14 @@ const TOOL = {
         items: {
           type: 'object',
           properties: {
-            verbatimLabel: { type: 'string' },
+            verbatimLabel: { type: 'string', description: 'This row\'s own printed label ONLY — never enriched with a parent header.' },
+            parentLabel:   { type: 'string', description: 'Exact parent/section-header text if this row is a sub-item, else "".' },
             periodLabel:   { type: 'string' },
             rawValue:      { type: 'string', description: 'Cell exactly as printed: keep commas, parentheses, and any "$".' },
             page:          { type: 'integer' },
             isPerShare:    { type: 'boolean' },
           },
-          required: ['verbatimLabel', 'periodLabel', 'rawValue', 'page', 'isPerShare'],
+          required: ['verbatimLabel', 'parentLabel', 'periodLabel', 'rawValue', 'page', 'isPerShare'],
         },
       },
     },
@@ -76,20 +78,13 @@ const TOOL = {
   },
 };
 
-// Raw HTTPS call to the Messages API, forcing the transcription tool (matches server.js's no-SDK style).
-function callSonnet(pageText, pageNumber) {
+// Raw HTTPS POST to the Messages API (matches server.js's no-SDK style). Shared by full-page and
+// single-field transcription.
+function postMessages(payload) {
   return new Promise((resolve, reject) => {
     const key = process.env.ANTHROPIC_API_KEY || '';
     if (!key) return reject(new Error('ANTHROPIC_API_KEY not set'));
-    const body = JSON.stringify({
-      model: SONNET_MODEL,
-      max_tokens: 8000,
-      temperature: 0,
-      system: SYSTEM,
-      tools: [TOOL],
-      tool_choice: { type: 'tool', name: 'report_line_items' },
-      messages: [{ role: 'user', content: `Page ${pageNumber} of the filing (pdftotext -layout). Transcribe every printed line item, one object per period column.\n\n<<<PAGE ${pageNumber}>>>\n${pageText}` }],
-    });
+    const body = JSON.stringify(payload);
     const req = https.request({
       hostname: 'api.anthropic.com', path: '/v1/messages', method: 'POST',
       headers: {
@@ -112,8 +107,40 @@ function callSonnet(pageText, pageNumber) {
   });
 }
 
-// Extract one tagged page. `scale` comes from the locator's document fact (millions/thousands/billions).
-async function extractPage(pageText, pageNumber, scale) {
+function callSonnet(pageText, pageNumber) {
+  return postMessages({
+    model: SONNET_MODEL, max_tokens: 8000, temperature: 0, system: SYSTEM,
+    tools: [TOOL], tool_choice: { type: 'tool', name: 'report_line_items' },
+    messages: [{ role: 'user', content: `Page ${pageNumber} of the filing (pdftotext -layout). Transcribe every printed line item, one object per period column.\n\n<<<PAGE ${pageNumber}>>>\n${pageText}` }],
+  });
+}
+
+// TARGETED re-extraction of ONE cell — the validator's single retry on a failed check. Same page,
+// same rules, but the model is asked for exactly one line item/period. Returns {value, rawValue} or null.
+async function extractField(pageText, pageNumber, field, facts) {
+  const { verbatimLabel, parentLabel, periodLabel } = field || {};
+  const q = `From the page below, transcribe ONLY the single cell for the line item "${verbatimLabel}"` +
+    `${parentLabel ? ` (under the header "${parentLabel}")` : ''} in the period "${periodLabel}". ` +
+    `Emit exactly one line item via the tool; do not transcribe any other row.\n\n<<<PAGE ${pageNumber}>>>\n${pageText}`;
+  const resp = await postMessages({
+    model: SONNET_MODEL, max_tokens: 800, temperature: 0, system: SYSTEM,
+    tools: [TOOL], tool_choice: { type: 'tool', name: 'report_line_items' },
+    messages: [{ role: 'user', content: q }],
+  });
+  const block = (resp.content || []).find(b => b.type === 'tool_use' && b.name === 'report_line_items');
+  const lis = (block && block.input && block.input.lineItems) || [];
+  const li = lis.find(x => x.periodLabel === periodLabel) || lis[0];
+  if (!li) return null;
+  const { value } = parseNumber(li.rawValue);
+  return { value, rawValue: li.rawValue };
+}
+
+// Extract one tagged page. `facts` is the locator's document fact: { scale, exceptPerShare }.
+// The scale DECISION is document-fact-driven (exceptPerShare + a deterministic per-share label test),
+// NOT the model's per-row flag — that flag is retained only as a cross-check for the validator.
+async function extractPage(pageText, pageNumber, facts) {
+  const scale = (facts && typeof facts === 'object') ? facts.scale : facts;
+  const exceptPerShare = (facts && typeof facts === 'object') ? facts.exceptPerShare === true : false;
   const factor = SCALE_FACTOR[scale];
   if (factor == null) throw new Error(`Extractor: unusable scale "${scale}" — the locator must supply millions/thousands/billions`);
 
@@ -130,17 +157,25 @@ async function extractPage(pageText, pageNumber, scale) {
     // "Accept no value without a page number": stamp the authoritative page; drop any mis-attributed item.
     if (li.page !== pageNumber) { dropped.push({ ...li, why: 'page-mismatch' }); continue; }
     const { value, unparsed } = parseNumber(li.rawValue);
-    const isPerShare = li.isPerShare === true;
-    const scaleApplied = !isPerShare && value != null;      // scale never applies to per-share amounts
+    const verbatimLabel = String(li.verbatimLabel || '').trim();
+    const parentLabel = String(li.parentLabel || '').trim();
+    // Deterministic per-share test from the printed labels (parent + own). This — gated by the
+    // document's exceptPerShare fact — drives scaling. The model's flag is a separate cross-check.
+    const labelPerShare = /per\s*share/i.test((parentLabel ? parentLabel + ' ' : '') + verbatimLabel);
+    const modelPerShareFlag = li.isPerShare === true;
+    const scaleApplied = !(exceptPerShare && labelPerShare) && value != null;
     items.push({
-      verbatimLabel: String(li.verbatimLabel || '').trim(),
+      verbatimLabel,                                         // strictly verbatim (Correction 2)
+      parentLabel,                                           // parent header kept separate (Correction 2)
       periodLabel: String(li.periodLabel || '').trim(),
       page: pageNumber,
       rawValue: li.rawValue,
       value,                                                 // parsed, pre-scale, parens->negative (JS)
-      isPerShare,
+      labelPerShare,                                         // deterministic (document-fact path)
+      modelPerShareFlag,                                     // the model's flag (cross-check only)
       scaleApplied,
       scaledValue: value == null ? null : (scaleApplied ? value * factor : value),
+      status: 'ok',
       ...(unparsed ? { unparsed } : {}),
     });
   }
@@ -148,7 +183,7 @@ async function extractPage(pageText, pageNumber, scale) {
   return {
     ok: true,
     page: pageNumber,
-    scale, factor,
+    scale, exceptPerShare, factor,
     periodColumns: Array.isArray(out.periodColumns) ? out.periodColumns : [],
     items, dropped,
     model: SONNET_MODEL,
@@ -157,4 +192,4 @@ async function extractPage(pageText, pageNumber, scale) {
   };
 }
 
-module.exports = { extractPage, parseNumber, SONNET_MODEL, SCALE_FACTOR };
+module.exports = { extractPage, extractField, parseNumber, SONNET_MODEL, SCALE_FACTOR };

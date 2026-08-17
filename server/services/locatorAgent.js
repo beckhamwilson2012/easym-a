@@ -43,6 +43,7 @@ Rules:
 Document facts (from the heads only):
 - scaleStated: true ONLY if a head explicitly states the reporting scale (e.g. "(In millions, except per share amounts)" or "(in thousands)"). If no head states a scale, scaleStated=false.
 - scale: "millions" | "thousands" | "billions" if explicitly stated; otherwise "unknown". NEVER guess or infer scale from how large the numbers look.
+- exceptPerShare: true if the scale statement explicitly carves out per-share amounts (e.g. "(In millions, except per share amounts)"); false otherwise. This is a DOCUMENT fact about how the scale applies - downstream code uses it to leave per-share figures unscaled.
 - currency: e.g. "USD" if stated or clearly indicated; otherwise "unknown".
 - fiscalYearEnd: e.g. "December 31" if visible (e.g. "Year Ended December 31,"); otherwise "unknown".
 
@@ -59,6 +60,7 @@ const TOOL = {
       cashFlowPages:        { type: 'array', items: { type: 'integer' }, description: 'Pages titled Consolidated Statements of Cash Flows.' },
       scaleStated: { type: 'boolean', description: 'True ONLY if a head explicitly states the reporting scale.' },
       scale:    { type: 'string', enum: ['millions', 'thousands', 'billions', 'units', 'unknown'], description: 'The explicitly stated scale, else "unknown". Never guess.' },
+      exceptPerShare: { type: 'boolean', description: 'True if the scale statement carves out per-share amounts (e.g. "except per share amounts"), else false.' },
       currency: { type: 'string', description: 'Currency (e.g. "USD") if stated/clear, else "unknown".' },
       fiscalYearEnd: { type: 'string', description: 'Fiscal year end (e.g. "December 31") if visible, else "unknown".' },
       evidence: {
@@ -67,7 +69,7 @@ const TOOL = {
         items: { type: 'object', properties: { page: { type: 'integer' }, title: { type: 'string' } }, required: ['page', 'title'] },
       },
     },
-    required: ['incomeStatementPages', 'balanceSheetPages', 'cashFlowPages', 'scaleStated', 'scale', 'currency', 'fiscalYearEnd', 'evidence'],
+    required: ['incomeStatementPages', 'balanceSheetPages', 'cashFlowPages', 'scaleStated', 'scale', 'exceptPerShare', 'currency', 'fiscalYearEnd', 'evidence'],
   },
 };
 
@@ -136,6 +138,7 @@ async function locateStatements(pages) {
   const facts = {
     scaleStated: out.scaleStated === true,
     scale: out.scale || 'unknown',
+    exceptPerShare: out.exceptPerShare === true,
     currency: out.currency || 'unknown',
     fiscalYearEnd: out.fiscalYearEnd || 'unknown',
   };
