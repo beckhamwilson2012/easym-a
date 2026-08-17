@@ -1,2 +1,4 @@
 run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture,agent_is_error,agent_subtype,agent_status_token
 20260815-150838,1,"1. Leg-availability / LTM gross-profit blanking — 32 pai",DONE,799,41,3.7568284999999997,8,8,N+1,false,true,error_max_turns,ABSENT
+20260816-165919,1,"1. Leg-availability / LTM gross-profit blanking — 32 pairs",NO_VERDICT,458,61,4.151901,68,68,N+1,false,true,error_max_turns,ABSENT
+20260816-165953,1,"1. Leg-availability / LTM gross-profit blanking — 32 pairs",NO_VERDICT,671,61,4.976858499999998,68,68,N+1,false,true,error_max_turns,ABSENT
