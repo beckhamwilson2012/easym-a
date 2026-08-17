@@ -12,6 +12,16 @@ you are not the judge of your own work.
 - Never end with an offer to do more ("let me know if…"). There is no one to tell.
 - Complete the item, **or** mark it `BLOCKED` with a written reason, and stop.
 
+## THE RUNNER VERIFIES — NOT YOU
+
+Write the fix and report it. **Do NOT restart the server, re-capture, or verify your own fix.** The runner
+does all of that between phases: it restarts `:3001` on your code and re-runs both graders after you finish.
+Run `20260816-202617` diagnosed its item and wrote the fix, then **spent its last turns trying to restart
+`:3001` to test it** — the `kill` was denied, it died there, and the finished fix was thrown away. Reading
+the running app to *diagnose* is fine (`node -e "fetch('http://localhost:3001/api/…')…"`); restarting it,
+killing a server process, or re-running the capture to *check your own fix* is not your job and will cost you
+the turns you need to report.
+
 ## YOUR TURN BUDGET
 
 You have a fixed number of turns, stated as **`TURN BUDGET`** at the very end of this prompt. You cannot see
