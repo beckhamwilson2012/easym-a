@@ -495,6 +495,44 @@ status_detail() {                              # $1 = agent json → the (…) t
 }
 agent_changed() { [[ -n "$(gitr status --porcelain)" ]]; }   # true if the agent left uncommitted edits (runs/ is gitignored)
 
+# ── WHOSE EDITS ARE THESE? ───────────────────────────────────────────────────────────────────────────
+# finalize used to stage with `git add -A`, which has no notion of authorship: it commits whatever is in
+# the tree. Proven, not theorised — driving PARTIAL_UNVERIFIED offline with two foreign files present
+# committed BOTH of them alongside the agent's fix, under the sweep's message, on the sweep's branch.
+#
+# So the loop snapshots the tree immediately before run_agent and diffs at finalize; only paths whose
+# CONTENT changed across the agent call are staged. The snapshot is (sha, path) for every dirty path —
+# normally EMPTY, because the runner refuses to start on a dirty tree (see the DIRTY check in SETUP) and
+# every iteration ends with a commit or a revert. Cost is one `git ls-files`, one `git hash-object` over
+# the dirty set, and one node process.
+#
+# THE RESIDUAL GAP, STATED PLAINLY: this distinguishes edits that existed BEFORE the agent ran from those
+# that appeared DURING it. It CANNOT tell the agent's write from a concurrent session's write inside that
+# same window — both are simply "changed since the snapshot". The only complete mitigation is one writer
+# per tree. See GATE_SPEC §6a.
+tree_snapshot() {                              # echoes "<sha>\t<path>" per dirty path; silent on a clean tree
+  ROOT="$ROOT" node -e '
+    const {execFileSync}=require("child_process"); const R=process.env.ROOT;
+    const g=a=>execFileSync("git",["-C",R,...a],{encoding:"utf8"});
+    let files=[]; try{ files=g(["ls-files","-m","-o","--exclude-standard","-z"]).split("\0").filter(Boolean); }catch(e){}
+    if(!files.length) process.exit(0);
+    let h=[]; try{ h=g(["hash-object","--",...files]).trim().split("\n"); }catch(e){}
+    files.forEach((f,i)=>process.stdout.write((h[i]||"MISSING")+"\t"+f+"\n"));
+  ' 2>/dev/null
+}
+agent_touched_paths() {                        # $1 = snapshot file; echoes paths whose content changed since it
+  SNAP="$1" ROOT="$ROOT" node -e '
+    const fs=require("fs"); const {execFileSync}=require("child_process"); const R=process.env.ROOT;
+    const g=a=>execFileSync("git",["-C",R,...a],{encoding:"utf8"});
+    const before=new Map();
+    try{ for(const l of fs.readFileSync(process.env.SNAP,"utf8").split("\n")){ const i=l.indexOf("\t"); if(i>0) before.set(l.slice(i+1),l.slice(0,i)); } }catch(e){}
+    let files=[]; try{ files=g(["ls-files","-m","-o","--exclude-standard","-z"]).split("\0").filter(Boolean); }catch(e){}
+    if(!files.length) process.exit(0);
+    let h=[]; try{ h=g(["hash-object","--",...files]).trim().split("\n"); }catch(e){}
+    files.forEach((f,i)=>{ if((h[i]||"MISSING")!==before.get(f)) process.stdout.write(f+"\n"); });
+  ' 2>/dev/null
+}
+
 # ── agent error envelope (Part B) ─────────────────────────────────────────────────────────────────────
 # calibration.csv used to record ONLY status/turns/cost, so run 20260815-150838's row reads DONE even
 # though the agent returned is_error:true / subtype:error_max_turns. These three fields go into the
@@ -594,7 +632,16 @@ finalize() {                                   # $1=status $2=marker (x=done · 
     "${ANA_AFTER:-${ANA_BEFORE:-}}" "${NA_AFTER:-${NA_BEFORE:-}}" >> "$CALIB"
   local msg="sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER over ${ANA_AFTER:-${ANA_BEFORE:-?}} analyzable pair(s)"
   [[ -n "${4:-}" ]] && msg+=$'\n\n'"$4"
-  gitr add -A >/dev/null 2>&1
+  # Stage the runner's OWN bookkeeping, then ONLY the paths the agent changed across its call (AGENT_PATHS,
+  # set by the loop from the pre-agent tree snapshot). Never `add -A` — see tree_snapshot() for why and for
+  # the residual gap this does NOT close.
+  gitr add -- "$CALIB" "$DECISIONS" "$QUEUE" >/dev/null 2>&1 || true
+  [[ -d "$AGENT_DIR/diagnosis" ]] && { gitr add -- "$AGENT_DIR/diagnosis" >/dev/null 2>&1 || true; }
+  if [[ -n "${AGENT_PATHS:-}" ]]; then
+    while IFS= read -r _p; do
+      [[ -n "$_p" ]] && { gitr add -- "$_p" >/dev/null 2>&1 || true; }
+    done <<< "$AGENT_PATHS"
+  fi
   gitr commit -q -m "$msg" >/dev/null 2>&1 || true
 }
 
@@ -792,10 +839,20 @@ while :; do
 
   CHECKPOINT="$(gitr rev-parse HEAD)"; ITER_T0="$(date +%s)"; AGENT_OUT="$RUN_DIR/agent-$CUR_ITER.json"
 
+  # Snapshot the tree IMMEDIATELY before the agent, so finalize can stage only what the agent changed
+  # rather than everything in the tree. Normally records nothing — the tree is clean at this point.
+  SNAP_FILE="$RUN_DIR/.tree-snapshot-iter$CUR_ITER"
+  SNAP_T0="$(date +%s%3N 2>/dev/null || date +%s)"
+  tree_snapshot > "$SNAP_FILE" 2>/dev/null || : > "$SNAP_FILE"
+  SNAP_N="$(grep -c '' "$SNAP_FILE" 2>/dev/null || echo 0)"
+  log "tree snapshot: $SNAP_N dirty path(s) before agent$( [[ "$SNAP_N" -gt 0 ]] && echo ' — NOT this agent'"'"'s work, will not be committed')"
+
   # run the agent under a wall-clock timeout (bounds a permission-prompt hang that --max-turns cannot)
   RUN_PHASE="agent:iter $CUR_ITER"
   run_agent_timed "$ITER_TIMEOUT"; AGENT_RC=$?
   RUN_PHASE="gate:iter $CUR_ITER"
+  # What the agent actually touched. Every finalize below stages from this, never `add -A`.
+  AGENT_PATHS="$(agent_touched_paths "$SNAP_FILE")"
   if [[ "$AGENT_RC" -eq 124 ]]; then
     WALL="$ITER_TIMEOUT"; TURNS=0; COST=0; DEF_AFTER="$DEF_BEFORE"
     log "TIMEOUT: agent exceeded ${ITER_TIMEOUT}s (elapsed $(( $(date +%s) - ITER_T0 ))s) — killed. Last agent stderr:"
@@ -851,7 +908,8 @@ while :; do
       # "success", in which case terminal_reason carries the truth.
       CUTOFF="$AGENT_SUBTYPE"
       [[ "$CUTOFF" == "success" || "$CUTOFF" == "ABSENT" ]] && CUTOFF="${AGENT_TERMINAL:-unknown}"
-      FILES="$(gitr status --porcelain | sed 's/^...//' | tr '\n' ' ')"
+      # The agent's paths, from the snapshot diff — NOT `git status`, which cannot tell whose edits are whose.
+      FILES="$(printf '%s' "${AGENT_PATHS:-}" | tr '\n' ' ')"
       # capture the work into $RUN_DIR (gitignored) BEFORE finalize commits, so nothing git does can lose it
       gitr diff HEAD > "$RUN_DIR/partial-iter$CUR_ITER.diff" 2>/dev/null || true
       cp "$AGENT_OUT" "$RUN_DIR/envelope-iter$CUR_ITER.json" 2>/dev/null || true

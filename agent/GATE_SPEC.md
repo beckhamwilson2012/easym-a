@@ -150,6 +150,27 @@ says so. Treat such a commit as a draft someone must still review, never as a pa
 It fires on `is_error:true` AND a non-empty diff, not on a subtype list. An empty
 diff, or a *clean* envelope merely missing a `STATUS:` token, still reverts.
 
+**What gets staged, and the gap that remains.** `finalize` used to stage with
+`git add -A`, which has no notion of authorship — it commits whatever is in the
+tree. Driving this path offline with two foreign files present committed **both of
+them**, alongside the agent's fix, under the sweep's message on the sweep's branch.
+
+The runner now snapshots the working tree (sha + path for every dirty path)
+immediately before `run_agent` and diffs at `finalize`; only paths whose content
+changed across the agent call are staged, plus the runner's own bookkeeping.
+
+**This does NOT make staging author-aware, and must not be described as if it
+does.** It separates edits that existed *before* the agent ran from edits that
+appeared *during* it. A concurrent session writing inside that same window is
+indistinguishable from the agent — both are simply "changed since the snapshot" —
+and such a file **will** be committed. Measured, not assumed: a foreign file dirty
+before the agent is correctly excluded; the same file modified during the agent
+window is staged.
+
+**The only complete mitigation is one writer per tree.** Run the sweep on a tree
+no other session is editing — a dedicated worktree or clone. The snapshot narrows
+the window; it does not close it.
+
 ### §6b. `KILLED` — the run that never reached `finalize`
 
 `finalize` only runs at the end of a completed iteration, so a run killed before
