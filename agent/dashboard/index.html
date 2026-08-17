@@ -3,217 +3,424 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Sweep Dashboard</title>
+<title>Bug Fixer</title>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 <style>
-  :root { --bg:#0d1117; --panel:#161b22; --border:#30363d; --fg:#c9d1d9; --dim:#8b949e; --accent:#58a6ff; }
-  * { box-sizing:border-box; }
-  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif; }
-  h1 { font-size:18px; margin:0; } h2 { font-size:13px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); margin:0 0 10px; }
-  .wrap { max-width:900px; margin:0 auto; padding:16px; }
-  .top { display:flex; align-items:center; gap:14px; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px; }
-  .panel { background:var(--panel); border:1px solid var(--border); border-radius:8px; padding:16px; margin-bottom:16px; }
-  .mono { font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,monospace; }
-  textarea { width:100%; background:#010409; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:10px; font:12px/1.5 ui-monospace,Menlo,monospace; }
-  button { background:#21262d; color:var(--fg); border:1px solid var(--border); border-radius:6px; padding:7px 14px; cursor:pointer; font-size:13px; }
-  button:hover:not(:disabled) { border-color:var(--accent); }
-  button:disabled { opacity:.5; cursor:not-allowed; }
-  .dim { color:var(--dim); } .good { color:#3fb950; } .bad { color:#f85149; } .warn { color:#e3b341; }
-  .log { background:#010409; border:1px solid var(--border); border-radius:6px; padding:10px; max-height:280px; overflow:auto; white-space:pre-wrap; }
-  .row { display:flex; align-items:center; gap:10px; padding:7px 4px; border-bottom:1px solid var(--border); }
-  .row.done { opacity:.55; }
-  .dot { width:11px; height:11px; border-radius:50%; flex:0 0 auto; }
-  .pill { padding:1px 9px; border-radius:10px; font-size:11px; font-weight:700; margin-left:auto; }
-  .pair { font:12px/1 ui-monospace,Menlo,monospace; font-weight:700; min-width:110px; }
-  .cards { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; }
-  .card { background:#0d1117; border:1px solid var(--border); border-radius:6px; padding:10px; }
-  .card .k { color:var(--dim); font-size:11px; text-transform:uppercase; } .card .v { font-size:22px; font-weight:700; }
-  .pf { display:flex; gap:14px; flex-wrap:wrap; font-size:12px; margin-bottom:10px; }
-  .pf span::before { content:'✓ '; color:#3fb950; } .pf span.no::before { content:'✗ '; color:#f85149; }
-  .pf span.no { color:#f85149; }
-  code.copy { background:#010409; border:1px solid var(--border); border-radius:6px; padding:8px 10px; display:block; word-break:break-all; }
+  :root{
+    --page:#0D0D0D; --panel:#1A1A1A; --line:#2A2A2A; --cream:#E8E6E1;
+    --ink:#141413; --ink-2:#5C5A54; --ink-3:#8A8880;
+    --t-1:#E8E6E1; --t-2:#B4B2A9; --t-3:#8A8A8A; --t-4:#6A6A6A; --t-5:#5A5A5A;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--page);color:var(--t-1);
+       font:13px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased;}
+  .page{display:flex;gap:12px;padding:12px;min-height:100vh;border-radius:16px;background:var(--page);}
+
+  /* ── sidebar ─────────────────────────────────────────────────────────── */
+  .side{flex:0 0 146px;background:var(--panel);border:1px solid var(--line);border-radius:14px;
+        padding:16px 12px;display:flex;flex-direction:column;}
+  .avatar{width:32px;height:32px;border-radius:50%;background:var(--cream);margin-bottom:20px;flex:0 0 auto;}
+  .nav{display:flex;flex-direction:column;gap:2px;}
+  .navItem{font-size:13px;color:var(--t-3);padding:7px 9px;border-radius:8px;}
+  .navItem.on{background:var(--cream);color:var(--page);font-weight:600;}
+  .navFoot{margin-top:auto;padding-top:12px;border-top:1px solid var(--line);}
+
+  /* ── main column ─────────────────────────────────────────────────────── */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;}
+  .head{display:flex;align-items:baseline;gap:10px;padding:2px 2px 0;}
+  .head h1{font-size:19px;font-weight:700;color:var(--t-1);margin:0;letter-spacing:-.01em;}
+  .head .tag{font-size:12px;color:var(--t-4);}
+  .row{display:flex;gap:12px;align-items:stretch;}
+  .row.top{align-items:flex-start;}
+  .row.col{flex-direction:column;align-items:stretch;}
+  .row.col > *{flex:none;width:100%;}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;}
+  .secLabel{font-size:11px;color:var(--t-4);font-weight:600;letter-spacing:.05em;text-transform:uppercase;}
+  .secSub{font-size:11px;color:var(--t-5);margin-top:4px;}
+
+  /* ── status card — the background IS the state colour ────────────────── */
+  .status{flex:1.5;min-width:0;border-radius:14px;padding:18px 20px;display:flex;flex-direction:column;}
+  .stTop{display:flex;align-items:baseline;gap:10px;}
+  .stLabel{font-size:12px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;}
+  .stMeta{margin-left:auto;font-size:12px;white-space:nowrap;}
+  .stHead{font-size:27px;font-weight:700;line-height:1.12;letter-spacing:-.02em;color:#FFFFFF;margin-top:14px;}
+  .stSub{font-size:13px;margin-top:7px;}
+
+  /* ── cream tiles ─────────────────────────────────────────────────────── */
+  .tiles{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;}
+  .tile{flex:1;background:var(--cream);border-radius:12px;padding:14px 16px;
+        display:flex;flex-direction:column;justify-content:center;}
+  .tileNum{font-size:23px;font-weight:700;color:var(--ink);letter-spacing:-.02em;line-height:1.1;}
+  .tileSuf{font-size:15px;font-weight:700;color:var(--ink-3);margin-left:6px;letter-spacing:0;}
+  .tileLab{font-size:12px;color:var(--ink-2);margin-top:4px;}
+
+  /* ── live feed ───────────────────────────────────────────────────────── */
+  .feed{flex:1.5;min-width:0;display:flex;flex-direction:column;}
+  .feedBody{margin-top:10px;overflow:auto;max-height:132px;
+            font:11px/1.9 ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--t-3);}
+  .feedBody .now{color:var(--t-1);}
+  .feedLine{white-space:pre-wrap;word-break:break-word;}
+
+  /* ── launch card ─────────────────────────────────────────────────────── */
+  .launch{flex:1;min-width:0;background:var(--cream);border-radius:12px;padding:16px;
+          display:flex;flex-direction:column;justify-content:center;}
+  .launchBtn{width:100%;background:var(--ink);color:var(--cream);border:0;border-radius:8px;
+             padding:12px 14px;font:600 13px/1.2 inherit;cursor:pointer;}
+  .launchBtn:disabled{opacity:.4;cursor:default;}
+  .capNote{font-size:11px;color:var(--ink-3);text-align:center;margin-top:9px;}
+  .miniRow{display:flex;gap:14px;justify-content:center;margin-top:8px;}
+  .mini{font-size:11px;color:var(--ink-3);background:none;border:0;padding:0;cursor:pointer;font-family:inherit;}
+  .mini:hover{color:var(--ink-2);text-decoration:underline;}
+  .mini.armed{color:#8C2E2D;}
+
+  /* ── queue ───────────────────────────────────────────────────────────── */
+  .qRow{display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);}
+  .qRow:last-child{border-bottom:0;}
+  .pill{font-size:10px;font-weight:700;border-radius:20px;min-width:38px;text-align:center;
+        padding:3px 8px;flex:0 0 auto;letter-spacing:.03em;}
+  .qTitle{font-size:13px;color:var(--t-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .qTitle.on{color:var(--t-1);}
+  .qPair{font-size:12px;color:var(--t-4);margin-left:auto;text-align:right;flex:0 0 auto;
+         font-family:ui-monospace,Menlo,monospace;}
+  .qEmpty{font-size:12px;color:var(--t-5);padding:12px 0 2px;}
+
+  /* ── add a bug ───────────────────────────────────────────────────────── */
+  .strip{flex:1;min-width:0;cursor:pointer;display:flex;align-items:center;gap:10px;}
+  .stripTitle{font-size:15px;color:var(--t-1);}
+  .stripHint{font-size:11px;color:var(--t-5);margin-left:auto;}
+  .addHead{display:flex;align-items:baseline;gap:10px;}
+  .addHead h3{font-size:15px;font-weight:400;color:var(--t-1);margin:0;}
+  .addInstr{font-size:12px;color:var(--t-3);margin-top:10px;}
+  textarea{width:100%;margin-top:10px;background:var(--page);color:var(--t-2);
+           border:1px solid var(--line);border-radius:8px;padding:11px 12px;resize:vertical;
+           font:12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;}
+  textarea:focus{outline:none;border-color:#3A3A3A;}
+  textarea::placeholder{color:var(--t-5);}
+  .addBtns{display:flex;align-items:center;gap:8px;margin-top:10px;}
+  .btn{border:0;border-radius:8px;padding:9px 14px;font:400 13px/1.2 inherit;cursor:pointer;}
+  .btn.ghost{background:var(--line);color:var(--t-2);}
+  .btn.solid{background:var(--cream);color:var(--ink);font-weight:600;}
+  .btn:disabled{opacity:.4;cursor:default;}
+  .addTally{font-size:12px;color:var(--t-5);margin-left:4px;}
+  .addResults{margin-top:14px;padding-top:14px;border-top:1px solid var(--line);
+              display:flex;flex-direction:column;gap:9px;}
+  .resRow{display:flex;align-items:baseline;gap:10px;}
+  .resText{font-size:12px;color:var(--t-2);flex:1;min-width:0;}
+  .resWhy{color:var(--t-4);}
+
+  /* ── past runs ───────────────────────────────────────────────────────── */
+  .runs{flex:1.2;min-width:0;}
+  .runRow{display:flex;align-items:baseline;gap:12px;padding:8px 0;font-size:12px;}
+  .runDate{color:var(--t-5);min-width:80px;flex:0 0 80px;}
+  .runDesc{color:var(--t-2);flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .runCost{color:var(--t-5);margin-left:auto;}
+  .undoBox{margin-top:10px;background:var(--page);border:1px solid var(--line);border-radius:8px;
+           padding:10px;font:11px/1.6 ui-monospace,Menlo,monospace;color:var(--t-3);
+           white-space:pre-wrap;word-break:break-all;}
 </style>
 </head>
 <body>
 <div id="root"></div>
 <script type="text/babel">
-const { useState, useEffect, useCallback } = React;
-const ST = {
-  done:    { color:'#3fb950', fill:true,  pill:'rgba(63,185,80,.15)' },
-  running: { color:'#58a6ff', fill:true,  pill:'rgba(88,166,255,.15)' },
-  queued:  { color:'#8b949e', fill:false, pill:'rgba(139,148,158,.10)' },
-  blocked: { color:'#e3b341', fill:true,  pill:'rgba(227,179,65,.15)' },
-  skipped: { color:'#57606a', fill:false, pill:'rgba(87,96,106,.10)' },
-};
-const post = (url, body) => fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) }).then(r=>r.json());
-const fmtDur = s => s==null?'—':(s>=3600?(s/3600).toFixed(1)+'h':s>=60?Math.floor(s/60)+'m '+(s%60)+'s':s+'s');
+const { useState, useEffect, useCallback, useRef } = React;
 
-function PastePlan({ onQueue }) {
-  const [text, setText] = useState('');
-  const [prev, setPrev] = useState(null);
-  const parse = () => post('/api/parse', { text }).then(setPrev);
-  const add = () => post('/api/plan', { text }).then(d => { setPrev(d); onQueue(); });
+/* ── palette ───────────────────────────────────────────────────────────────
+   The status card takes the state colour as its BACKGROUND; the small label
+   and the subtitle are light tints of it. Headline is always pure white. */
+const STATE = {
+  sweeping : { bg:'#2E6FA8', label:'#D6E7F5', sub:'#C7DDF0', name:'Sweeping'  },
+  fixing   : { bg:'#BA7517', label:'#FFF0D6', sub:'#FBEBCD', name:'Fixing'    },
+  comparing: { bg:'#7F77DD', label:'#E2E0F8', sub:'#D5D2F2', name:'Comparing' },
+  stopped  : { bg:'#8C2E2D', label:'#F2CFCE', sub:'#EFC8C7', name:'Stopped'   },
+  finished : { bg:'#4B7A1F', label:'#D8ECBE', sub:'#D2E8B4', name:'Finished'  },
+  idle     : { bg:'#4A4A48', label:'#D6D4CE', sub:'#C4C2BC', name:'Idle'      },
+};
+const PILL = {
+  NOW : { background:'#BA7517', color:'#0D0D0D' },
+  WAIT: { background:'#2A2A2A', color:'#8A8A8A' },
+  DONE: { background:'#4B7A1F', color:'#0D0D0D' },
+};
+
+const post = (url, body) => fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body||{}) }).then(r=>r.json());
+const money = n => '$' + (Number(n)||0).toFixed(2);
+const plural = (n, w) => n + ' ' + w + (n === 1 ? '' : 's');
+const fmtElapsed = sec => {
+  if (sec == null) return null;
+  const m = Math.floor(sec/60);
+  if (m < 1) return sec + 's';
+  return m < 60 ? m + 'm' : Math.floor(m/60) + 'h ' + (m%60) + 'm';
+};
+
+/* ── which of the six states are we in ─────────────────────────────────────
+   Pure presentation: this reads the run signals the server already reports
+   (runState / phase / iter / the log tail) and picks a face for them. It
+   decides nothing and changes no detection — the server still owns
+   RUNNING / STALE / DIED / COMPLETED. */
+function subPhase(tail) {
+  const lines = tail || [];
+  let iterAt = -1;
+  for (let i = lines.length - 1; i >= 0; i--) if (/── iter \d+/.test(lines[i])) { iterAt = i; break; }
+  const after = iterAt >= 0 ? lines.slice(iterAt + 1) : lines;
+  const has = re => after.some(l => re.test(l));
+  if (iterAt < 0) return has(/baseline:\s*\d+\s*defects/) ? 'fixing' : 'capture-before';
+  // a gate/terminal marker means the agent is done and the run is scoring it
+  if (has(/GATE:|COMMITTED|REVERTED|HALTED|BUILD_BROKEN|NO_VERDICT|TIMEOUT:|INDETERMINATE|REPLAY_SUSPECTED/)) return 'comparing';
+  if (has(/verdict: agent returned/)) return 'capture-after';       // verdict in, after-picture running
+  if (has(/forced fresh baseline re-capture/)) return 'capture-before';
+  return 'fixing';
+}
+function derive(s, pf) {
+  const live = (s && s.live) || {}, st = live.status || {}, sum = (s && s.summary) || {};
+  const hasRun = !!live.loopLogExists;
+  const rs = st.runState;
+  const done = live.pairsDone || 0, total = live.pairsTotal || 0;
+  const iter = st.iter || 1;
+  const waiting = pf ? pf.queued : null;
+  const wtxt = waiting == null ? 'Some' : String(waiting);
+
+  if (!hasRun) return { k:'idle', head:'Nothing is running',
+    sub:`${wtxt} bug${waiting === 1 ? '' : 's'} waiting. Press start when you're ready.` };
+  if (rs === 'COMPLETED') {
+    const fixed = sum.committed || 0;
+    return { k:'finished', head:`Fixed ${plural(fixed,'bug')}, ${wtxt} still waiting`,
+      sub:'Check the deck yourself before trusting this.' };
+  }
+  if (rs === 'DIED' || rs === 'STALE') return { k:'stopped', head:`Ran out of turns on item ${iter}`,
+    sub:`Your code is untouched. Item ${iter} still open.` };
+  const p = subPhase(live.logTail);
+  if (p === 'capture-before') return { k:'sweeping', head:`Checking deck ${done} of ${total}`,
+    sub:'Taking a picture before anything changes' };
+  if (p === 'capture-after') return { k:'sweeping', head:`Re-checking deck ${done} of ${total}`,
+    sub:'Taking the after picture to compare against' };
+  if (p === 'comparing') return { k:'comparing', head:'Grading before vs after',
+    sub:'Deciding whether to keep the change or throw it away' };
+  return { k:'fixing', head:`Claude Code is on item ${iter}`,
+    sub:'Writing code. No progress shown until it finishes.' };
+}
+
+/* ── plain-English blockers ─────────────────────────────────────────────── */
+const BLOCKER = {
+  'tree clean'     : 'Commit your changes first',
+  'claude on PATH' : 'Claude Code is not installed',
+  'app :3001 up'   : 'Start the app on :3001 first',
+  'a queued item'  : 'Nothing in the queue yet',
+  'prices frozen'  : 'Prices are moving — wait',
+};
+const NEEDS = {
+  pair    : 'needs which two tickers',
+  observed: 'needs what it shows now',
+  expected: 'needs what it should show instead',
+  source  : 'needs how you know',
+};
+
+function Sidebar() {
   return (
-    <div className="panel">
-      <h2>Paste plan</h2>
-      <div style={{marginBottom:8}}>Paste your plan. Each item needs a ticker pair, what it shows now, what it should show, and where you know that from.</div>
-      <textarea rows={7} value={text} onChange={e=>setText(e.target.value)}
-        placeholder={"AAPL/VZ combined gross margin shows 36.2%, should be 46.6% per §16"} />
-      <div className="dim" style={{marginTop:6,fontSize:12}}>Anything missing gets parked, not queued — nothing is guessed.</div>
-      <div style={{marginTop:8, display:'flex', gap:8}}>
-        <button onClick={parse} disabled={!text.trim()}>Parse preview</button>
-        <button onClick={add} disabled={!text.trim()}>Add to queue</button>
+    <div className="side">
+      <div className="avatar"></div>
+      <div className="nav">
+        <div className="navItem on">Dashboard</div>
+        <div className="navItem">Bugs</div>
+        <div className="navItem">History</div>
+        <div className="navItem">Add a bug</div>
       </div>
-      {prev && <div style={{marginTop:10}}>
-        {prev.summary.map((l,i)=><div key={i} className={i===0?'':'warn'} style={{fontWeight:i===0?700:400}}>{l}</div>)}
-        <div className="dim" style={{marginTop:4,fontSize:12}}>Preview only — "Add to queue" appends to the working queue (append-only; existing items kept). QUEUE.md is written only on launch.</div>
-      </div>}
+      <div className="navFoot"><div className="navItem">Settings</div></div>
     </div>
   );
 }
 
-function Queue({ plan, onChange }) {
+function StatusCard({ view, elapsedSec, spent }) {
+  const c = STATE[view.k];
+  const el = fmtElapsed(elapsedSec);
+  const meta = view.k === 'idle' ? '' : [el, money(spent)].filter(Boolean).join(' · ');
+  return (
+    <div className="status" style={{background:c.bg}}>
+      <div className="stTop">
+        <div className="stLabel" style={{color:c.label}}>{c.name}</div>
+        {meta && <div className="stMeta" style={{color:c.label}}>{meta}</div>}
+      </div>
+      <div className="stHead">{view.head}</div>
+      <div className="stSub" style={{color:c.sub}}>{view.sub}</div>
+    </div>
+  );
+}
+
+function Tile({ num, suffix, label }) {
+  return (
+    <div className="tile">
+      <div className="tileNum">{num}{suffix && <span className="tileSuf">{suffix}</span>}</div>
+      <div className="tileLab">{label}</div>
+    </div>
+  );
+}
+
+function Feed({ tail }) {
+  const lines = (tail || []).filter(l => l && l.trim());
+  const newest = lines.slice(-40).reverse();          // newest first, so the live line never needs scrolling
+  return (
+    <div className="panel feed">
+      <div className="secLabel">Live feed</div>
+      <div className="feedBody">
+        {newest.length === 0 ? <div className="feedLine">(nothing yet)</div>
+          : newest.map((l,i)=><div key={i} className={'feedLine' + (i===0 ? ' now' : '')}>{l}</div>)}
+      </div>
+    </div>
+  );
+}
+
+function LaunchCard({ pf, running, budget, stopExists, refresh, undo }) {
+  const [armed, setArmed] = useState(false);
+  const [stopArmed, setStopArmed] = useState(false);
+  const [showUndo, setShowUndo] = useState(false);
+  useEffect(()=>{ if(!armed) return; const t=setTimeout(()=>setArmed(false),5000); return ()=>clearTimeout(t); },[armed]);
+  useEffect(()=>{ if(!stopArmed) return; const t=setTimeout(()=>setStopArmed(false),5000); return ()=>clearTimeout(t); },[stopArmed]);
+
+  const queued = (pf && pf.queued) || 0;
+  const failed = pf ? pf.checks.filter(c=>!c.ok) : [];
+  const ready = !!(pf && pf.allOk) && !running;
+  let text;
+  if (!pf) text = 'Checking…';
+  else if (running) text = 'A run is already going';
+  else if (failed.length) text = BLOCKER[failed[0].name] || ('Blocked: ' + failed[0].name);
+  else text = armed ? 'Press again to start' : `Start on ${plural(queued,'bug')}`;
+
+  const click = () => {
+    if (!ready) return;
+    if (!armed) { setArmed(true); return; }
+    post('/api/launch', {}).then(d=>{ setArmed(false); if(d.error) alert('launch refused: '+d.error); refresh(); });
+  };
+  const toggleStop = () => {
+    if (stopExists) { fetch('/api/stop',{method:'DELETE'}).then(refresh); return; }
+    if (!stopArmed) { setStopArmed(true); return; }
+    post('/api/stop', {}).then(()=>{ setStopArmed(false); refresh(); });
+  };
+  return (
+    <div className="launch">
+      <button className="launchBtn" onClick={click} disabled={!ready}
+        title={failed.length ? failed.map(c=>`${c.name}: ${c.detail}`).join(' · ') : ''}>{text}</button>
+      <div className="capNote">Stop at ${budget}</div>
+      <div className="miniRow">
+        <button className={'mini' + (stopArmed ? ' armed' : '')} onClick={toggleStop}>
+          {stopExists ? 'Clear the stop flag' : stopArmed ? 'Press again to stop' : 'Stop after this item'}
+        </button>
+        {undo && <button className="mini" onClick={()=>setShowUndo(v=>!v)}>{showUndo ? 'Hide undo' : 'Undo last run'}</button>}
+      </div>
+      {showUndo && undo && <div className="undoBox">{undo.split('\n').filter(l=>l&&!l.startsWith('#')).join('\n')}</div>}
+    </div>
+  );
+}
+
+function QueuePanel({ plan, onChange }) {
   const items = (plan && plan.items) || [];
-  const c = (plan && plan.counts) || {};
-  // "Add to queue" is append-only, so re-parsing a plan STACKS entries — without this the working queue
-  // only ever grows (it had reached 47: 41 prose blocks + 7 duplicates). Two clicks, because it discards.
   const [armed, setArmed] = useState(false);
   useEffect(()=>{ if(!armed) return; const t=setTimeout(()=>setArmed(false),5000); return ()=>clearTimeout(t); },[armed]);
   const clear = () => {
     if (!armed) { setArmed(true); return; }
-    fetch('/api/plan', { method:'DELETE' }).then(r=>r.json()).then(()=>{ setArmed(false); onChange&&onChange(); }).catch(()=>setArmed(false));
+    fetch('/api/plan',{method:'DELETE'}).then(()=>{ setArmed(false); onChange&&onChange(); }).catch(()=>setArmed(false));
   };
+  const pillFor = st => st === 'running' ? 'NOW' : st === 'done' ? 'DONE'
+    : st === 'blocked' ? 'HOLD' : st === 'skipped' ? 'SKIP' : 'WAIT';
   return (
     <div className="panel">
       <div style={{display:'flex',alignItems:'baseline',gap:10}}>
-        <h2 style={{flex:1}}>Queue — {c.done||0} done · {c.running||0} running · {c.queued||0} queued · {c.blocked||0} blocked{c.skipped?` · ${c.skipped} skipped`:''}</h2>
-        <button onClick={clear} disabled={!items.length} style={Object.assign({padding:'3px 10px',fontSize:12},armed?{borderColor:'#f85149',background:'#3d1b1b'}:{})}>
-          {armed ? `Confirm — discard all ${items.length}` : 'Clear'}
-        </button>
+        <div style={{flex:1}}>
+          <div className="secLabel">What the agent will work on</div>
+          <div className="secSub">In order. Each one has to be reproducible before it gets touched.</div>
+        </div>
+        {items.length > 0 &&
+          <button className="mini" style={{color: armed ? '#8C2E2D' : 'var(--t-5)'}} onClick={clear}>
+            {armed ? `Discard all ${items.length}` : 'Clear'}
+          </button>}
       </div>
-      {items.length===0 ? <div className="dim">Empty — paste a plan above.</div> :
-        items.map((it,i)=>{ const s = ST[it.status]||ST.queued; return (
-          <div key={i} className={'row'+(it.status==='done'?' done':'')}>
-            <span className="dot" style={{background:s.fill?s.color:'transparent', border:'2px solid '+s.color}}></span>
-            <span className="pair">{it.pair||'—'}</span>
-            <span>{it.desc}{it.status==='blocked'&&it.missing&&it.missing.length? <span className="warn" style={{fontSize:12}}> — missing {it.missing.join(', ')}{it.missing.length===3?' (a pair alone is not a repro)':''}</span>:null}</span>
-            <span className="pill" style={{background:s.pill, color:s.color}}>{it.status}</span>
-          </div>
-        );})}
+      <div style={{marginTop:10}}>
+        {items.length === 0
+          ? <div className="qEmpty">Nothing here yet — add a bug below.</div>
+          : items.map((it,i)=>{ const p = pillFor(it.status); return (
+              <div className="qRow" key={i}>
+                <span className="pill" style={PILL[p] || PILL.WAIT}>{p}</span>
+                <span className={'qTitle' + (it.status==='running' ? ' on' : '')}>{it.desc}</span>
+                <span className="qPair">{it.pair || '—'}</span>
+              </div>
+            ); })}
+      </div>
     </div>
   );
 }
 
-function Launch({ pf, plan, refresh }) {
-  const [armed, setArmed] = useState(false);
-  useEffect(()=>{ if(!armed) return; const t=setTimeout(()=>setArmed(false),5000); return ()=>clearTimeout(t); },[armed]);
-  const queued = (pf && pf.queued) || 0;
-  const budget = (pf && pf.budgetUsd) || 0;
-  const ready = pf && pf.allOk;
-  const failed = pf ? pf.checks.filter(c=>!c.ok) : [];
-  const click = () => {
-    if (!ready) return;
-    if (!armed) { setArmed(true); return; }
-    post('/api/launch', {}).then(d=>{ setArmed(false); if(d.error){ alert('launch refused: '+d.error); } refresh(); });
-  };
-  return (
-    <div className="panel">
-      <h2>Launch</h2>
-      <div className="pf">
-        {pf ? pf.checks.map((c,i)=><span key={i} className={c.ok?'':'no'} title={c.detail}>{c.name}</span>) : <span className="dim">checking…</span>}
-      </div>
-      {!ready && failed.length>0 && <div className="bad" style={{marginBottom:8,fontSize:13}}>blocked by: {failed.map(c=>`${c.name} (${c.detail})`).join(' · ')}</div>}
-      <button onClick={click} disabled={!ready}
-        style={armed?{borderColor:'#f85149',background:'#3d1b1b'}:{}}>
-        {armed ? `Confirm — ${queued} item${queued===1?'':'s'}, $${budget} cap` : `Launch ${queued} queued`}
-      </button>
-      <span className="dim" style={{marginLeft:10,fontSize:12}}>blocked &amp; parked items are excluded{armed?' · click again within 5s to start':' · two clicks to start'}</span>
+function AddBug({ open, setOpen, onQueue }) {
+  const [text, setText] = useState('');
+  const [res, setRes] = useState(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(()=>{ setRes(null); setSaved(false); }, [text]);
+  const check = () => post('/api/parse', { text }).then(d => { setRes(d); setSaved(false); });
+  const add = () => post('/api/plan', { text }).then(d => { setRes(d); setSaved(true); onQueue(); });
+
+  if (!open) return (
+    <div className="panel strip" onClick={()=>setOpen(true)}>
+      <span className="stripTitle">Add a bug</span>
+      <span className="stripHint">not queued yet</span>
     </div>
   );
-}
 
-function Summary({ summary }) {
-  const s = summary || {};
-  const d = s.decisions || [];
+  const items = (res && res.items) || [];
+  const ready = items.filter(i => i.status !== 'blocked').length;
+  const needs = items.filter(i => i.status === 'blocked').length;
   return (
     <div className="panel">
-      <h2>Summary</h2>
-      <div className="cards">
-        <div className="card"><div className="k">Committed</div><div className="v good">{s.committed||0}</div></div>
-        <div className="card"><div className="k">Reverted</div><div className="v bad">{s.reverted||0}</div></div>
-        <div className="card"><div className="k">Defects</div><div className="v">{s.defectsBefore==null?'—':`${s.defectsBefore}→${s.defectsAfter}`}</div></div>
-        <div className="card"><div className="k">Spent</div><div className="v">${(s.spent||0).toFixed(2)}</div></div>
+      <div className="addHead">
+        <h3>Add a bug</h3>
+        <span style={{marginLeft:'auto',fontSize:11,color:'var(--t-5)'}}>{saved ? 'added to the list' : 'not queued yet'}</span>
       </div>
+      <div className="addInstr">One bug per line. Each needs four things: which two tickers, what it shows now,
+        what it should show, and how you know.</div>
+      <textarea rows={6} value={text} onChange={e=>setText(e.target.value)}
+        placeholder={"AAPL/VZ combined gross margin shows 36.2%, should be 46.6% per §16"} />
+      <div className="addBtns">
+        <button className="btn ghost" onClick={check} disabled={!text.trim()}>Check it</button>
+        <button className="btn solid" onClick={add} disabled={!text.trim()}>Add to the list</button>
+        {res && <span className="addTally">{ready} ready · {needs} need{needs===1?'s':''} more detail</span>}
+      </div>
+      {res && items.length > 0 &&
+        <div className="addResults">
+          {items.map((it,i)=>{
+            const bad = it.status === 'blocked';
+            const why = (it.missing || []).map(m => NEEDS[m] || m).join(', ');
+            return (
+              <div className="resRow" key={i}>
+                <span className="pill" style={bad ? {background:'#3A3A3A',color:'#8A8A8A'} : {background:'#4B7A1F',color:'#0D0D0D'}}>
+                  {bad ? 'NEEDS' : 'READY'}
+                </span>
+                <span className="resText">
+                  {it.desc || it.pair || 'untitled'}
+                  {bad && <span className="resWhy"> — {why}</span>}
+                </span>
+              </div>
+            );
+          })}
+        </div>}
       <div style={{marginTop:12}}>
-        {d.length===0 ? <div className="dim">No decisions yet — populates from calibration.csv + the branch commit log during a run.</div> :
-          d.map((x,i)=> x.status==='DONE'||x.status==='RESOLVED_UPSTREAM'
-            ? <div key={i} className="mono good">commit {x.sha} · {x.item}</div>
-            : <div key={i} className="mono bad" style={{fontWeight:700}}>revert {x.item}{x.defects?` · defects ${x.defects}`:''} [{x.status}]</div>)}
+        <button className="mini" style={{color:'var(--t-5)'}} onClick={()=>setOpen(false)}>Close</button>
       </div>
     </div>
   );
 }
 
-function LiveView({ live, summary, budget, undo }) {
-  const st = (live && live.status) || {};
-  const rs = st.runState;                          // RUNNING/COMPLETED/DIED/STALE, or undefined when no run
-  const hasRun = !!(live && live.loopLogExists);
-  const active = rs === 'RUNNING';
-  const DOT = { RUNNING:'#58a6ff', STALE:'#e3b341', DIED:'#f85149', COMPLETED:'#3fb950' }[rs] || '#8b949e';
-  const pairsDone = (live && live.pairsDone) || 0, pairsTotal = (live && live.pairsTotal) || 50;
-  const frac = pairsTotal ? Math.min(1, pairsDone/pairsTotal) : 0;
-  const elapsedM = live && live.elapsedSec!=null ? Math.floor(live.elapsedSec/60) : null;
-  const spent = (summary && summary.spent) || 0;
-  const committed = (summary && summary.committed) || 0, reverted = (summary && summary.reverted) || 0;
-  const outcome = hasRun ? (committed + ' committed' + (reverted ? `, ${reverted} reverted` : '')) : 'no runs yet';
-  const hair = { marginTop:8, borderTop:'1px solid var(--border)', paddingTop:8 };
-  const sum = { cursor:'pointer', fontSize:12, display:'flex', alignItems:'center' };
+function PastRuns({ runs }) {
+  const list = runs || [];
   return (
-    <div className="panel">
-      {/* 1 — status line */}
-      <div style={{display:'flex',alignItems:'center',gap:8}}>
-        <span style={{width:9,height:9,borderRadius:'50%',background:DOT,display:'inline-block'}}></span>
-        <span style={{letterSpacing:'.14em',fontSize:12,fontWeight:700}}>{hasRun ? (rs||'RUNNING') : 'IDLE'}</span>
-        <span className="mono dim" style={{marginLeft:'auto',fontSize:11}}>{st.runId||''}</span>
+    <div className="panel runs">
+      <div className="secLabel">Past runs</div>
+      <div style={{marginTop:8}}>
+        {list.length === 0 ? <div className="qEmpty">No runs yet.</div>
+          : list.slice(0,6).map((r,i)=>(
+            <div className="runRow" key={i}>
+              <span className="runDate">{r.date}</span>
+              <span className="runDesc">{r.desc}</span>
+              <span className="runCost">{money(r.cost)}</span>
+            </div>
+          ))}
       </div>
-      {/* 2 — headline. Time-remaining needs MAX_ITER, which the runner does not report, and its loop.log
-             projected-end assumes the full queue (wrong for a capped run) — so during a run we show the
-             KNOWN honest number (elapsed) and leave projected-end/remaining as "—", never a number to trust
-             wrongly. Idle shows the last outcome. */}
-      <div style={{display:'flex',alignItems:'baseline',marginTop:10}}>
-        {active
-          ? <><span style={{fontSize:40,fontWeight:300,lineHeight:1}}>{elapsedM!=null?elapsedM:'—'}</span><span style={{fontSize:15,marginLeft:8,color:'var(--dim)'}}>min elapsed</span></>
-          : <span style={{fontSize:32,fontWeight:300,lineHeight:1}}>{outcome}</span>}
-        {active && <span style={{marginLeft:'auto',fontSize:13,color:'var(--dim)'}}>ends ~<b>—</b> <span title="runner does not report MAX_ITER, so remaining time is unknown">(no ETA)</span></span>}
-      </div>
-      {(rs==='STALE'||rs==='DIED') && <div className="bad" style={{marginTop:8,fontSize:13}}>
-        {rs==='DIED' ? 'process not alive, no completion line — this run is DEAD.' : 'no log write in >30 min — capture may be hung.'} last line: <span className="mono">{st.lastLogLine||'—'}</span></div>}
-      {/* 3 — progress bar (hidden when not active) */}
-      {active && <div style={{height:4,background:'#010409',borderRadius:2,marginTop:12,overflow:'hidden'}}>
-        <div style={{height:'100%',width:(frac*100)+'%',background:'var(--accent)',transition:'width .5s'}}></div></div>}
-      {/* 4 — phase line */}
-      {active && <div style={{display:'flex',fontSize:12,color:'var(--dim)',marginTop:6}}>
-        <span>{st.phase||'Working'} · {pairsDone} of {pairsTotal} pairs</span>
-        <span style={{marginLeft:'auto'}}>{elapsedM!=null?elapsedM+'m elapsed':''}</span></div>}
-      {/* 5 — stat row. During an active run the runner does not report MAX_ITER or BUDGET, so item-count
-             and cap are "—" (a wrong "$25"/"of 5" is worse than none — you'd trust it). Spent is real
-             (from calibration.csv). Dashboard defaults are used only when idle. */}
-      {active && <div style={{display:'flex',gap:22,fontSize:12,marginTop:12}}>
-        <span><span className="dim">Item </span><b>{st.iter||'—'} of —</b></span>
-        <span><span className="dim">Spent </span><b>${spent.toFixed(2)}</b></span>
-        <span><span className="dim">Cap </span><b>$—</b></span>
-      </div>}
-      {/* 6 — disclosures (collapsed by default) */}
-      <details style={hair}>
-        <summary style={sum}>Log<span className="mono dim" style={{marginLeft:'auto',maxWidth:'62%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{st.lastLogLine||''}</span></summary>
-        <div className="log mono" style={{marginTop:8}}>{((live&&live.logTail)||[]).join('\n')||'(empty)'}</div>
-      </details>
-      <details style={hair}>
-        <summary style={sum}>Undo command<span className="dim" style={{marginLeft:'auto'}}>discards this run</span></summary>
-        <code className="copy mono" style={{marginTop:8,display:'block'}}>{undo?undo.split('\n').filter(l=>l&&!l.startsWith('#')).join('\n'):'(no run)'}</code>
-      </details>
     </div>
   );
 }
@@ -221,22 +428,56 @@ function LiveView({ live, summary, budget, undo }) {
 function App() {
   const [s, setS] = useState(null);
   const [pf, setPf] = useState(null);
+  const [addOpen, setAddOpen] = useState(false);
   const refreshState = useCallback(()=>fetch('/api/state').then(r=>r.json()).then(setS).catch(()=>{}),[]);
   const refreshPf = useCallback(()=>fetch('/api/preflight').then(r=>r.json()).then(setPf).catch(()=>{}),[]);
-  useEffect(()=>{ refreshState(); refreshPf(); const a=setInterval(refreshState,2000); const b=setInterval(refreshPf,15000); return ()=>{clearInterval(a);clearInterval(b);}; },[refreshState,refreshPf]);
-  if (!s) return <div className="wrap">loading…</div>;
+  useEffect(()=>{ refreshState(); refreshPf();
+    const a=setInterval(refreshState,2000), b=setInterval(refreshPf,15000);
+    return ()=>{clearInterval(a);clearInterval(b);}; },[refreshState,refreshPf]);
+  const refresh = useCallback(()=>{ refreshState(); refreshPf(); },[refreshState,refreshPf]);
+
+  if (!s) return <div className="page"><Sidebar /><div className="main"><div className="panel">loading…</div></div></div>;
+
+  const view = derive(s, pf);
+  const live = s.live || {}, sum = s.summary || {}, st = live.status || {};
+  const running = ['sweeping','fixing','comparing'].includes(view.k);
+  const before = sum.defectsBefore, after = sum.defectsAfter;
+  const foundNum = before == null ? '—' : String(before);
+  const foundSuf = before == null ? '' : '→ ' + (running || after == null ? '?' : String(after));
+  const waiting = pf ? pf.queued : 0;
+
   return (
-    <div className="wrap">
-      <div className="top">
-        <h1>Sweep Dashboard</h1>
-        <span className="dim">run <b>{s.latestRun||'—'}</b></span>
-        <span style={{marginLeft:'auto'}} className="dim">{s.stopExists?<b className="warn">STOP set</b>:''}</span>
+    <div className="page">
+      <Sidebar />
+      <div className="main">
+        <div className="head">
+          <h1>Bug Fixer</h1>
+          <span className="tag">Fix the deck, don't babysit the script.</span>
+        </div>
+
+        <div className="row">
+          <StatusCard view={view} elapsedSec={live.elapsedSec} spent={sum.spent} />
+          <div className="tiles">
+            <Tile num={foundNum} suffix={foundSuf} label="Problems found" />
+            {running
+              ? <Tile num={st.iter || 1} suffix={'of ' + waiting} label="Bug being worked" />
+              : <Tile num={waiting} label="Bugs queued" />}
+          </div>
+        </div>
+
+        <div className="row">
+          <Feed tail={live.logTail} />
+          <LaunchCard pf={pf} running={running} budget={s.budgetUsd} stopExists={s.stopExists}
+            refresh={refresh} undo={s.undo} />
+        </div>
+
+        <QueuePanel plan={s.plan} onChange={refresh} />
+
+        <div className={'row top' + (addOpen ? ' col' : '')}>
+          <AddBug open={addOpen} setOpen={setAddOpen} onQueue={refresh} />
+          <PastRuns runs={s.pastRuns} />
+        </div>
       </div>
-      <PastePlan onQueue={()=>{refreshState();refreshPf();}} />
-      <Queue plan={s.plan} onChange={()=>{refreshState();refreshPf();}} />
-      <Launch pf={pf} plan={s.plan} refresh={()=>{refreshState();refreshPf();}} />
-      <Summary summary={s.summary} />
-      <LiveView live={s.live} summary={s.summary} budget={s.budgetUsd} undo={s.undo} />
     </div>
   );
 }

@@ -126,22 +126,50 @@ function queueOpen() {
 const HEADING_STATUS = { 'next up': 'queued', 'blocked on you': 'blocked', parked: 'skipped', done: 'done' };
 const PAIR_SLASH = /\b([A-Z][A-Z0-9.]{0,5})\s*\/\s*([A-Z][A-Z0-9.]{0,5})\b/;         // AAPL/VZ, AAPL / VZ
 const PAIR_VS = /\b([A-Z][A-Z0-9.]{0,5})\s+vs\.?\s+([A-Z][A-Z0-9.]{0,5})\b/;          // AAPL vs VZ
+// The one way to read a pair out of arbitrary text, always NORMALISED to "A/B" so plan pairs and runtime
+// pairs (loop.log item titles, calibration item text) compare as equals. planWithRuntime() used to call a
+// PAIR_ANY that was never defined, so /api/state threw ReferenceError and the whole dashboard 500'd.
+function pairIn(text) {
+  const s = String(text || '');
+  const m = s.match(PAIR_SLASH) || s.match(PAIR_VS);
+  return m ? m[1].toUpperCase() + '/' + m[2].toUpperCase() : null;
+}
 // A source must be a CONCRETE reference (§, a filing, EDGAR, an exhibit id) — never bare prose like "exhibit".
 const SOURCE_REF = /(§\s*\S+|\b(?:10|20|8)-?[KQF]\b|\bEDGAR\b|\bexhibit\s+[A-Z0-9]+\b|\bschedule\s+\S+|\bfootnote\s+\S+)/i;
-function extractFields(text) {
+// Negated contractions, expanded on a WORKING COPY before the markers run. "shouldn't be CNBC" otherwise
+// misses the `should\s+` marker entirely and the item blocks for a missing expectation; expanding to
+// "should not be CNBC" leaves the negation INSIDE the extracted value ("not be CNBC"), which is the whole
+// point — a marker must never swallow the "not" and hand back the opposite of what was written.
+const CONTRACTIONS = [
+  [/\bshould\s*n['’]?t\b/gi, 'should not'], [/\bmust\s*n['’]?t\b/gi, 'must not'],
+  [/\bwo\s*n['’]?t\b/gi, 'will not'],       [/\bca\s*n['’]?t\b/gi, 'can not'],
+  [/\bdoes\s*n['’]?t\b/gi, 'does not'],     [/\bdo\s*n['’]?t\b/gi, 'do not'],
+  [/\bis\s*n['’]?t\b/gi, 'is not'],         [/\bare\s*n['’]?t\b/gi, 'are not'],
+  [/\bshouldnt\b/gi, 'should not'],         [/\bmustnt\b/gi, 'must not'],
+];
+function extractFields(rawText) {
   const it = { pair: null, observed: null, expected: null, source: null };
-  const pm = text.match(PAIR_SLASH) || text.match(PAIR_VS);
-  if (pm) it.pair = pm[1].toUpperCase() + '/' + pm[2].toUpperCase();
+  let text = String(rawText || '');
+  CONTRACTIONS.forEach(([re, to]) => { text = text.replace(re, to); });
+  it.pair = pairIn(text);
   // free-form observed/expected via keyword markers; per/from/etc. are boundaries only (they end a value)
   const marks = [];
   const add = (re, field) => { const r = new RegExp(re, 'gi'); let m; while ((m = r.exec(text))) marks.push({ field, start: m.index, end: m.index + m[0].length }); };
   add('\\b(?:shows?|got|observed|currently|reads?|actual(?:ly)?|is\\s+now)\\b\\s*[:=-]?\\s*', 'observed');
-  add('\\b(?:should\\s+(?:be|show|read)?|wants?|wanted|expected|expect|correct(?:ly)?|must\\s+be|ought\\s+to(?:\\s+be)?)\\b\\s*[:=-]?\\s*', 'expected');
+  // An expectation may be BEHAVIORAL ("should not appear", "must not be null") rather than a number. The
+  // modal is the marker; the optional verb after it never includes not/never, so a negated expectation
+  // keeps its negation in the value. Nothing here requires a digit — "no warning at all" is a valid want.
+  add('\\b(?:should|shall|must|ought\\s+to|needs?\\s+to|is\\s+supposed\\s+to|expects?|expected|wants?|wanted|correct(?:ly)?)\\b\\s*(?:be|being|show|shows|read|reads|render|renders|display|displays|appear|appears|says?|contain|contains)?\\b\\s*[:=-]?\\s*', 'expected');
   add('\\b(?:per|from|see|source|because|since|as\\s+of|cited?|citation)\\b', 'boundary');
   marks.sort((a, b) => a.start - b.start);
-  for (let i = 0; i < marks.length; i++) {
-    const h = marks[i]; if (h.field === 'boundary') continue;
-    const next = i + 1 < marks.length ? marks[i + 1].start : text.length;
+  // Drop marks that begin INSIDE the text another marker already consumed. "should show 46.6%" matches the
+  // expected modal AND the observed `shows?` at the same "show" — without this the expected value is sliced
+  // to nothing and the item blocks. Only nested (spurious) marks are removed; real ones never overlap.
+  const kept = [];
+  for (const m of marks) { if (kept.length && m.start < kept[kept.length - 1].end) continue; kept.push(m); }
+  for (let i = 0; i < kept.length; i++) {
+    const h = kept[i]; if (h.field === 'boundary') continue;
+    const next = i + 1 < kept.length ? kept[i + 1].start : text.length;
     const val = text.slice(h.end, next).replace(/[,;\n].*$/s, '').replace(/[.\s]+$/, '').trim();
     if (val && !it[h.field]) it[h.field] = val;
   }
@@ -153,19 +181,34 @@ function extractFields(text) {
   const s = lab(/\b(?:source|why)\s*:\s*([^\n]+)/i); if (s) it.source = s;
   return it;
 }
+// A BLANK LINE separates items. Inside one block, a bullet only starts a NEW item when it names a ticker
+// pair and the block already has one — so a bug written across two bullets
+//     - AAPL/VZ combined gross margin shows 36.2%
+//     - should be 46.6%, per §16
+// is ONE item (it used to split into two, and both halves blocked for missing fields — the most confusing
+// thing in the build). The pair test is what keeps the documented QUEUE format safe: two adjacent
+// "- [ ] KO/NSRGY …" / "- [ ] AAPL/VZ …" items each name their own pair, so they still split. Merging them
+// would silently swallow the second bug, which is worse than the split it fixes.
 function splitBlocks(text) {
   const lines = String(text || '').split('\n');
   const starter = /^\s*(-\s*\[[ xX]\]\s+|[-*•]\s+|\d+[.)]\s+)/;   // "- [ ]", "-", "*", "1.", "2)"
   const heading = /^\s*##\s+(.+?)\s*$/;
   const out = []; let cur = null; let headStatus = 'queued';
   const flush = () => { if (cur && cur.lines.join(' ').trim()) out.push(cur); cur = null; };
+  const open = (raw) => { cur = { lines: [raw], headStatus, checked: /^\s*-\s*\[[xX]\]/.test(raw), pair: pairIn(raw) }; };
   for (const raw of lines) {
     let hm;
     if ((hm = raw.match(heading)) && !starter.test(raw)) { flush(); const h = hm[1].trim().toLowerCase(); if (HEADING_STATUS[h]) headStatus = HEADING_STATUS[h]; continue; }
     if (/^\s*$/.test(raw)) { flush(); continue; }                 // blank line ends a block
-    if (starter.test(raw)) { flush(); cur = { lines: [raw], headStatus, checked: /^\s*-\s*\[[xX]\]/.test(raw) }; continue; }
-    if (!cur) cur = { lines: [raw], headStatus, checked: false };
-    else cur.lines.push(raw);
+    if (starter.test(raw)) {
+      const p = pairIn(raw);
+      if (!cur) { open(raw); continue; }
+      if (p && cur.pair && p !== cur.pair) { flush(); open(raw); continue; }   // a different bug — split
+      cur.lines.push(raw); if (!cur.pair) cur.pair = p;                        // a continuation bullet
+      continue;
+    }
+    if (!cur) open(raw);
+    else { cur.lines.push(raw); if (!cur.pair) cur.pair = pairIn(raw); }
   }
   flush();
   return out.map(b => ({ text: b.lines.join('\n').trim(), headStatus: b.headStatus, checked: b.checked }));
@@ -207,8 +250,8 @@ function planWithRuntime() {
   const items = readPlan();
   const log = parseLoopLog(latestRun());
   const cal = parseCalibration();
-  const curPair = (log.status.currentItem && !log.status.complete) ? (log.status.currentItem.match(PAIR_ANY) || [])[1] : null;
-  const donePairs = new Set(cal.rows.filter(r => r.status === 'DONE').map(r => (String(r.item).match(PAIR_ANY) || [])[1]).filter(Boolean));
+  const curPair = (log.status.currentItem && !log.status.complete) ? pairIn(log.status.currentItem) : null;
+  const donePairs = new Set(cal.rows.filter(r => r.status === 'DONE').map(r => pairIn(r.item)).filter(Boolean));
   items.forEach(i => { if (i.status === 'queued') { if (curPair && i.pair === curPair) i.status = 'running'; else if (i.pair && donePairs.has(i.pair)) i.status = 'done'; } });
   return { items, counts: countStatuses(items) };
 }
@@ -280,18 +323,175 @@ function buildSummary() {
   return { committed, reverted, defectsBefore: baseline, defectsAfter, spent: cal.costTotal, decisions };
 }
 
+// past runs, for the history strip — one line per run_id in calibration.csv, newest first. Read-only
+// aggregation of rows that already exist; it decides nothing.
+const MON = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function buildPastRuns() {
+  const rows = parseCalibration().rows;
+  const by = new Map();
+  rows.forEach(r => {
+    const id = r.run_id; if (!id) return;
+    if (!by.has(id)) by.set(id, { runId: id, tried: 0, kept: 0, cost: 0 });
+    const g = by.get(id);
+    g.tried++;
+    if (r.status === 'DONE' || r.status === 'RESOLVED_UPSTREAM') g.kept++;
+    g.cost += parseFloat(r.cost_usd) || 0;
+  });
+  return [...by.values()].reverse().map(g => {
+    const m = String(g.runId).match(/^(\d{4})(\d{2})(\d{2})/);
+    return {
+      runId: g.runId,
+      date: m ? `${MON[+m[2] - 1] || m[2]} ${+m[3]}` : g.runId,
+      desc: g.kept ? `Fixed ${g.kept} of ${g.tried}` : `Nothing kept of ${g.tried}`,
+      cost: g.cost,
+    };
+  });
+}
+
+// ── PART 3: one honest status, from the live loop.log + run.pid + calibration ─────────────────────────
+// Eight states, plain English, no internal tokens. RUNNING → Sweeping(before)/Fixing/Sweeping(after)/
+// Comparing, read off the phase markers the runner now emits. Terminal → Finished / Finished-but-unverified
+// / Stopped, from what the run actually produced. A kept change that moved NO number is never 'Finished' —
+// it is 'Finished-but-unverified' (the false-DONE that hid on run 150838). Idle when nothing has ever run.
+function livePhase(tail) {                        // last phase marker in the tail wins; deck resets per capture
+  let phase = 'agent', deck = null, iter = null, item = null, agentMin = null;
+  for (const line of tail || []) {
+    let m;
+    if ((m = line.match(/capture START · (\S+)/)))            { phase = /after/i.test(m[1]) ? 'after' : 'before'; deck = null; }
+    else if ((m = line.match(/capture (?:\S+ )?(\d+)\/(\d+)/))) { deck = { i: +m[1], n: +m[2] }; }
+    else if (/capture END|baseline:\s*\d+\s*defects/.test(line)) { phase = 'agent'; deck = null; }
+    else if ((m = line.match(/── iter (\d+) · (.+)$/)))       { iter = +m[1]; item = m[2]; phase = 'agent'; agentMin = null; }
+    else if ((m = line.match(/claude -p working… (\d+)m/)))   { phase = 'agent'; agentMin = +m[1]; }
+    else if (/GATE:/.test(line))                              { phase = 'comparing'; }
+  }
+  return { phase, deck, iter, item, agentMin };
+}
+function notesExist() { try { return fs.readdirSync(ap('diagnosis')).some(f => /\.(md|json|err)$/.test(f)); } catch { return false; } }
+function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
+  const s = log.status;
+  const rows = cal.rows.filter(r => r.run_id === runId);
+  const last = rows[rows.length - 1];
+  const iterN = last ? last.iter : (s.iter || 1);
+  const pair = last ? pairIn(last.item) : (s.currentItem ? pairIn(s.currentItem) : null);
+  const itemLabel = `item ${iterN}${pair ? ` (${pair})` : ''}`;
+  const status = last ? last.status : null;
+  const REASON = {
+    NO_VERDICT: `Claude Code ran out of turns on ${itemLabel}`,
+    TIMEOUT: `Claude Code hit the time limit on ${itemLabel}`,
+    BUILD_BROKEN: `the change stopped the app from starting`,
+    REGRESSION: `the change made the deck worse and was thrown away`,
+    FAILED: `Claude Code could not fix ${itemLabel}`,
+    NO_CHANGE: `Claude Code changed nothing on ${itemLabel}`,
+    INDETERMINATE: `the check could not run (rate-limited)`,
+  };
+  const why = forcedWhy || REASON[status] || `the run stopped on ${itemLabel}`;
+  const reverted = !s.complete || ['NO_VERDICT', 'TIMEOUT', 'BUILD_BROKEN', 'REGRESSION', 'NO_CHANGE', 'FAILED', 'INDETERMINATE'].includes(status);
+  return {
+    key: 'stopped', color: 'red', headline: 'Stopped',
+    plain: `Stopped — ${why}.`,
+    lines: [
+      `Your code: ${reverted ? 'untouched (reverted to where it was)' : 'committed — check the deck'}.`,
+      `${itemLabel.charAt(0).toUpperCase() + itemLabel.slice(1)}: still open.`,
+      notesExist() ? 'Notes: agent/diagnosis/.' : null,
+    ].filter(Boolean),
+    elapsedSec: elapsed, spentUsd: spent,
+  };
+}
+function resolveStatus() {
+  const runId = latestRun();
+  const log = parseLoopLog(runId);
+  const s = log.status;
+  const cal = parseCalibration();
+  const waiting = queueOpen().open;
+  const spent = cal.costTotal;
+  const elapsed = log.elapsedSec;
+  const idle = { key: 'idle', color: 'gray', headline: 'Idle', plain: 'Nothing is running',
+    lines: [waiting ? `${waiting} bug${waiting !== 1 ? 's' : ''} waiting.` : 'No bugs queued.'], elapsedSec: null, spentUsd: spent };
+  if (!runId) return idle;
+  if (s.runState === 'RUNNING' || s.runState === 'STALE') {
+    const ph = livePhase(log.tail);
+    const deckStr = ph.deck ? `deck ${ph.deck.i} of ${ph.deck.n}` : 'the decks';
+    const base = { elapsedSec: elapsed, spentUsd: spent };
+    if (ph.phase === 'before') return { ...base, key: 'sweeping', color: 'blue', headline: 'Sweeping', plain: `Checking ${deckStr}`, lines: ['Taking a picture of every deck before anything changes'] };
+    if (ph.phase === 'after')  return { ...base, key: 'sweeping', color: 'blue', headline: 'Sweeping', plain: `Re-checking ${deckStr}`, lines: ['Taking the after picture to compare against'] };
+    if (ph.phase === 'comparing') return { ...base, key: 'comparing', color: 'purple', headline: 'Comparing', plain: 'Grading before vs after', lines: ['Deciding whether to keep the change or throw it away'] };
+    return { ...base, key: 'fixing', color: 'amber', headline: 'Fixing', plain: `Claude Code is on item ${ph.iter || 1}${ph.agentMin ? ` · ${ph.agentMin}m so far` : ''}`, lines: ['Writing code. No progress shown until it finishes.'] };
+  }
+  if (s.runState === 'DIED' && !s.complete)
+    return stoppedState(runId, log, cal, 'the run was killed before it finished', elapsed, spent);
+  if (s.complete) {
+    const rows = cal.rows.filter(r => r.run_id === runId);
+    const fixed = rows.filter(r => r.status === 'DONE' && Number(r.defects_after) < Number(r.defects_before)).length;
+    const unverified = rows.filter(r => r.status === 'UNVERIFIED').length;
+    const before = s.baselineDefects != null ? s.baselineDefects : null;
+    const lastRow = rows[rows.length - 1];
+    const after = lastRow ? Number(lastRow.defects_after) : before;
+    if (fixed >= 1) return { key: 'finished', color: 'green', headline: 'Finished',
+      plain: `Fixed ${fixed} bug${fixed !== 1 ? 's' : ''}, ${waiting} still waiting`,
+      lines: (before != null && after != null) ? [`Defects: ${before} → ${after}`] : [],
+      warn: 'Check the deck yourself before trusting this.', elapsedSec: elapsed, spentUsd: spent };
+    if (unverified >= 1) return { key: 'unverified', color: 'amber', headline: 'Finished — not verified',
+      plain: 'A change was kept, but nothing measurably improved',
+      lines: ['The item stays open. A kept change that moved no number is not a fix.',
+        (before != null && after != null) ? `Defects: ${before} → ${after} (unchanged)` : ''].filter(Boolean),
+      warn: 'Check the deck yourself before trusting this.', elapsedSec: elapsed, spentUsd: spent };
+    return stoppedState(runId, log, cal, null, elapsed, spent);
+  }
+  return idle;
+}
+
+// ── PART 6: the work queue in plain English — from QUEUE.md (never plan.json); NO internal tokens ──────
+const INTERNAL_TOKENS = /\bN\+1\b|\b2N\b|revert_signal|GATE[-\s]?2?[AB]?(?:\.\d+)?|cross-?Surface|null-?in-?Sum|RESOLVED_UPSTREAM|\b[ABD]-[A-Za-z]+\b|GP\/COGS[-\w]*|debt-dropped|ebitdaMsg|BUG\d+|by-root|per-pair/gi;
+function stripInternal(s) {
+  return String(s || '').replace(/\((?:[^()]*root[^()]*)\)/gi, '').replace(INTERNAL_TOKENS, '')
+    .replace(/\(\s*\)/g, '').replace(/\s{2,}/g, ' ').replace(/[\s·—-]+$/, '').trim();
+}
+function plainTitle(rawTitle) {
+  let t = rawTitle.replace(/\*\*/g, '').replace(/^\d+[.)]\s*/, '');
+  t = t.split(/\s+—\s+/)[0].replace(/\([^)]*\)/g, '');
+  return stripInternal(t) || rawTitle.replace(/\*\*/g, '').trim();
+}
+function queueItems() {
+  const txt = readSafe(ap('QUEUE.md')); if (!txt) return [];
+  const open = (txt.split(/^## Open/m)[1] || '').split(/^## /m)[0];
+  const L = open.split('\n');
+  const cal = parseCalibration();
+  const log = parseLoopLog(latestRun());
+  const curPair = (log.status.currentItem && !log.status.complete) ? pairIn(log.status.currentItem) : null;
+  const items = [];
+  for (let i = 0; i < L.length; i++) {
+    const mk = L[i].match(/^-\s*\[([ xX~])\]\s*(.+)$/); if (!mk) continue;
+    const body = [L[i]]; for (let j = i + 1; j < L.length; j++) { if (/^-\s*\[/.test(L[j]) || /^## /.test(L[j])) break; body.push(L[j]); }
+    const blk = body.join('\n');
+    const checked = mk[1].toLowerCase() === 'x';
+    const pair = pairIn(blk);
+    let state = checked ? 'done' : (mk[1] === '~' ? 'parked' : 'waiting');
+    if (!checked && pair && curPair && pair === curPair) state = 'working';
+    let caveat = null;
+    if (/downstream of item|if item \d|once .* (?:is )?(?:done|populated|fixed)|stops being null|upstream of/i.test(blk))
+      caveat = 'may fix itself once an earlier item is done';
+    if (pair && cal.rows.some(r => ['NO_VERDICT', 'UNVERIFIED', 'TIMEOUT', 'FAILED'].includes(r.status) && pairIn(r.item) === pair))
+      caveat = "reopened — last attempt wasn't verified";
+    items.push({ title: plainTitle(mk[2]), pair, state, caveat });
+  }
+  return items;
+}
+
 function buildState() {
   const runId = latestRun();
   const log = parseLoopLog(runId);
-  const budget = parseFloat(process.env.BUDGET_USD || '25');
+  const budget = parseFloat(process.env.BUDGET_USD || '10');
   return {
     agentDir: AGENT_DIR, repoRoot: REPO_ROOT, now: Date.now(),
     latestRun: runId, hasAnyRun: !!runId,
+    status: resolveStatus(),                       // Part 3 — the one honest state at the top
+    queue: queueItems(),                           // Part 6 — plain-English work queue from QUEUE.md
     live: { status: log.status, loopLogExists: log.exists, logTail: log.tail, elapsedSec: log.elapsedSec,
       pairsDone: (() => { try { return fs.readdirSync('/tmp/sweep_v2_raw').filter(f => f.endsWith('.json')).length; } catch { return 0; } })(),
       pairsTotal: (() => { try { return fs.readdirSync(path.join(REPO_ROOT, 'docs/sweep-v2/captures')).filter(f => f.endsWith('.json')).length || 50; } catch { return 50; } })() },
     plan: planWithRuntime(),
     summary: buildSummary(),
+    pastRuns: buildPastRuns(),
     budgetUsd: budget, budgetIsDefault: !process.env.BUDGET_USD,
     stopExists: !!statSafe(ap('STOP')),
     undo: runId ? readSafe(ap('runs', runId, 'UNDO.txt')) : null,
