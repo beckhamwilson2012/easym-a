@@ -68,6 +68,7 @@ function parseLoopLog(runId, tailLines = 60) {
   const startMs = (rst && rst.birthtimeMs) || (st && st.birthtimeMs) || null;
   const endMs = s.complete && st ? st.mtimeMs : Date.now();
   if (startMs) out.elapsedSec = Math.max(0, Math.round((endMs - startMs) / 1000));
+  s.startedAtMs = startMs;   // Bug 4: expose the run start so the client can tick elapsed locally, per second
   // liveness: never infer "running" from the log alone — a killed run would look healthy forever. Check
   // the actual process via run.pid (kill -0). States: COMPLETED | RUNNING | STALE (>30m no write) | DIED.
   s.lastLogLine = [...all].reverse().find(l => l.trim()) || '';
@@ -84,6 +85,18 @@ function parseLoopLog(runId, tailLines = 60) {
   if (s.complete) s.runState = 'COMPLETED';
   else if (pid != null) s.runState = alive ? (s.lastWriteAgeSec > 1800 ? 'STALE' : 'RUNNING') : 'DIED';
   else s.runState = (s.lastWriteAgeSec != null && s.lastWriteAgeSec > 120) ? 'DIED' : 'RUNNING'; // pre-run.pid runs: infer from log staleness
+  // Bug 3: is a capture running RIGHT NOW? The last "capture START · <label>" with no "capture END" after it.
+  // Robust to tail truncation — a 50-deck capture pushes its START line out of the 60-line tail, so livePhase
+  // (tail-only) can't see it and defaults to the agent phase → wrongly "Fixing" during baseline capture.
+  { let cs = -1, ce = -1, clabel = null;
+    for (let i = all.length - 1; i >= 0; i--) {
+      if (cs < 0) { const m2 = all[i].match(/capture START · (\S+)/); if (m2) { cs = i; clabel = m2[1]; } }
+      if (ce < 0 && /capture END/.test(all[i])) ce = i;
+      if (cs >= 0 && ce >= 0) break;
+    }
+    s.captureInProgress = !s.complete && cs >= 0 && cs > ce;
+    s.captureLabel = s.captureInProgress ? clabel : null;
+  }
   // phase (so a 25-min silent capture isn't mistaken for a hang) + time remaining from the projected end
   if (s.complete) s.phase = 'Complete';
   else if (!/baseline:\s*\d+\s*defects/.test(txt)) s.phase = 'Baseline capture';
@@ -365,7 +378,7 @@ function livePhase(tail) {                        // last phase marker in the ta
   for (const line of tail || []) {
     let m;
     if ((m = line.match(/capture START · (\S+)/)))            { phase = /after/i.test(m[1]) ? 'after' : 'before'; deck = null; }
-    else if ((m = line.match(/capture (?:\S+ )?(\d+)\/(\d+)/))) { deck = { i: +m[1], n: +m[2] }; }
+    else if ((m = line.match(/(\d+)\/(\d+)\s+[A-Z]/))) { deck = { i: +m[1], n: +m[2] }; }   // per-deck line "<phase> 12/50 PAIR — …" (never had "capture", so the old regex matched nothing)
     else if (/capture END|baseline:\s*\d+\s*defects/.test(line)) { phase = 'agent'; deck = null; }
     else if ((m = line.match(/── iter (\d+) · (.+)$/)))       { iter = +m[1]; item = m[2]; phase = 'agent'; agentMin = null; }
     else if ((m = line.match(/claude -p working… (\d+)m/)))   { phase = 'agent'; agentMin = +m[1]; }
@@ -439,11 +452,23 @@ function resolveStatus() {
   if (s.runState === 'RUNNING' || s.runState === 'STALE') {
     const ph = livePhase(log.tail);
     const deckStr = ph.deck ? `deck ${ph.deck.i} of ${ph.deck.n}` : 'the decks';
-    const base = { elapsedSec: elapsed, spentUsd: spent };
-    if (ph.phase === 'before') return { ...base, key: 'sweeping', color: 'blue', headline: 'Sweeping', plain: `Checking ${deckStr}`, lines: ['Taking a picture of every deck before anything changes'] };
-    if (ph.phase === 'after')  return { ...base, key: 'sweeping', color: 'blue', headline: 'Sweeping', plain: `Re-checking ${deckStr}`, lines: ['Taking the after picture to compare against'] };
+    // Bug 1: carry the projected end (endClock/minLeft) to the card. Bug 4: carry startedAtMs so the client
+    // ticks elapsed locally rather than only on each 2s poll.
+    const base = { elapsedSec: elapsed, spentUsd: spent, endClock: s.endClock, minLeft: s.minLeft, startedAtMs: s.startedAtMs };
+    // Bug 3: a capture running now → Sweeping. Decided from the whole-log flag, not livePhase's tail scan, so a
+    // 50-deck baseline (whose "capture START" scrolled out of the tail) is Sweeping, not Fixing.
+    if (s.captureInProgress) {
+      const after = /after/i.test(s.captureLabel || '');
+      return { ...base, key: 'sweeping', color: 'blue', headline: 'Sweeping',
+        plain: `${after ? 'Re-checking' : 'Checking'} ${deckStr}`,
+        lines: [after ? 'Taking the after picture to compare against' : 'Taking a picture of every deck before anything changes'] };
+    }
     if (ph.phase === 'comparing') return { ...base, key: 'comparing', color: 'purple', headline: 'Comparing', plain: 'Grading before vs after', lines: ['Deciding whether to keep the change or throw it away'] };
-    return { ...base, key: 'fixing', color: 'amber', headline: 'Fixing', plain: `Claude Code is on item ${ph.iter || 1}${ph.agentMin ? ` · ${ph.agentMin}m so far` : ''}`, lines: ['Writing code. No progress shown until it finishes.'] };
+    // Bug 2: name the QUEUE item by the number in its title ("2. Target debt…"), NOT the iteration counter.
+    const itemNo = (ph.item && (ph.item.match(/^\**\s*(\d+)[.)]/) || [])[1])
+      || (s.currentItem && (s.currentItem.match(/^\**\s*(\d+)[.)]/) || [])[1]) || null;
+    const label = itemNo ? `item ${itemNo}` : `item ${ph.iter || 1}`;
+    return { ...base, key: 'fixing', color: 'amber', headline: 'Fixing', plain: `Claude Code is on ${label}${ph.agentMin ? ` · ${ph.agentMin}m so far` : ''}`, lines: ['Writing code. No progress shown until it finishes.'] };
   }
   if (s.runState === 'DIED' && !s.complete)
     return stoppedState(runId, log, cal, 'the run was killed before it finished', elapsed, spent);

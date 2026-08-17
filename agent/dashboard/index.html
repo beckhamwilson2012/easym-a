@@ -176,14 +176,19 @@ const fmtElapsed = sec => {
    idle). The client no longer re-derives it from live.status — it renders
    s.status as-is, so Finished-but-unverified can never be flattened into
    Finished here. Pure presentation; decides nothing. */
-function statusView(s) {
+function statusView(s, now) {
   const st = (s && s.status) || {};
+  const running = ['sweeping', 'fixing', 'comparing'].includes(st.key);
+  // Bug 4: tick elapsed locally from the run's start (dashboard is localhost → same clock, no skew), so it
+  // keeps moving every second even if /api/state polling stalls (e.g. a backgrounded tab throttling setInterval).
+  const elapsedSec = (running && st.startedAtMs) ? Math.max(0, Math.round(((now || Date.now()) - st.startedAtMs) / 1000)) : st.elapsedSec;
   return {
     k: st.key || 'idle',
     head: st.plain || st.headline || 'Idle',
     lines: [...(st.lines || []), ...(st.warn ? [st.warn] : [])],
-    elapsedSec: st.elapsedSec,
+    elapsedSec,
     spent: st.spentUsd,
+    endClock: st.endClock,       // Bug 1: projected end, shown next to elapsed
   };
 }
 
@@ -320,7 +325,8 @@ function HistoryPage({ runs }) { return <PastRuns runs={runs} />; }
 function StatusCard({ view }) {
   const c = STATE[view.k] || STATE.idle;
   const el = fmtElapsed(view.elapsedSec);
-  const meta = view.k === 'idle' ? '' : [el, view.spent != null ? money(view.spent) : null].filter(Boolean).join(' · ');
+  const ends = view.endClock ? `ends ~${view.endClock}` : null;   // Bug 1: projected end next to elapsed
+  const meta = view.k === 'idle' ? '' : [el, ends, view.spent != null ? money(view.spent) : null].filter(Boolean).join(' · ');
   return (
     <div className="status" style={{background:c.bg}}>
       <div className="stTop">
@@ -510,6 +516,10 @@ function App() {
   const [pf, setPf] = useState(null);
   const [addOpen, setAddOpen] = useState(false);
   const [page, setPage] = useState('dashboard');
+  const [now, setNow] = useState(Date.now());
+  // Bug 4: a local 1s ticker so elapsed advances every second on its own — independent of the 2s /api/state
+  // poll (which a backgrounded tab throttles). statusView derives elapsed from the run's start + this `now`.
+  useEffect(()=>{ const t=setInterval(()=>setNow(Date.now()),1000); return ()=>clearInterval(t); },[]);
   const refreshState = useCallback(()=>fetch('/api/state').then(r=>r.json()).then(setS).catch(()=>{}),[]);
   const refreshPf = useCallback(()=>fetch('/api/preflight').then(r=>r.json()).then(setPf).catch(()=>{}),[]);
   useEffect(()=>{ refreshState(); refreshPf();
@@ -519,7 +529,7 @@ function App() {
 
   if (!s) return <div className="page"><Sidebar page={page} setPage={setPage} /><div className="main"><div className="panel">loading…</div></div></div>;
 
-  const view = statusView(s);
+  const view = statusView(s, now);
   const live = s.live || {}, sum = s.summary || {}, st = live.status || {};
   const running = ['sweeping','fixing','comparing'].includes(view.k);
   const before = sum.defectsBefore, after = sum.defectsAfter;
