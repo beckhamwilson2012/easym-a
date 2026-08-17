@@ -12,6 +12,27 @@ you are not the judge of your own work.
 - Never end with an offer to do more ("let me know if…"). There is no one to tell.
 - Complete the item, **or** mark it `BLOCKED` with a written reason, and stop.
 
+## SHELL SHAPES THAT WORK (read this before your first command)
+
+You run headless, so an unlisted Bash command is **denied outright** — there is no human to approve it and
+no second chance. Run `20260816-165919` lost 13 of its 61 turns (~17% of the budget) rediscovering these by
+trial and error. Use these shapes and spend the turns on the item instead.
+
+- **Scratch scripts: `Write` the file, then `node` it.** A `cat > f <<'EOF'` heredoc is a shell write and is
+  **denied**. The `Write` tool is auto-accepted, so `Write /tmp/probe.js` then `node /tmp/probe.js` always
+  works and costs the same two turns.
+- **Grep your own scratch output with `Read`, not `grep`.** Pattern search is confined to the project
+  directory, so `grep … /tmp/out.md` is blocked even though `cat`/`Read` on it is fine.
+- **Prefer `cd "<root>" && <cmd>` over `git -C <path> <cmd>`.** `cd` is allowed and compound commands are
+  checked per segment, so `cd … && git log` works; `git -C … log` does **not** match the `git log` rule.
+- **Probing the running app:** `node -e "fetch('http://localhost:3001/api/…')…"` always works. Plain
+  `curl http://localhost:3001/…` works; common flag combinations are allowed but not every ordering is, so
+  reach for `node -e` when a curl invocation is denied rather than retrying variants.
+- **Env-prefixed commands are allowed only in front of `node`** (`RAW_DIR=… node …`, `PORT=… node …`).
+  Nothing else takes an env prefix — a blanket rule would bypass the deny list.
+- **Never retry a denied command more than once.** A denial is a *rule* mismatch, not a transient error;
+  the identical command will be denied identically. Change the shape or change the approach.
+
 ## SCOPE
 
 - Work **exactly one item**: the one named at the END of this prompt. Nothing else.
@@ -39,6 +60,24 @@ expected value in the item. Print the live value.
 - **Live value matches NEITHER** observed nor expected → **STOP.** Mark `BLOCKED(repro-drifted)` and
   record all three values. Something changed that is not accounted for, and diagnosing against a stale
   premise wastes the iteration and risks a wrong fix.
+- **The item's defect class SPLIT — part of it resolved, part did not** → **STOP.** Mark
+  `PARTIAL(<what resolved> / <what remains>)`, record the live values for both halves in
+  `agent/diagnosis/<slug>.md`, and make **NO** code change. This is the case where the item names a class
+  (e.g. "GP/COGS-crossSurface", "32 pairs") but the repro line names only one member of it, and the two
+  now disagree: the named metric is fixed while a sibling metric on the same pair, or the same metric on
+  other pairs, still fails. Report the split; do **not** start diagnosing the remaining half.
+
+**PARTIAL is a REPORT, not a failure.** It does not count against you and does not trip the run's
+consecutive-fail breaker. The runner writes your `<what remains>` text back into the queue item and leaves
+it OPEN, so the next iteration starts from what you established instead of rediscovering it.
+
+**Why this exit exists — keep this in the file.** Item 1's class was `GP/COGS-crossSurface` while its repro
+line named only gross profit. Commit `bcda19a` fixed the gross-profit half and not the cost-of-revenue
+half. On run `20260816-165919` the agent proved GP correct at turn 39 — six minutes in — then had no legal
+way to report "half of this is done", kept investigating for another 22 turns, and died on the turn cap at
+61 with no verdict at all. Run `20260816-165953` repeated it exactly. Two nights and ~$9 produced zero
+verdicts because this exit did not exist. **A true, partial answer reported early beats a complete answer
+that never ships.**
 
 **RATIONALE (keep this in the file so it survives future edits):** the queue is ordered upstream-first,
 and items 1→4 and 2→3 share root causes. **Cascading resolution is the design goal, not a missing bug.**
@@ -98,8 +137,12 @@ ITEM:         <the item you worked>
 ROOT CAUSE:   <one sentence> + Pattern <A | B | C | New>
 FILES:        <every file changed>
 TARGET FIXED: <pair> — <old value> -> <new value> (source authority: <where the correct value comes from>)
-STATUS:       DONE | RESOLVED_UPSTREAM(cause) | BLOCKED(reason) | FAILED(reason)
+STATUS:       DONE | RESOLVED_UPSTREAM(cause) | PARTIAL(<resolved> / <remains>) | BLOCKED(reason) | FAILED(reason)
 ```
+
+The parenthetical is **parsed**, not decorative. For `PARTIAL` it is the only description of what is left,
+and it is written verbatim into the queue item — so state the remaining half in terms the next iteration
+can act on (metric, pair, surface), not "the rest of the class".
 
 **Do NOT self-report verification as passed.** The runner re-runs both graders independently. Your
 assessment of your own work is not evidence and is **not read** — only the block above and your committed

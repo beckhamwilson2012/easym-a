@@ -83,7 +83,104 @@ if it recurs, halting the whole run on noise. The three-state grade
 (**CLEAN / REGRESSION / INDETERMINATE**) is what keeps the gate honest under real
 network conditions.
 
-## 6. Known blind spots
+## 6. Terminal statuses — what the runner records and what each one costs
+
+Every iteration ends in exactly one status, written to `calibration.csv` and to the
+iteration's commit message. Only some of them are *grades*; the rest describe why
+no grade was possible. The distinction that matters is the third column: the
+**consecutive-fail breaker** halts the run after 3, so anything that increments it
+must represent a wrong premise, never a correct report or a network event.
+
+| Status | Item | Breaker | Meaning |
+|---|---|---|---|
+| `DONE` | closed `[x]` | resets | Defects fell, no `revert_signal`, agent returned a verdict. Committed. |
+| `PARTIAL` | stays OPEN | **untouched** | The defect class split — part resolved, part did not. See §7. |
+| `BLOCKED` | parked `[~]` | untouched | The item could not be worked at all. See §8. |
+| `NO_VERDICT` | stays OPEN | **+1** | The agent's result is untrustworthy. See §9. |
+| `UNVERIFIED` | stays OPEN | +1 | Agent edited files, defect count did not move. Committed but unmeasured. |
+| `NO_CHANGE` | stays OPEN | +1 | Agent returned a verdict but left no edits and moved nothing. |
+| `REGRESSION` | parked `[~]` | +1 | Defects rose, or a pair became not-analyzable for a non-environmental reason. Reverted. |
+| `INDETERMINATE` | parked `[~]` | untouched | Capture failed environmentally. See §5. |
+| `TIMEOUT` | parked `[~]` | +1 | Agent exceeded `ITER_TIMEOUT` wall-clock and was tree-killed. |
+| `BUILD_BROKEN` | stays OPEN | +1 | The bundle would not build, or the server would not boot, on the agent's edits. Reverted **and halts the run**. |
+| `FAILED` | parked `[~]` | +1 | Two attempts exhausted, or a confirmed replay. |
+
+## 7. PARTIAL — the defect class split
+
+An item names a **class** (item 1: "GP/COGS-crossSurface", 32 pairs) but its repro
+line names a single **member** of that class (gross profit on GOOGL/AMZN). These can
+diverge: a prior commit fixes the named member while a sibling metric, or the same
+metric on other pairs, still fails. STEP 0's original three exits — reproduces /
+`RESOLVED_UPSTREAM` / `BLOCKED(repro-drifted)` — had no vocabulary for that state.
+
+The cost of the omission was measured. On run `20260816-165919` the agent established
+at turn 39, six minutes in, that gross profit rendered correctly (`§7 = $393,810 /
+50.8%`) because `bcda19a` had fixed the server-side leg. With no legal way to report
+a half-resolved class it kept investigating, discovered the cost-of-revenue half at
+turn 62, opened a third line of inquiry, and hit the 60-turn cap at 61 — `is_error:
+true`, `subtype: error_max_turns`, no status token, `NO_VERDICT`. Run `20260816-165953`
+reproduced it exactly. Two nights, ~$9, and 122 turns produced no verdict on an item
+whose true answer was available in six minutes.
+
+Harness behavior on `PARTIAL`:
+
+  1. The agent's `PARTIAL(<resolved> / <remains>)` detail is parsed literally and
+     written back into the queue item as a note. The item stays **OPEN**.
+  2. The after-capture is **skipped** — the agent's contract is report-and-stop, so
+     there is no claimed fix to measure, and a ~88-minute capture would grade nothing.
+  3. Any edits the agent left are **reverted unmeasured**, and the fact is logged.
+     Keeping unmeasured edits would poison the next iteration's before-snapshot.
+  4. `PARTIAL` does **NOT** increment the consecutive-fail counter.
+
+Rationale — keep this in the file: **a true partial answer reported early beats a
+complete answer that never ships.** The breaker exists to stop a wrong premise. An
+agent correctly reporting that half its item is already fixed is the single most
+useful thing it can do with the budget, and penalizing it produces exactly the
+behavior that burned runs 165919 and 165953 — an agent that keeps digging because
+stopping is not expressible.
+
+## 8. BLOCKED — the item could not be worked
+
+`BLOCKED` is a **park, not a code failure**. It reverts nothing and does not touch the
+consecutive-fail breaker. Three sources:
+
+  - **Pre-agent, no repro pair** — the item names no parseable `pair: A/B`, so nothing
+    can be measured. Caught before any capture or agent time is spent.
+  - **Pre-agent, repro pair not captured** — the pair is missing or not-analyzable in
+    the snapshot the gate would score against. Working it is what let run
+    `20260815-150838` read a no-op as "8→8 clear": the deck carrying the defect was
+    never in the window, so neither grader could see the fix *or* its absence.
+  - **Agent-returned** — `BLOCKED(no-repro)`, `BLOCKED(repro-drifted)`, or another
+    stated reason.
+
+Note the asymmetry: the two pre-agent forms short-circuit the iteration, but an
+agent-returned `BLOCKED` still proceeds to the after-capture and gate. If that agent
+left no edits the gate records `NO_CHANGE`, which **does** increment the breaker — so
+a correctly-reported `BLOCKED` can still cost a strike. This is known and deliberate
+for now: an agent that blocks without a pre-agent reason may simply have given up.
+
+## 9. NO_VERDICT — the agent's result is untrustworthy
+
+Checked **before** the after-capture, so an unusable result never spends a capture.
+`NO_VERDICT` fires when either:
+
+  - the envelope is unreadable, or `is_error: true` (a cut-off, a `max_turns` death, an
+    API error) — regardless of what the agent wrote; or
+  - the result carries no `STATUS:` token from the documented set.
+
+**A non-empty diff is not a verdict.** Run `20260815-150838` returned `is_error: true`
+/ `error_max_turns` with no `.result` at all, yet had made 13 real edits across three
+files; the gate of the day scored it `DONE` and committed `bcda19a` unmeasured. That
+commit is the direct cause of item 1's repro text describing a defect that no longer
+existed, which in turn caused the two `NO_VERDICT` deaths documented in §7.
+
+On `NO_VERDICT` the runner reverts the agent's code, leaves the item **OPEN**,
+increments the breaker, and preserves the envelope to `agent/diagnosis/` and
+`$RUN_DIR/envelope-iterN.json`. It increments the breaker because an untrustworthy
+result is a wrong premise: three in a row means the agent is not completing work and
+the run should stop rather than spend the night.
+
+## 10. Known blind spots
 
 **Neither grader checks whether a number is plausible.** The analyzer matches known
 defect patterns — it answers "does this output look like a shape I was taught to

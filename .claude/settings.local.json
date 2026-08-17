@@ -1,10 +1,65 @@
 {
+  "_comment": [
+    "Sweep-agent allowlist. The agent runs `claude -p --permission-mode acceptEdits`, so Edit/Write are",
+    "auto-accepted but EVERY Bash command must match a rule — there is no human to prompt, so a miss is an",
+    "immediate denial. Run 20260816-165919 lost 13 of 61 turns (~17%) to denials, and NONE of them were",
+    "about a domain: the SEC entries below were never even exercised, because the agent reached EDGAR",
+    "through node scripts using the app's own httpGet. The denials were about SHAPE.",
+    "",
+    "Rules are prefix matches over the command string; a compound command is checked per segment, so",
+    "allowing `cd` is what makes `cd /path && git log` work at all.",
+    "",
+    "DENY still wins over everything here (see .claude/settings.json: git commit/reset/checkout/branch/",
+    "push/tag, rm, npm install, npx). That is why there is no bare `VAR=*` rule: `FOO=1 git commit` does",
+    "not start with `git commit`, so a blanket env-prefix rule would silently punch through the deny list.",
+    "Env-prefix rules are therefore bound to `node`, which is already fully allowed on its own.",
+    "",
+    "Read-only diagnostics only. Nothing here writes to the repo, deploys, or touches .env. Writing a",
+    "scratch script is done with the Write tool (auto-accepted) and then `node file.js` — NOT with a",
+    "`cat > file <<EOF` heredoc, which is a shell write primitive and is deliberately not allowed."
+  ],
   "permissions": {
     "allow": [
       "WebFetch(domain:data.sec.gov)",
       "WebFetch(domain:www.sec.gov)",
       "Bash(curl -s https://data.sec.gov/*)",
-      "Bash(curl -s https://www.sec.gov/*)"
+      "Bash(curl -s https://www.sec.gov/*)",
+
+      "Bash(cd:*)",
+
+      "Bash(lsof:*)",
+      "Bash(ps:*)",
+      "Bash(pgrep:*)",
+      "Bash(stat:*)",
+      "Bash(file:*)",
+      "Bash(basename:*)",
+      "Bash(dirname:*)",
+      "Bash(realpath:*)",
+      "Bash(uniq:*)",
+      "Bash(cut:*)",
+      "Bash(tr:*)",
+      "Bash(diff:*)",
+      "Bash(awk:*)",
+      "Bash(date:*)",
+
+      "Bash(curl -s http://localhost:3001/*)",
+      "Bash(curl -sS http://localhost:3001/*)",
+      "Bash(curl -i http://localhost:3001/*)",
+      "Bash(curl -I http://localhost:3001/*)",
+      "Bash(curl -o /dev/null http://localhost:3001/*)",
+      "Bash(curl -s -m * http://localhost:3001/*)",
+      "Bash(curl -s -o /dev/null -w * http://localhost:3001/*)",
+      "Bash(curl -s -m * -o /dev/null -w * http://localhost:3001/*)",
+
+      "Bash(RAW_DIR=* node:*)",
+      "Bash(FLAGS=* node:*)",
+      "Bash(OUT=* node:*)",
+      "Bash(EXPECTED=* node:*)",
+      "Bash(PORT=* node:*)",
+      "Bash(GAP_MS=* node:*)",
+      "Bash(NODE_PATH=* node:*)",
+      "Bash(NODE_OPTIONS=* node:*)",
+      "Bash(DEBUG=* node:*)"
     ]
   }
 }
