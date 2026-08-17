@@ -429,13 +429,15 @@ decide() {                                     # $1 = plain-English statement (n
   printf '\n- [%s · run %s · iter %s] %s\n' "$(date +%H:%M:%S)" "$RUN_ID" "${CUR_ITER:-?}" "$1" >> "$DECISIONS"
 }
 calib_hdr() { [[ -f "$CALIB" ]] || echo "run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,capture_mode,forced_recapture,agent_is_error,agent_subtype,agent_status_token" > "$CALIB"; }
-finalize() {                                   # $1=status $2=marker (x=done · ~=parked · o=leave OPEN) $3=forced
+finalize() {                                   # $1=status $2=marker (x=done · ~=parked · o=leave OPEN) $3=forced $4=optional commit-body note
   calib_hdr
-  [[ "$2" == "x" || "$2" == "~" ]] && { queue_mark "$2" "$1 run $RUN_ID" || true; }   # "o" ⇒ leave the item OPEN (Parts 2/3: NO_VERDICT/BUILD_BROKEN/UNVERIFIED/NO_CHANGE)
+  [[ "$2" == "x" || "$2" == "~" ]] && { queue_mark "$2" "$1 run $RUN_ID" || true; }   # "o" ⇒ leave the item OPEN (NO_VERDICT/BUILD_BROKEN/UNVERIFIED/NO_CHANGE/PARTIAL_UNVERIFIED)
   printf '%s,%s,"%s",%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n' "$RUN_ID" "$CUR_ITER" "$ITEM_TITLE" "$1" "$WALL" "$TURNS" "$COST" "$DEF_BEFORE" "$DEF_AFTER" "$CAP_MODE" "$3" \
     "${AGENT_IS_ERROR:-ABSENT}" "${AGENT_SUBTYPE:-ABSENT}" "${STATUS_TOKEN:-ABSENT}" >> "$CALIB"
+  local msg="sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER"
+  [[ -n "${4:-}" ]] && msg+=$'\n\n'"$4"
   gitr add -A >/dev/null 2>&1
-  gitr commit -q -m "sweep($RUN_ID) iter $CUR_ITER: $ITEM_TITLE [$1] defects $DEF_BEFORE->$DEF_AFTER" >/dev/null 2>&1 || true
+  gitr commit -q -m "$msg" >/dev/null 2>&1 || true
 }
 
 # ── agent invocation + per-iteration wall-clock timeout ──────────────────────────────────────────────
@@ -620,6 +622,26 @@ while :; do
   # not be written into calibration.csv's agent_status_token column as if it were one.
   if [[ "$VERDICT" == OK\ * ]]; then STATUS_TOKEN="${VERDICT#OK }"; else STATUS_TOKEN=ABSENT; fi
   if [[ "$VERDICT" != OK\ * ]]; then
+    # ── Part 1: turn-cap death WITH work on disk → PARK it, don't delete it. Run 20260816-202617 diagnosed
+    #    item 2, WROTE the fix to server.js, and died at turn 61 while verifying — NO_VERDICT then reverted a
+    #    complete $5 fix to nothing. This narrow exception (error_max_turns AND a non-empty diff) keeps the
+    #    work, labelled UNVERIFIED, instead of deleting it. It makes NO claim the work is good: the item stays
+    #    OPEN, it counts toward the consecutive-fail breaker, and the gate never measured it. An EMPTY diff, or
+    #    ANY other error subtype, still reverts below — this is not a path to committing junk.
+    if [[ "$AGENT_SUBTYPE" == "error_max_turns" ]] && agent_changed; then
+      FILES="$(gitr status --porcelain | sed 's/^...//' | tr '\n' ' ')"
+      # capture the work into $RUN_DIR (gitignored) BEFORE finalize commits, so nothing git does can lose it
+      gitr diff HEAD > "$RUN_DIR/partial-iter$CUR_ITER.diff" 2>/dev/null || true
+      cp "$AGENT_OUT" "$RUN_DIR/envelope-iter$CUR_ITER.json" 2>/dev/null || true
+      SID="$(json_field "$AGENT_OUT" session_id)"
+      TRANSCRIPT="$(find "$HOME/.claude/projects" -maxdepth 2 -name "$SID.jsonl" 2>/dev/null | head -1)"
+      [[ -n "$TRANSCRIPT" ]] && tail -c 60000 "$TRANSCRIPT" > "$RUN_DIR/partial-iter$CUR_ITER.transcript-tail.jsonl" 2>/dev/null || true
+      log "PARTIAL_UNVERIFIED: hit the turn cap with work on disk → KEEPING it (files: $FILES), NOT reverting"
+      decide "iter $CUR_ITER PARTIAL_UNVERIFIED: agent hit the turn cap (error_max_turns) with a non-empty diff; committed UNVERIFIED (cut off mid-fix, never measured), item left OPEN. Files: $FILES"
+      finalize PARTIAL_UNVERIFIED "o" "$FORCED" "Cut off at the turn cap (error_max_turns) with work on disk — committed UNVERIFIED. The runner never measured this; the queue item stays OPEN. Files touched: $FILES. Diff + transcript tail saved under $RUN_DIR."
+      PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+      log "PARTIAL_UNVERIFIED · consecutive fail = $CONSEC_FAIL"; continue
+    fi
     log "NO_VERDICT (${VERDICT#NO_VERDICT }) — untrustworthy agent result; revert, leave item OPEN, save envelope to diagnosis/"
     # Part 3: the envelope lands in TWO places on purpose.
     #   $AGENT_DIR/diagnosis — the durable, committed record; survives the revert below via revert_to's
