@@ -22,7 +22,7 @@ import { SectionRelativeContribution } from './sections/SectionRelativeContribut
 import { SectionAnalystConsensus } from './sections/SectionAnalystConsensus';
 import { SectionSources }          from './sections/SectionSources';
 import { SectionDataVerificationA, SectionDataVerificationB } from './sections/SectionDataVerification';
-import { DECK_ORDER, exhibitLabelOf } from './deckRegistry';
+import { DECK_ORDER, exhibitLabelOf, setActiveSections } from './deckRegistry';
 
 // Order: §10 Trading Profile dropped; old §12 Football Field + §14 Valuation Matrix were merged into one
 // Valuation Summary (Exhibit N), which has since been REMOVED — the app-built DCF and sector-median
@@ -53,13 +53,26 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
   const [exporting, setExporting]     = useState(false);
   const hiddenRef = useRef(null);
 
+  // ── Phase 8 — private-mode section suppression ──────────────────────────────────────────────────────
+  // When the deal has no market data (a private company), drop the market-data exhibits and RENUMBER: the
+  // suppressed set is Equity Performance + stock-price distribution (equity), Analyst Consensus (analyst),
+  // and the share-price-based Exchange Ratio Analysis (exchangeratio). setActiveSections recomputes every
+  // exhibit letter / page number / prose cross-ref over the visible set (closes the stale-"Exhibit I" bug).
+  // Public decks: hasMarketData !== false → nothing suppressed, byte-identical to before.
+  const SUPPRESS_PRIVATE = new Set(['equity', 'analyst', 'exchangeratio']);
+  const hasMarketData = deal ? deal.hasMarketData !== false : true;
+  const activeSections = hasMarketData ? SECTIONS : SECTIONS.filter(s => !SUPPRESS_PRIVATE.has(s.id));
+  const activePdfSections = activeSections.filter(s => s.showInPdf);
+  const activePageNumMap = Object.fromEntries(activePdfSections.map((s, i) => [s.id, i + 1]));
+  setActiveSections(activePdfSections.map(s => s.id));   // renumber labels over the visible set (synchronous, before children render)
+
   // Keyboard navigation — arrow right from Dashboard goes directly to Title (index 1)
   useEffect(() => {
     const handler = (e) => {
       if (e.key === 'ArrowRight') {
         setActiveIndex(i => {
           if (i === 0) return 1; // Dashboard → Title
-          return Math.min(i + 1, SECTIONS.length - 1);
+          return Math.min(i + 1, activeSections.length - 1);
         });
       }
       if (e.key === 'ArrowLeft') {
@@ -79,8 +92,8 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
       const pageW = 612;
       const pageH = 792;
 
-      for (let i = 0; i < PDF_SECTIONS.length; i++) {
-        const node = hiddenRef.current.querySelector(`[data-section-id="${PDF_SECTIONS[i].id}"]`);
+      for (let i = 0; i < activePdfSections.length; i++) {
+        const node = hiddenRef.current.querySelector(`[data-section-id="${activePdfSections[i].id}"]`);
         if (!node) continue;
         // scale 1.5 (≈918px/letter-page — plenty for the data tables) + JPEG q0.85 keeps text crisp while
         // cutting file size ~20× vs. PNG@2. The white deck background compresses cleanly with no visible loss.
@@ -107,9 +120,9 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
     }
   }, [exporting, target]);
 
-  const activeSection = SECTIONS[activeIndex];
+  const activeSection = activeSections[Math.min(activeIndex, activeSections.length - 1)];
   const ActiveComponent = activeSection.Component;
-  const activePdfPageNum = PAGE_NUM_MAP[activeSection.id] ?? null;
+  const activePdfPageNum = activePageNumMap[activeSection.id] ?? null;
   const isDash = activeSection.id === 'dashboard';
 
   // Option-B on-screen enlargement: the VISIBLE PageFrame slide is scaled up ~1.15× for readability. The
@@ -149,7 +162,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
         {/* Left sidebar — vertical section rail. Reuses the SAME SECTIONS + activeIndex + setActiveIndex the
             old DeckTabBar used (no parallel nav logic). Vertical stacking removes the horizontal overflow. */}
         <nav style={{ width: 232, flexShrink: 0, background: '#fff', borderRight: '1px solid #E5E7EB', overflowY: 'auto', paddingTop: 4 }}>
-          {SECTIONS.map((section, i) => {
+          {activeSections.map((section, i) => {
             const isActive = i === activeIndex;
             return (
               <button
@@ -214,15 +227,15 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
               ← Previous
             </button>
             <span style={{ display: 'flex', alignItems: 'center', fontSize: 12, color: '#6B7280' }}>
-              {activeIndex + 1} / {SECTIONS.length}
+              {activeIndex + 1} / {activeSections.length}
             </span>
             <button
-              onClick={() => setActiveIndex(i => Math.min(i + 1, SECTIONS.length - 1))}
-              disabled={activeIndex === SECTIONS.length - 1}
+              onClick={() => setActiveIndex(i => Math.min(i + 1, activeSections.length - 1))}
+              disabled={activeIndex === activeSections.length - 1}
               style={{
                 padding: '8px 20px', borderRadius: 6, border: '1px solid #D1D5DB',
-                background: '#fff', color: activeIndex === SECTIONS.length - 1 ? '#D1D5DB' : '#374151',
-                cursor: activeIndex === SECTIONS.length - 1 ? 'default' : 'pointer', fontSize: 13, fontWeight: 500,
+                background: '#fff', color: activeIndex === activeSections.length - 1 ? '#D1D5DB' : '#374151',
+                cursor: activeIndex === activeSections.length - 1 ? 'default' : 'pointer', fontSize: 13, fontWeight: 500,
               }}
             >
               Next →
@@ -237,7 +250,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
         style={{ position: 'absolute', left: -10000, top: 0, pointerEvents: 'none', zIndex: -1 }}
         aria-hidden="true"
       >
-        {PDF_SECTIONS.map((section, i) => (
+        {activePdfSections.map((section, i) => (
           <div key={section.id} data-section-id={section.id} style={{ marginBottom: 4 }}>
             <section.Component {...sectionProps} pageNum={i + 1} exhibitLabel={exhibitLabelOf(section.id)} />
           </div>

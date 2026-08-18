@@ -924,6 +924,9 @@ function App() {
 
   const buildDealForDeck = () => ({
     offerPrice: inputs.offerPricePerShare, cashPercent: inputs.cashPercent,
+    // Phase 8 — false when either company is private (no market data) → DeckShell suppresses the
+    // market-data exhibits and renumbers. Public/public deals keep hasMarketData true (unchanged).
+    hasMarketData: results ? (results.hasMarketDataA !== false && results.hasMarketDataB !== false) : true,
     // When the price the premium is struck against was a LIVE quote, carry its fetch timestamp so the
     // football-field footnote can cite "live market price as of [date]" (explains run-to-run drift).
     offerPriceAsOf: priceStatusB.asOf ? priceStatusB.asOf.toISOString() : null,

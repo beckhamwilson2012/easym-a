@@ -32,22 +32,33 @@ export const DECK_ORDER = [
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
 
 // Walk the PDF sections in order: assign exhibit letters, appendix romans, and 1-based page numbers.
-const LABEL_MAP = {};
-const PAGE_MAP = {};
-(() => {
+function computeMaps(order) {
+  const LABEL = {}, PAGE = {};
   let ex = 0, ap = 0, pg = 0;
-  for (const s of DECK_ORDER) {
+  for (const s of order) {
     if (!s.showInPdf) continue;
-    PAGE_MAP[s.id] = ++pg;
-    if (s.kind === 'exhibit') LABEL_MAP[s.id] = `Exhibit ${String.fromCharCode(65 + ex++)}`;
-    else if (s.kind === 'appendix') LABEL_MAP[s.id] = `Appendix ${ROMAN[ap++]}`;
+    PAGE[s.id] = ++pg;
+    if (s.kind === 'exhibit') LABEL[s.id] = `Exhibit ${String.fromCharCode(65 + ex++)}`;
+    else if (s.kind === 'appendix') LABEL[s.id] = `Appendix ${ROMAN[ap++]}`;
     // 'title' → no exhibit/appendix label
   }
-})();
+  return { LABEL, PAGE };
+}
+
+// Active maps are RECOMPUTABLE so §8 private-mode suppression renumbers every exhibit letter, appendix
+// roman, page number AND prose cross-ref together — the "hardcoded Exhibit I goes stale when a section is
+// removed" class of bug. Default = the full deck. DeckShell calls setActiveSections(visibleIds) at the top
+// of its render (before any exhibitLabelOf/pageNumOf runs this frame) whenever the deck is suppressed.
+let _maps = computeMaps(DECK_ORDER);
+export function setActiveSections(keepIds) {
+  const keep = new Set(keepIds);
+  _maps = computeMaps(DECK_ORDER.filter(s => keep.has(s.id)));
+}
+export function resetActiveSections() { _maps = computeMaps(DECK_ORDER); }
 
 // "Exhibit A" | "Appendix I" | null (title). Used both for a section's OWN label (threaded by DeckShell) and
-// for prose cross-refs to ANOTHER section (imported directly by section files).
-export const exhibitLabelOf = (id) => LABEL_MAP[id] || null;
+// for prose cross-refs to ANOTHER section (imported directly by section files). Reflects the active set.
+export const exhibitLabelOf = (id) => _maps.LABEL[id] || null;
 
 // 1-based PDF page number, or null for non-PDF. Serves the rendered "§N" prose cross-refs.
-export const pageNumOf = (id) => PAGE_MAP[id] || null;
+export const pageNumOf = (id) => _maps.PAGE[id] || null;
