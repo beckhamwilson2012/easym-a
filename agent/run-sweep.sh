@@ -229,6 +229,19 @@ repro_pair() {                                 # $1 = "queue" ($2=QUEUE.md → o
       console.log(of(b.join("\n")));
     }' "$1" "$2"
 }
+# ── declared test (test-first grading, GATE_SPEC §12) ────────────────────────────────────────────────
+# An item may declare ONE test with a `test: agent/tests/<slug>.js` detail line, extracted LITERALLY, the
+# same way repro_pair() extracts `pair:`. No `test:` line ⇒ the item is count-graded exactly as before.
+# The value is a path, so it is captured as one non-space token rather than to end of line: a trailing
+# comment after a path would otherwise become part of the filename.
+item_test() {                                  # $1 = item block text → path, or "" if none declared
+  # Passed through the ENVIRONMENT, not argv: an item block begins with "- [ ] ", and `node -e SCRIPT "-…"`
+  # parses that leading dash as a node OPTION ("node: bad option"). repro_pair() survives the same shape
+  # only because its first argv is the mode string. Caught by the rig, which read every item as untested.
+  ITEM_BLOCK="$1" node -e '
+    const m=String(process.env.ITEM_BLOCK||"").match(/^\s*(?:[-*]\s*)?test\s*:\s*(\S+)\s*$/mi);
+    process.stdout.write(m?m[1]:"");'
+}
 pair_capture_state() {                         # $1 = snapshot dir, $2 = PAIR → "OK" | "MISSING" | "FAILED:<reason>"
   node -e '
     const fs=require("fs"); const [dir,pair]=process.argv.slice(1);
@@ -697,6 +710,114 @@ finalize_abnormal() {
   gitr commit -q -m "sweep($RUN_ID): KILLED during $RUN_PHASE after ${wall}s — ledger row for an abnormal end" >/dev/null 2>&1 || true
 }
 
+# ── TEST-FIRST GRADING (GATE_SPEC §12) ───────────────────────────────────────────────────────────────
+# A count-graded gate can only see a defect the analyzer already has a pattern for. Item 2d — an
+# unresolved company published as $0 revenue instead of null — is invisible to BOTH graders by
+# construction: the deck BUILDS (docs/sweep-v2/captures/BRK.B_PGR.json is ok:true) and a zeroed payload
+# renders as a well-formed deck full of real-looking numbers. Run 20260817-163640 wrote the correct fix,
+# scored 9->9, and was committed UNVERIFIED with the item left OPEN. An honest null can never LOWER a
+# defect count. The declared test is the measurement the count cannot make.
+#
+# THE MECHANISM IS RED-THEN-GREEN, AND THE RUNNER PERFORMS BOTH — never the agent's word for it. A test
+# written after the fix tests the fix, not the defect, so the runner re-runs the declared test against
+# the PRE-AGENT tree (app code from $CHECKPOINT, the test file held constant) and requires it to FAIL
+# there before a pass on the agent's tree counts for anything.
+#
+# WHAT THIS ENFORCES, AND WHAT IT DOES NOT — read this before trusting a DONE_TESTED. It proves the test
+# DISCRIMINATES between the pre-agent and post-agent trees. It does NOT prove the test was written
+# before the fix: an agent that writes the fix first, then a test tuned to that fix's signature, passes
+# red/green too. That residual is closed by reading the test, not by this code.
+TEST_TIMEOUT="${TEST_TIMEOUT:-120}"            # a declared test is a unit check, not a capture
+
+# Exit codes ARE the contract: 0 = PASS · 1 = FAIL · 2 = ERROR (could not run). Anything else — a missing
+# module, a syntax error, a signal, a timeout — is read as ERROR, never as a fail. This is GATE_SPEC §5's
+# rule applied to the test instead of the capture: an unrunnable test must never be able to delete a good
+# fix. Note the asymmetry is deliberate and one-directional.
+run_declared_test() {                          # $1 = label → returns 0 | 1 | 2
+  # Two statements, not one: bash expands EVERY word of a `local` before it assigns any of them, so
+  # `local label="$1" out="…$label…"` reads $label unbound and dies under `set -u`.
+  local label="$1"
+  local out="$RUN_DIR/test-iter$CUR_ITER-$label.log" rc pid waited=0
+  ( cd "$ROOT" && BASE="$BASE_URL" node "$ITEM_TEST" ) > "$out" 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [[ "$waited" -ge "$TEST_TIMEOUT" ]]; then
+      kill_tree "$pid"; wait "$pid" 2>/dev/null
+      log "  test $label: exceeded ${TEST_TIMEOUT}s, killed — reading as ERROR (2), not a fail"
+      return 2
+    fi
+    sleep 1; waited=$(( waited + 1 ))
+  done
+  wait "$pid"; rc=$?
+  sed 's/^/      | /' "$out" 2>/dev/null | head -40
+  case "$rc" in
+    0|1|2) ;;
+    *) log "  test $label: exited $rc (not 0/1/2) — reading as ERROR; an unrunnable test is never a fail"; rc=2 ;;
+  esac
+  return "$rc"
+}
+
+# The RED tree: app code back at $CHECKPOINT, everything under agent/ — the test itself above all — held
+# CONSTANT, so app code is the only thing that differs between the two runs. Holding the test constant is
+# not optional: tools/noop-ab/README.md documents the same trap from the other side (stash the file that
+# defines the inputs and the two runs stop being comparable).
+#
+# File-level backup/restore into $RUN_DIR, NOT `git stash`/`git checkout`: the restore must be exactly
+# reversible without consulting git state, because a half-restored tree would silently hand the
+# after-capture code nobody wrote. $RUN_DIR is gitignored, so `git clean -fd` cannot eat the backup.
+app_paths_of() {                               # AGENT_PATHS minus everything under agent/
+  printf '%s\n' "${AGENT_PATHS:-}" | grep -v '^$' | grep -v '^agent/' || true
+}
+red_swap() {                                   # $1 = in|out · $2 = swap dir; rc 1 = swap failed
+  local dir="$2" p
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    if [[ "$1" == "in" ]]; then
+      mkdir -p "$dir/agent/$(dirname "$p")" 2>/dev/null || true
+      cp "$ROOT/$p" "$dir/agent/$p" 2>/dev/null || true
+      if gitr cat-file -e "$CHECKPOINT:$p" 2>/dev/null; then
+        gitr show "$CHECKPOINT:$p" > "$ROOT/$p" 2>/dev/null || return 1
+      else
+        rm -f "$ROOT/$p" 2>/dev/null || true    # the agent CREATED it — the pre-agent tree had no such file
+      fi
+    else
+      if [[ -f "$dir/agent/$p" ]]; then cp "$dir/agent/$p" "$ROOT/$p" 2>/dev/null || return 1
+      else rm -f "$ROOT/$p" 2>/dev/null || true; fi
+    fi
+  done < <(app_paths_of)
+  return 0
+}
+
+# ── a committed test is READ-ONLY to the agent ───────────────────────────────────────────────────────
+# Rule 1, ALWAYS, whether or not the item declares a test: no file under agent/tests/ that existed at the
+# checkpoint may differ from it. A test the agent can edit is a test the agent can weaken to fit its fix,
+# and the iteration where that pays is precisely a REPEAT attempt on an item whose test already caught it
+# once — which is the state item 2d is in.
+# Rule 2, only when the item declares a test: a NEW file under agent/tests/ must BE that test. An item may
+# grow its own test; it may not leave a litter of others behind.
+# Deliberately NOT covered, and stated so nobody reads more into this than it does: a test the agent
+# writes THIS iteration is its own until it reports, and it can loosen that one freely. Red/green only
+# requires that the result discriminate. This guard is about tests that were already gated and committed.
+test_guard_violation() {                       # echoes a reason, or nothing
+  local changed added all p
+  changed="$(gitr diff --name-only "$CHECKPOINT" -- "agent/tests" 2>/dev/null || true)"
+  added="$(printf '%s\n' "${AGENT_PATHS:-}" | grep '^agent/tests/' || true)"
+  all="$(printf '%s\n%s\n' "$changed" "$added" | grep -v '^$' | sort -u)"
+  [[ -z "$all" ]] && return 0
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    if gitr cat-file -e "$CHECKPOINT:$p" 2>/dev/null; then
+      printf 'modified %s, which already existed at the checkpoint — a committed test is read-only to the agent' "$p"
+      return 0
+    fi
+    if [[ -n "${ITEM_TEST:-}" && "$p" != "$ITEM_TEST" ]]; then
+      printf 'created %s, which is not this item'"'"'s declared test (%s)' "$p" "$ITEM_TEST"
+      return 0
+    fi
+  done <<< "$all"
+  return 0
+}
+
 # ── agent invocation + per-iteration wall-clock timeout ──────────────────────────────────────────────
 # --max-turns does NOT bound a permission-prompt hang: a pending prompt consumes no turns and waits
 # forever. So the agent runs under a wall-clock watchdog; on expiry we tree-kill it and treat it as
@@ -828,7 +949,7 @@ while :; do
   # for a narrow cut; 120 fits all five open items whole, including their GATE-2A root, which is the part
   # that makes a row diagnosable. Commas → ';' and '"' → "'" still keep the CSV field safe.
   ITEM_TITLE="$(printf '%s' "$ITEM" | head -1 | sed 's/^- \[ \] //; s/<!--.*$//; s/\*\*//g; s/,/;/g; s/"/'"'"'/g; s/[[:space:]]*$//' | cut -c1-120)"
-  WALL=0; TURNS=0; COST=0; DEF_AFTER="$DEF_BEFORE"
+  WALL=0; TURNS=0; COST=0; DEF_AFTER="$DEF_BEFORE"; ITEM_TEST=""; TESTED=0
   # Part B: reset the envelope columns each iteration so a TIMEOUT / pre-agent INDETERMINATE row cannot
   # inherit the previous iteration's agent state. ABSENT = "we never got a readable envelope".
   AGENT_IS_ERROR=ABSENT; AGENT_SUBTYPE=ABSENT; AGENT_TERMINAL=ABSENT; STATUS_TOKEN=ABSENT
@@ -843,6 +964,13 @@ while :; do
     decide "iter $CUR_ITER BLOCKED: queue item names no parseable repro pair, so no measurement is possible; parked without agent work."
     finalize BLOCKED "~" false; continue
   fi
+
+  # ── the item's declared test, if any (GATE_SPEC §12). Read HERE, BEFORE the agent runs, so that an
+  #    agent which edits QUEUE.md cannot change which file grades it this iteration. Same reason
+  #    queue_next() reads position and nothing else: what must hold has to be captured, not requested.
+  ITEM_TEST="$(item_test "$ITEM")"
+  if [[ -n "$ITEM_TEST" ]]; then log "grading: TEST-GRADED on $ITEM_TEST (red-then-green), plus the count gate"
+  else log "grading: COUNT-GRADED (item declares no test:)"; fi
 
   # freeze re-check every 3 iterations (HOLE 2)
   if [[ "$CAP_MODE" == "N+1" && "$CUR_ITER" -gt 1 && $(( (CUR_ITER-1) % 3 )) -eq 0 ]]; then
@@ -1025,6 +1153,85 @@ while :; do
     log "HALTED (BUILD_BROKEN) · consecutive fail = $CONSEC_FAIL"; break
   fi
 
+  # ── TEST-FIRST GATE (GATE_SPEC §12) ─────────────────────────────────────────────────────────────────
+  #    Placed HERE deliberately: AFTER the verdict gate (an untrustworthy agent never spends a test run),
+  #    AFTER PARTIAL (report-and-stop leaves no claimed fix to test), AFTER BUILD_BROKEN (a bundle that
+  #    will not compile must surface AS BUILD_BROKEN, never as a test failure — otherwise the test gets
+  #    blamed for the build), and BEFORE do_capture, so a falsified fix short-circuits the ~10-minute
+  #    capture exactly the way NO_VERDICT does at the verdict gate.
+
+  # Rule 1 runs on EVERY iteration, test-graded or not: a committed test is read-only to the agent.
+  GUARD="$(test_guard_violation)"
+  if [[ -n "$GUARD" ]]; then
+    log "TEST_TAMPERED: agent $GUARD"
+    decide "iter $CUR_ITER TEST_TAMPERED: agent $GUARD; reverted unmeasured before any capture — a test the agent can weaken cannot grade the agent."
+    revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+    finalize TEST_TAMPERED "o" "$FORCED" "Agent $GUARD. Reverted before the after-capture; the item stays OPEN."
+    PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "TEST_TAMPERED · consecutive fail = $CONSEC_FAIL"; continue
+  fi
+
+  if [[ -n "$ITEM_TEST" ]]; then
+    if [[ ! -f "$ROOT/$ITEM_TEST" ]]; then
+      log "test ERROR: declared test $ITEM_TEST is not on the tree — falling through to the count gate"
+      decide "iter $CUR_ITER: declared test $ITEM_TEST absent from the tree; graded on the count alone."
+    else
+      log "test GREEN run (the agent's tree): node $ITEM_TEST"
+      run_declared_test green; GREEN_RC=$?
+      if [[ "$GREEN_RC" -eq 1 ]]; then
+        log "TEST_FAILED: the declared test FAILS on the agent's own tree — the claimed fix is falsified, no capture spent"
+        decide "iter $CUR_ITER TEST_FAILED: $ITEM_TEST exited 1 on the agent's tree; reverted, item left OPEN, after-capture skipped."
+        revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+        finalize TEST_FAILED "o" "$FORCED" "Declared test $ITEM_TEST failed on the agent's own tree. Reverted before the after-capture."
+        PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+        log "TEST_FAILED · consecutive fail = $CONSEC_FAIL"; continue
+      elif [[ "$GREEN_RC" -eq 2 ]]; then
+        log "test ERROR (exit 2) on the agent's tree — NOT a fail; falling through to the count gate, breaker untouched"
+        decide "iter $CUR_ITER: $ITEM_TEST could not run (exit 2 — unreachable app, limiter, or precondition unmet); graded on the count alone, exactly as an item with no test: line."
+      else
+        # GREEN passed. The only question that matters now: would it have passed WITHOUT the fix?
+        SWAP="$RUN_DIR/redswap-iter$CUR_ITER"; rm -rf "$SWAP"; mkdir -p "$SWAP"
+        APP_N="$(app_paths_of | grep -c '' || true)"
+        if [[ "${APP_N:-0}" -eq 0 ]]; then
+          log "TEST_VACUOUS: the agent changed no app code, so RED and GREEN are the SAME tree — a pass proves nothing"
+          decide "iter $CUR_ITER TEST_VACUOUS: $ITEM_TEST passed, but the agent changed no app code, so the red and green trees are identical and the test cannot discriminate."
+          revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+          finalize TEST_VACUOUS "o" "$FORCED" "Declared test passed on a tree with no app-code change — nothing to discriminate. Reverted."
+          PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+          log "TEST_VACUOUS · consecutive fail = $CONSEC_FAIL"; continue
+        fi
+        log "test RED run: putting $APP_N app path(s) back to $CHECKPOINT, holding agent/ (the test) constant"
+        if ! red_swap in "$SWAP"; then
+          red_swap out "$SWAP" || true; restart_server || true
+          log "test ERROR: could not build the RED tree — red is unproven; falling through to the count gate"
+          decide "iter $CUR_ITER: the RED tree could not be built, so red-then-green is unproven; graded on the count alone."
+        else
+          restart_server || log "  RED restart_server failed — a test that needs the app will report ERROR, which is not a fail"
+          run_declared_test red; RED_RC=$?
+          red_swap out "$SWAP" || log "  WARNING: red_swap out reported a failure — verifying the tree below"
+          if ! restart_server; then
+            log "BUILD_BROKEN: the tree would not rebuild after restoring the agent's code → revert + HALT"
+            decide "iter $CUR_ITER BUILD_BROKEN: the tree would not rebuild after the RED swap was restored; reverted and halted rather than capture an unknown tree."
+            revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+            finalize BUILD_BROKEN "o" "$FORCED"; CONSEC_FAIL=$(( CONSEC_FAIL + 1 )); break
+          fi
+          case "$RED_RC" in
+            1) TESTED=1
+               log "test RED->GREEN CONFIRMED: exits 1 at $CHECKPOINT and 0 on the agent's tree — the test discriminates" ;;
+            0) log "TEST_VACUOUS: the declared test PASSES on the pre-agent tree too — it tests something the fix did not change"
+               decide "iter $CUR_ITER TEST_VACUOUS: $ITEM_TEST passes at $CHECKPOINT as well as on the agent's tree, so it cannot tell the defect from its absence; reverted, item left OPEN."
+               revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+               finalize TEST_VACUOUS "o" "$FORCED" "Declared test $ITEM_TEST passes with AND without the fix — it does not test the defect. Reverted."
+               PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+               log "TEST_VACUOUS · consecutive fail = $CONSEC_FAIL"; continue ;;
+            *) log "test RED run ERROR (exit 2) — red could not be established; falling through to the count gate, breaker untouched"
+               decide "iter $CUR_ITER: the RED run of $ITEM_TEST could not run (exit 2), so red-then-green is unproven; graded on the count alone." ;;
+          esac
+        fi
+      fi
+    fi
+  fi
+
   # after-capture (capture failure ≠ code failure → INDETERMINATE)
   AFTER_DIR="$RUN_DIR/cap/after-$CUR_ITER"
   if ! do_capture "$AFTER_DIR" "after-$CUR_ITER"; then
@@ -1110,6 +1317,18 @@ while :; do
     log "GATE: density $DEN_BEFORE->$DEN_AFTER (improved), §2(b) holds, no revert_signal, verdict $STATUS_TOKEN → COMMIT"
     finalize DONE "x" "$FORCED"; CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; ANA_BEFORE="$ANA_AFTER"; OK_LIST_BEFORE="$OK_LIST_AFTER"; CONSEC_FAIL=0
     log "COMMITTED (item closed) iter $CUR_ITER"
+  elif [[ "$TESTED" -eq 1 ]] && agent_changed; then
+    # equal count + a test that went RED->GREEN. The count could not move, and for a whole class of
+    # defects it never can: an honest null cannot LOWER a defect count, and item 2d's zeroed payload
+    # renders as a well-formed deck that both graders score clean. This is exactly the case that scored
+    # UNVERIFIED on run 20260817-163640 with a correct fix. It is now MEASURED — by the test, which fails
+    # at $CHECKPOINT and passes here — so the item CLOSES and the breaker resets. §2(b) held and the count
+    # did not rise; a passing test never overrides either of those, it only speaks where they are silent.
+    log "GATE: density $DEN_BEFORE->$DEN_AFTER (unchanged), §2(b) holds, declared test RED->GREEN → DONE_TESTED"
+    decide "iter $CUR_ITER DONE_TESTED: the count could not move ($DEF_BEFORE->$DEF_AFTER) but $ITEM_TEST fails at the checkpoint and passes on this tree, so the fix is measured rather than merely unmeasurable; item closed."
+    finalize DONE_TESTED "x" "$FORCED" "Graded by TEST, not by count: $ITEM_TEST exits 1 at $CHECKPOINT and 0 on this tree. Density $DEN_BEFORE -> $DEN_AFTER (unchanged), GATE_SPEC 2(b) holds."
+    CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; ANA_BEFORE="$ANA_AFTER"; OK_LIST_BEFORE="$OK_LIST_AFTER"; CONSEC_FAIL=0
+    log "COMMITTED (item closed, test-graded) iter $CUR_ITER"
   elif agent_changed; then
     # equal count + non-empty agent diff → the work MAY be correct but is UNMEASURED (e.g. a server-side fix
     # the 5-pair window can't move). Reverting a no-op discards possibly-correct work; but an unattended loop

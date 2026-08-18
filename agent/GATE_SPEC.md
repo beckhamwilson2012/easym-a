@@ -167,6 +167,10 @@ must represent a wrong premise, never a correct report or a network event.
 | `FAILED` | parked `[~]` | +1 | Two attempts exhausted, or a confirmed replay. |
 | `PARTIAL_UNVERIFIED` | stays OPEN | +1 | Agent was **cut off mid-fix** (`is_error:true` — turn cap, API error, sleep) **with a non-empty diff**. See §6a. |
 | `KILLED` | untouched | untouched | The run ended abnormally — `die()`, Ctrl-C, `kill`, failed setup. Written from the EXIT trap. See §6b. |
+| `DONE_TESTED` | closed `[x]` | resets | The count could not move, but the item's declared test fails at the checkpoint and passes on the agent's tree. Committed. See §12. |
+| `TEST_FAILED` | stays OPEN | +1 | The declared test fails on the agent's OWN tree — the claimed fix is falsified. Reverted before the after-capture. |
+| `TEST_VACUOUS` | stays OPEN | +1 | The declared test passes with AND without the fix, so it cannot discriminate. Reverted. See §12. |
+| `TEST_TAMPERED` | stays OPEN | +1 | The agent altered a test that already existed at the checkpoint, or created one that is not its item's declared test. Reverted. |
 
 ### §6a. `PARTIAL_UNVERIFIED` — and the one thing it does that nothing else does
 
@@ -319,6 +323,84 @@ directly from it, and both are correct:
 Per-run directories are evidence and are not deleted at the end of a run, so a
 reaper removes ones older than `RAW_KEEP_DAYS` (default 3), bounded to the sweep's
 own root and never the current run.
+
+## 12. Test-first grading — the measurement the count cannot make
+
+**Neither grader can see a defect whose fix does not move a number.** §11 states the general blind spot;
+this is the case where it bites hardest. Item 2d — an unresolved company published as `$0` revenue
+instead of `null` — is invisible to both graders **by construction**: the deck BUILDS
+(`docs/sweep-v2/captures/BRK.B_PGR.json` is `ok:true`), and a zeroed payload renders as a well-formed
+deck full of real-looking numbers. Run `20260817-163640` wrote the correct fix, measured `9 -> 9`, and
+was committed `UNVERIFIED` with the item left OPEN. **An honest null can never LOWER a defect count.**
+
+An item may therefore declare ONE test:
+
+    test: agent/tests/<slug>.js
+
+Extracted literally, the way `pair:` is, and read at iteration start **before the agent runs**, so an
+agent that edits QUEUE.md cannot change which file grades it. **No `test:` line ⇒ the item is
+count-graded exactly as before.** This is opt-in and changes nothing for an item that does not use it.
+
+### 12a. Exit codes are the contract
+
+  - **0 = PASS** — the defect is absent.
+  - **1 = FAIL** — the defect is present.
+  - **2 = ERROR** — the test could not run: app unreachable, the app's own rate limiter, a precondition
+    unmet. Anything that is not 0/1/2 (missing module, syntax error, signal, timeout) is read as **2**.
+
+ERROR is never a fail, and never reverts. That asymmetry is §5's rule applied to the test instead of the
+capture: **an unrunnable test must never be able to delete a good fix.** On ERROR the iteration falls
+through to the count gate exactly as an undeclared item would, and the breaker is untouched.
+
+### 12b. RED-then-GREEN, performed by the RUNNER
+
+A test written after seeing the fix tests the fix, not the defect. So the runner does not take the
+agent's word for the red: after the test passes on the agent's tree, it puts **app code back to
+`$CHECKPOINT` while holding everything under `agent/` — the test above all — constant**, and re-runs.
+
+  - RED exits 1, GREEN exits 0 → the test **discriminates**. `TESTED=1`.
+  - RED exits 0 → **`TEST_VACUOUS`**: the test passes with and without the fix, so it cannot tell the
+    defect from its absence. Reverted, item OPEN, breaker +1. An agent that changed no app code at all
+    lands here too — RED and GREEN are then the same tree, and a pass proves nothing.
+  - RED exits 2 → red is unproven; fall through to the count gate, breaker untouched.
+
+Holding the test constant is not optional. `tools/noop-ab/README.md` documents the same trap from the
+other side: when both trees move together, the comparison proves nothing.
+
+**What this enforces, and what it does not.** It proves the test DISCRIMINATES between the pre-agent and
+post-agent trees. It does **NOT** prove the test was written before the fix: an agent that writes the fix
+first, then a test tuned to that fix's signature, passes red/green too. Keep this sentence in the file —
+a `DONE_TESTED` means "measured", not "the test captures the defect rather than the fix's shape". That
+residual is closed by reading the test, not by the harness.
+
+### 12c. What the gate does with the result
+
+A passing test **never overrides the count downward**. §2(b) and the density check run exactly as before;
+a test cannot license breaking other pairs. It speaks only where the count is silent:
+
+  - test RED->GREEN + density improved → `DONE` (unchanged).
+  - test RED->GREEN + density **unchanged** → **`DONE_TESTED`**: item closes, breaker resets. This is the
+    branch that used to be `UNVERIFIED`, and it is the whole point of the mechanism.
+  - test RED->GREEN + density **rose**, or §2(b) violated → still `REGRESSION`, still reverted.
+  - test FAILS on the agent's tree → `TEST_FAILED`, reverted, **after-capture skipped** — a falsified fix
+    short-circuits the ~10-minute capture the way `NO_VERDICT` does at the verdict gate.
+
+### 12d. A committed test is READ-ONLY to the agent
+
+Checked on **every** iteration, test-graded or not:
+
+  1. No file under `agent/tests/` that existed at the checkpoint may differ from it.
+  2. When the item declares a test, any NEW file under `agent/tests/` must BE that test.
+
+Either violation is `TEST_TAMPERED`: reverted, item OPEN, breaker +1. A test the agent can edit is a test
+the agent can weaken to fit its fix, and the iteration where that pays is a REPEAT attempt on an item
+whose test already caught it once.
+
+**Deliberately not covered, stated so nobody reads more into the guard than it does:** a test the agent
+writes *this* iteration is its own until it reports, and it may loosen that one freely. Red/green only
+requires that the result discriminate. Note also that a reverted iteration's test is discarded with its
+code — `revert_to` does not preserve `agent/tests/` — which is what stops a `TEST_VACUOUS` tautology from
+persisting into the next iteration and becoming unfixable under rule 1.
 
 ## 11. Known blind spots
 

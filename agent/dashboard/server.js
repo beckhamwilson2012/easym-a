@@ -328,8 +328,8 @@ function buildSummary() {
   const decisions = commits.map(c => { const m = c.match(/^(\S+)\s+sweep\([^)]*\) iter \d+: (.+?) \[(\w+)\]/); return m ? { sha: m[1], item: m[2], status: m[3] } : null; }).filter(Boolean);
   // attach defect deltas from calibration by matching item text
   decisions.forEach(d => { const row = cal.rows.find(r => (r.item || '').slice(0, 20) && d.item.includes((r.item || '').slice(0, 12))); if (row) d.defects = `${row.defects_before}→${row.defects_after}`; });
-  const committed = cal.rows.filter(r => r.status === 'DONE' || r.status === 'RESOLVED_UPSTREAM').length;
-  const reverted = cal.rows.filter(r => ['REGRESSION', 'FAILED', 'TIMEOUT'].includes(r.status)).length;
+  const committed = cal.rows.filter(r => ['DONE', 'DONE_TESTED', 'RESOLVED_UPSTREAM'].includes(r.status)).length;
+  const reverted = cal.rows.filter(r => ['REGRESSION', 'FAILED', 'TIMEOUT', 'TEST_FAILED', 'TEST_VACUOUS', 'TEST_TAMPERED'].includes(r.status)).length;
   const baseline = log.status.baselineDefects != null ? log.status.baselineDefects : null;
   const last = cal.rows[cal.rows.length - 1];
   const defectsAfter = last ? Number(last.defects_after) : baseline;
@@ -348,7 +348,10 @@ function buildPastRuns() {
     const g = by.get(id);
     g.tried++;
     // "kept" = actually improved (a DONE that lowered the count) or resolved upstream — never a no-op/UNVERIFIED
-    if ((r.status === 'DONE' && Number(r.defects_after) < Number(r.defects_before)) || r.status === 'RESOLVED_UPSTREAM') g.kept++;
+    // DONE_TESTED counts as kept WITHOUT a count drop — that is the whole point of a test-graded item:
+    // the defect it fixes cannot move the count (GATE_SPEC §12), so requiring a drop would score every
+    // correct test-graded fix as a no-op, which is exactly the misreading the test was added to end.
+    if ((r.status === 'DONE' && Number(r.defects_after) < Number(r.defects_before)) || r.status === 'DONE_TESTED' || r.status === 'RESOLVED_UPSTREAM') g.kept++;
     g.cost += parseFloat(r.cost_usd) || 0;
     const b = Number(r.defects_before), a = Number(r.defects_after);
     if (g.before == null && Number.isFinite(b)) g.before = b;   // first row's before
@@ -436,6 +439,9 @@ function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
     NO_CHANGE: `Claude Code changed nothing on ${name}`,
     INDETERMINATE: `the check could not run (rate-limited)`,
     KILLED: `the run was killed before it finished`,
+    TEST_FAILED: `the item's own test still failed after the change to ${name}`,
+    TEST_VACUOUS: `the test passed with AND without the change, so it proved nothing about ${name}`,
+    TEST_TAMPERED: `the change edited a test that grades it`,
   };
   // NO_VERDICT is the runner's catch-all for an untrustworthy envelope (turn cap, API error, no status token…).
   // The REAL cause is IN the envelope — read terminal_reason/subtype, never assume "ran out of turns".
@@ -450,7 +456,7 @@ function stoppedState(runId, log, cal, forcedWhy, elapsed, spent) {
     const real = agentEnvelopeReason(runId, iterN);
     why = FAIL[real] || (real ? `Claude Code stopped with no usable result (${real}) on ${name}` : `Claude Code returned no usable result on ${name}`);
   } else why = REASON[status] || `the run stopped on ${name}`;
-  const reverted = !s.complete || ['NO_VERDICT', 'TIMEOUT', 'BUILD_BROKEN', 'REGRESSION', 'NO_CHANGE', 'FAILED', 'INDETERMINATE'].includes(status);
+  const reverted = !s.complete || ['NO_VERDICT', 'TIMEOUT', 'BUILD_BROKEN', 'REGRESSION', 'NO_CHANGE', 'FAILED', 'INDETERMINATE', 'TEST_FAILED', 'TEST_VACUOUS', 'TEST_TAMPERED'].includes(status);
   const stateLine = !found ? `${name}: no longer in the queue.`
     : found.state === 'closed' ? `${name}: now closed in the queue.`
     : found.state === 'parked' ? `${name}: parked in the queue.`

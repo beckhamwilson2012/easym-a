@@ -22,6 +22,11 @@ the running app to *diagnose* is fine (`node -e "fetch('http://localhost:3001/ap
 killing a server process, or re-running the capture to *check your own fix* is not your job and will cost you
 the turns you need to report.
 
+**One thing IS yours: the test.** If your item declares `test: agent/tests/<slug>.js`, writing that test and
+running it is not self-verification — it is the artifact the runner re-runs *independently, in both
+directions*, and it is the only way an item whose fix cannot move a defect count ever closes. See
+**WRITE THE TEST BEFORE THE FIX** below.
+
 ## YOUR TURN BUDGET
 
 You have a fixed number of turns, stated as **`TURN BUDGET`** at the very end of this prompt. You cannot see
@@ -90,6 +95,8 @@ trial and error. Use these shapes and spend the turns on the item instead.
   - `tools/sweep-analyzer/analyze.js` · `tools/snapshot-diff.js` — the two graders
   - `tools/sweep-analyzer/capture.js` — generates the grading input
   - app-side fetch **retry** logic — shapes the render that becomes the grading input
+  - every pre-existing file under `agent/tests/` — the tests grade you too (see WRITE THE TEST BEFORE THE
+    FIX). You may create the ONE test your item declares; you may not touch any that already exists.
   The first three grade you; the last two generate and shape what you are graded on. Changing any of them
   **moves your own grading baseline** and invalidates the run.
 
@@ -101,7 +108,7 @@ expected value in the item. Print the live value.
 ### STEP 0 TERMINATES ON ONE VALUE — this is mechanical, not a judgement call
 
 **ONE live value matching the item's stated observation ENDS STEP 0.** Write
-`Repro confirmed: <value>` and go straight to diagnosis. Do **not** gather a second confirming value, do
+`Repro confirmed: <value>` and go straight to diagnosis — writing the test first if the item declares one. Do **not** gather a second confirming value, do
 **not** probe the item's "other instances", do **not** re-run the same probe to be sure. One match is the
 whole of the evidence STEP 0 requires.
 
@@ -161,6 +168,29 @@ for a stated reason), so the graders **cannot** catch this. Step 0 is the only t
 - If you **cannot produce live values** (no repro), mark `BLOCKED(no-repro)`, commit the diagnosis, and
   stop. **A guessed fix is worse than no fix** — it burns an iteration and returns BLOCKED anyway.
 
+## WRITE THE TEST BEFORE THE FIX
+
+If your item carries a `test:` line, the file it names is part of the work, and it comes **first**.
+
+- **Write it immediately after STEP 0, before you edit any app file**, and encode exactly the value STEP 0
+  printed: the item's `observed` is what the test must reject, its `expected` is what it must accept.
+- **Run it and paste the failing output.** A test that has never been seen to fail has never been shown to
+  test anything.
+- **The runner re-runs it in BOTH directions itself** — on your tree, and again with app code reverted to
+  the pre-agent checkpoint while your test file is held constant. If it passes on the reverted tree, the
+  iteration ends `TEST_VACUOUS` and is thrown away: it tested something your fix did not change. This is
+  the failure mode of a test written *after* a fix, and it is checked mechanically, not taken on trust.
+- **Exit codes are the contract, not a convention:** `0` pass · `1` fail · `2` could-not-run (app
+  unreachable, the 500-per-15-min limiter, a precondition unmet). Never exit `0` when the precondition for
+  the assertion did not hold — an unmeasurable premise is `2`, never a pass.
+- **Assert on values, not on your fix's shape.** State the assertions in the item's own `expected`
+  vocabulary — the rendered figure, the wire field — so the test survives a different, better fix.
+- If the item declares no `test:` line, do not invent one; work the item as usual.
+
+**Tests already on the tree are OFF-LIMITS.** Every file under `agent/tests/` that existed before you
+started is read-only, including the one your item declares. Altering one is `TEST_TAMPERED` and the whole
+iteration is reverted. If a test is wrong, say so in your report — do not edit it into agreement.
+
 ## FIX
 
 - Reuse the **single-source-of-truth** helpers already in the codebase. **No parallel code paths** for one
@@ -197,6 +227,7 @@ End your run with exactly this block, and nothing after it:
 ITEM:         <the item you worked>
 ROOT CAUSE:   <one sentence> + Pattern <A | B | C | New>
 FILES:        <every file changed>
+TEST:         <path, or NONE> — red: <the failing line you saw BEFORE the fix> · green: <the pass line after>
 TARGET FIXED: <pair> — <old value> -> <new value> (source authority: <where the correct value comes from>)
 STATUS:       DONE | RESOLVED_UPSTREAM(cause) | PARTIAL(<resolved> / <remains>) | BLOCKED(reason) | FAILED(reason)
 ```

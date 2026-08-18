@@ -1,7 +1,9 @@
 # Sweep queue
 
 <!-- Each item requires four fields: pair · observed · expected · source. An item without all
-     four is not actionable and must not be moved out of Discovered. Values below are pulled from the
+     four is not actionable and must not be moved out of Discovered. A FIFTH field is optional:
+     `test: agent/tests/<slug>.js` makes the item TEST-GRADED (GATE_SPEC §12) — required for any defect
+     whose correct fix cannot move a defect count. Without it the item is count-graded, as before. Values below are pulled from the
      analyzer output (docs/sweep-v2/RUN-findings.md per-pair checks + GATE-2A/2B by-root aggregate) — not
      placeholders, not fabricated. Counts are the GATE-2A by-root totals. -->
 
@@ -102,6 +104,7 @@
       at the payload level). MOVED above 2b 2026-08-17: this is FIRST in file and first in work order.
       Upstream of 2b and of every per-field guard — 2b coerces ONE null at the render boundary; this
       ships zeros for the WHOLE payload before any render runs.
+  - test: agent/tests/2d-null-not-zero.js
   - pair: BRK.B/PGR · observed: when no provider resolves a ticker, `/quote` emits a whole-payload
     default carrying **0** for revenue, ebitda, netIncome, shares, eps, cash AND debt, with `name`
     falling back to the ticker string, `dataSource:"none"`, and `ltm.reason:"no data source resolved"`.
@@ -199,6 +202,21 @@
 ## Closed
 
 ## Discovered
+
+- **`SNAP_N` reads "0\n0" on a CLEAN tree, and the log line is garbled by a shell syntax error.**
+  `run-sweep.sh:1018` is `SNAP_N="$(grep -c '' "$SNAP_FILE" 2>/dev/null || echo 0)"`. On an empty snapshot
+  file `grep -c ''` PRINTS `0` and EXITS 1 (no matches), so `|| echo 0` fires as well and `SNAP_N` becomes
+  the two-line string `0\n0`. The next line's `[[ "$SNAP_N" -gt 0 ]]` then dies with
+  `[[: 0\n0: syntax error in expression`, and the log reads `tree snapshot: 0\n0 dirty path(s)`.
+  It fires on the NORMAL case — a clean tree — and was invisible until now only because run
+  20260817-163640 happened to have 1 dirty path at its snapshot. Cosmetic in effect (the failed `[[ ]]`
+  only skips an explanatory suffix; `AGENT_PATHS` and staging are unaffected), but it prints a shell
+  syntax error into the ledger's own log, which is where someone later looks to decide whether a run was
+  healthy. Found by the test-first rig, not by a run.
+  (pair: — (harness artifact, no deck repro) · observed: `[[: 0\n0: syntax error in expression` plus
+  `tree snapshot: 0\n0 dirty path(s)` on any iteration starting from a clean tree · expected: `SNAP_N=0`
+  and `tree snapshot: 0 dirty path(s)` · source: `run-sweep.sh:1018`, `grep -c` exiting 1 on zero matches
+  while still printing its count)
 
 - **`UNDO.txt` leads with a command that is safe alone and destructive in sequence.** The file the runner
   writes at every run start (`run-sweep.sh`, the `cat > "$RUN_DIR/UNDO.txt"` heredoc) reads:
