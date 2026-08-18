@@ -269,6 +269,11 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                   tables above already show the with/without-synergy build (Combined vs PF columns); the deal.basis
                   badge (7C-3) is retained; §9's Year-1 NI bridge is NOT carried (Net Income + Less-financing rows
                   above already show that build for all three years). */}
+              {deal?.hasMarketData === false ? (
+                <div style={{ padding: '10px 12px', background: '#F9FAFB', border: '1px dashed #D1D5DB', borderRadius: 6, fontSize: 11, color: '#6B7280' }}>
+                  EPS accretion / (dilution) and the pro-forma trading profile are omitted — a private company has no share count, EPS, or market price, so pro-forma EPS is not defined. The leverage-based view is on the Pro-Forma Credit Stats exhibit.
+                </div>
+              ) : (
               <div>
                 <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
                   Accretion / (Dilution) — Pro Forma EPS vs. {aTk} Standalone
@@ -307,6 +312,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                   Ex-syn./w-syn. exclude/include the deal's synergy ramp (same split as Combined vs PF above); Year&nbsp;1 verified, Years&nbsp;2–4 consensus. Measured on the {deal?.basis === 'Non-GAAP' ? 'non-GAAP' : 'GAAP'} standalone EPS (deck headline).
                 </div>
               </div>
+              )}
             </div>
           )}
         </div>
