@@ -226,7 +226,11 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           subtitle={`${aTk} + ${bTk} · forward analyst consensus · Acquirer | Target | Combined | Synergies | PF Total`}
         />
         <div style={{ padding: '14px 20px 8px' }}>
-          {!loaded ? (
+          {deal?.hasMarketData === false ? (
+            <div style={{ padding: '10px 12px', background: '#F9FAFB', border: '1px dashed #D1D5DB', borderRadius: 6, fontSize: 11.5, color: '#6B7280', lineHeight: 1.5 }}>
+              Pro-forma EPS accretion / (dilution) and the trading profile are <strong>omitted for a private deal</strong> — a private company has no share count, EPS, or market price, so pro-forma EPS is not defined. Combined revenue, EBITDA and net income are on the Standalone P&amp;L and Transaction Structure exhibits; the leverage-based view is on the <strong>Pro-Forma Credit Statistics</strong> exhibit.
+            </div>
+          ) : !loaded ? (
             <div style={{ padding: 30, textAlign: 'center', color: '#9CA3AF', fontSize: 12, fontStyle: 'italic' }}>Loading forward analyst estimates…</div>
           ) : nYears === 0 ? (
             <div style={{ padding: '10px 12px', background: '#FFFBEB', border: '1px dashed #F59E0B', borderRadius: 6, fontSize: 11, color: '#92400E' }}>
