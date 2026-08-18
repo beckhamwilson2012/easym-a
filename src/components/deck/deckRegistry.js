@@ -19,6 +19,7 @@ export const DECK_ORDER = [
   { id: 'plTarget',      kind: 'exhibit',  showInPdf: true,  label: 'Standalone P&L — Target' },
   { id: 'proforma',      kind: 'exhibit',  showInPdf: true,  label: 'Pro Forma & Accretion' },
   { id: 'txnstructure',  kind: 'exhibit',  showInPdf: true,  label: 'Transaction Structure' },
+  { id: 'creditstats',   kind: 'exhibit',  showInPdf: true,  label: 'Pro-Forma Credit Stats' },   // Phase 8 — shown for private deals only (DeckShell)
   { id: 'exchange',      kind: 'exhibit',  showInPdf: true,  label: 'Exchange Ratio & Deal Terms' },
   { id: 'exchangeratio', kind: 'exhibit',  showInPdf: true,  label: 'Exchange Ratio Analysis' },
   { id: 'equity',        kind: 'exhibit',  showInPdf: true,  label: 'Equity Performance' },
