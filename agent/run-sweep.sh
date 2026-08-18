@@ -1015,7 +1015,13 @@ while :; do
   SNAP_FILE="$RUN_DIR/.tree-snapshot-iter$CUR_ITER"
   SNAP_T0="$(date +%s%3N 2>/dev/null || date +%s)"
   tree_snapshot > "$SNAP_FILE" 2>/dev/null || : > "$SNAP_FILE"
-  SNAP_N="$(grep -c '' "$SNAP_FILE" 2>/dev/null || echo 0)"
+  # `grep -c` PRINTS its count and EXITS 1 when that count is zero, so `|| echo 0` fired ON TOP of grep's
+  # own "0" and SNAP_N became the two-line string "0\n0" — which the [[ ]] below then rejected with
+  # `[[: 0\n0: syntax error in expression`, printed into loop.log, and the log line read "tree snapshot:
+  # 0\n0 dirty path(s)". It fires on the NORMAL case, a clean tree; run 20260817-163640 masked it only
+  # because that iteration happened to start with one dirty path. `wc -l` exits 0 on an empty file, so
+  # there is no failure branch to paper over. tree_snapshot always \n-terminates, so the count is exact.
+  SNAP_N="$(wc -l < "$SNAP_FILE" 2>/dev/null | tr -d ' ')"; SNAP_N="${SNAP_N:-0}"
   log "tree snapshot: $SNAP_N dirty path(s) before agent$( [[ "$SNAP_N" -gt 0 ]] && echo ' — NOT this agent'"'"'s work, will not be committed')"
 
   # run the agent under a wall-clock timeout (bounds a permission-prompt hang that --max-turns cannot)
