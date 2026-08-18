@@ -100,10 +100,19 @@
       unchanged deliberately.** A wrong expected is worse than an unclassified one: an absent figure
       blocks grading, a wrong one makes a correct fix grade as a failure.
 
-- [ ] **2d. Unresolved companies get a zeroed payload stub instead of nulls** — (root: null-is-not-zero,
+- [x] **2d. Unresolved companies get a zeroed payload stub instead of nulls** — (root: null-is-not-zero,
       at the payload level). MOVED above 2b 2026-08-17: this is FIRST in file and first in work order.
       Upstream of 2b and of every per-field guard — 2b coerces ONE null at the render boundary; this
       ships zeros for the WHOLE payload before any render runs.
+  <!-- CLOSED 2026-08-17 by MEASUREMENT, not by a run. The fix is at HEAD (247e4b9, merged 906f6be);
+       what was missing was any way to grade it — an honest null cannot lower a defect count, so the run
+       scored 9->9 and left this OPEN. agent/tests/2d-null-not-zero.js now supplies that measurement and
+       was run in BOTH directions by hand: exit 1 at 247e4b9^ printing "revenue = 0, want null" for all
+       seven fields, exit 0 at HEAD, each against a server started from that exact tree on an isolated
+       port with the listener PID verified as ours. That is the same red-then-green evidence the runner
+       now produces for DONE_TESTED (GATE_SPEC §12); it was taken by hand rather than spending a full
+       sweep to re-derive what was already measured. Closed here so file order matches work order —
+       queue_next() reads position and nothing else, so 2b cannot be worked while this sits above it. -->
   - test: agent/tests/2d-null-not-zero.js
   - pair: BRK.B/PGR · observed: when no provider resolves a ticker, `/quote` emits a whole-payload
     default carrying **0** for revenue, ebitda, netIncome, shares, eps, cash AND debt, with `name`
@@ -126,6 +135,7 @@
 
 - [ ] **2b. Unavailable target debt coerced to $0 at the render boundary** — (GATE-2A root: debt-dropped).
       Downstream of 2a, but INDEPENDENT: it fires for any filer whose debt is genuinely unavailable.
+  - test: agent/tests/2b-null-not-zero.js
   - pair: RKLB/IRDM · observed: with `companyBDebt = null`, `src/utils/dealCalc.js:104`
     `const targetDebtRepaid = num(inputs.companyBDebt) || 0;` yields **0** — an unknown debt is rendered
     as "$0 repaid" in sources & uses rather than as absent · expected: an unavailable figure renders
