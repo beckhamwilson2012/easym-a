@@ -17,6 +17,10 @@ const yahooClient = require('./server/services/yahooClient'); // shared, cached 
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
 const multer = require('multer'); // Phase 1 upload pipeline — multipart parsing (PDF/XLSX only)
 const { extractPdf, extractXlsx } = require('./server/services/uploadExtract'); // per-page text (pdftotext/tesseract/SheetJS)
+const { locateStatements } = require('./server/services/locatorAgent'); // Phase 2 — Haiku statement locator
+const { extractPage } = require('./server/services/extractorAgent');    // Phase 3 — Sonnet line-item extractor
+const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
+const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
 const app = express();
@@ -1024,12 +1028,24 @@ app.get('/quote', async (req, res) => {
     }
 
     if (!result) {
-      console.log(`[${symbol}] All sources failed — returning zeros`);
-      return res.json({
+      // "Null is not zero", at the PAYLOAD level. No provider resolved this ticker, so every
+      // financial field is ABSENT — not zero. Emitting 0 here published a fabricated figure
+      // ($0 revenue for a real filer) that renders as a well-formed number downstream and is
+      // indistinguishable from a company that genuinely reports 0; it also pre-empts every
+      // per-field `|| 0` guard, which never fires on a value already turned into a real 0.
+      // Build the stub from the canonical field() factory (status 'missing') and return it through
+      // the SAME unwrapCompany boundary as every resolved result — no parallel exit — so the wire
+      // shape is a bare null and every read site renders an honest blank.
+      // Consumers must detect this stub by `dataSource: 'none'`, NEVER by value: a plausibility
+      // heuristic both misses it and misfires on filers that legitimately report zero.
+      console.log(`[${symbol}] All sources failed — returning nulls (absent, not zero)`);
+      const absent = () => field(null, { source: 'none' });
+      return res.json(unwrapCompany({
         name: symbol, dataSource: 'none', companyType: 'standard',
-        revenue: 0, ebitda: 0, netIncome: 0, shares: 0, eps: 0, cash: 0, debt: 0,
+        revenue: absent(), ebitda: absent(), netIncome: absent(), shares: absent(),
+        eps: absent(), cash: absent(), debt: absent(),
         ltm: { trusted: false, fallback: 'annual', reason: 'no data source resolved' },
-      });
+      }));
     }
 
     // LTM is EDGAR-only (Stage 1). Non-EDGAR results (FMP/Yahoo fallback — e.g. NSRGY, no CIK) never got
@@ -2724,6 +2740,73 @@ app.post('/api/upload', uploadPerIp, uploadDailyGate, (req, res) => {
       cleanup();
       console.error('UPLOAD_ERR', e.message);
       return res.status(422).json({ error: 'Could not extract text from the file.', detail: e.message.slice(0, 300) });
+    }
+  });
+});
+
+// ── POST /api/extract — Phase 5 pipeline: upload a 10-K PDF → locate → extract → validate → 6 fields ──
+// Returns each required field with its PAGE CITE (page + verbatim label) and a status (ok/review/missing),
+// plus the document facts (scale/currency/fiscal-year-end). Manual Entry consumes this to pre-fill the form;
+// every value traces to a page, and an unresolved field is 'missing' (renders — , never 0). Costs Anthropic
+// tokens (Haiku locate + Sonnet extract), so it runs behind the same per-IP + daily caps as /api/upload.
+const latestFyFromItems = (items) => {
+  let mx = 0;
+  for (const it of items) { const ys = String(it.periodLabel || '').match(/\b(?:19|20)\d{2}\b/g); if (ys) for (const y of ys) mx = Math.max(mx, +y); }
+  return mx;
+};
+app.post('/api/extract', uploadPerIp, uploadDailyGate, (req, res) => {
+  uploadMw(req, res, async (mErr) => {
+    const cleanup = () => { if (req.file && req.file.path) fs.promises.unlink(req.file.path).catch(() => {}); };
+    try {
+      if (mErr) {
+        cleanup();
+        if (mErr.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'File exceeds the 25 MB limit.' });
+        if (mErr.status === 415)             return res.status(415).json({ error: mErr.message });
+        return res.status(400).json({ error: mErr.message || 'Upload failed.' });
+      }
+      if (!req.file) return res.status(400).json({ error: 'No file uploaded — send one file under field name "file".' });
+      const type = req.uploadType;
+      const fd = await fs.promises.open(req.file.path, 'r');
+      const head = Buffer.alloc(8);
+      try { await fd.read(head, 0, 8, 0); } finally { await fd.close(); }
+      if (!UPLOAD_TYPES[type].magic.some(m => head.subarray(0, m.length).equals(m))) { cleanup(); return res.status(415).json({ error: `File content is not a valid ${type.toUpperCase()}.` }); }
+      if (type !== 'pdf') { cleanup(); return res.status(415).json({ error: 'Statement extraction supports PDF filings only (XLSX has no statement pages to locate).' }); }
+      if (!process.env.ANTHROPIC_API_KEY) { cleanup(); return res.status(503).json({ error: 'Extraction unavailable: ANTHROPIC_API_KEY not set.' }); }
+
+      uploadDayRollover(); uploadDayCount++;
+      const started = Date.now();
+      const { pages, pageCount } = await extractPdf(req.file.path);
+      cleanup();                                            // per-page text is in memory; delete the file now
+
+      const loc = await locateStatements(pages);
+      if (!loc.ok) return res.status(422).json({ error: loc.reason || `Locator refused (${loc.failure}).`, failure: loc.failure });
+      const facts = { scale: loc.facts.scale, exceptPerShare: loc.facts.exceptPerShare };
+
+      const pick = async (nums, kind) => {
+        const out = [];
+        for (const pn of (nums || [])) { const pg = pages.find(p => p.page === pn); if (!pg) continue; const ex = await extractPage(pg.text, pn, facts); ex.items.forEach(it => (it._kind = kind)); out.push(...ex.items); }
+        return out;
+      };
+      const items = [
+        ...await pick(loc.incomeStatementPages, 'income'),
+        ...await pick(loc.balanceSheetPages, 'balance'),
+        ...await pick(loc.cashFlowPages, 'cashflow'),
+      ];
+      await validateExtraction({ page: 'multi', items, scale: facts.scale, exceptPerShare: facts.exceptPerShare });
+
+      const fy = latestFyFromItems(items);
+      const fields = mapFields(items, fy);
+
+      return res.json({
+        ok: true, filename: req.file.originalname, pageCount, ms: Date.now() - started,
+        docFacts: { scale: loc.facts.scale, currency: loc.facts.currency, fiscalYearEnd: loc.facts.fiscalYearEnd, exceptPerShare: loc.facts.exceptPerShare, fiscalYear: fy },
+        located: { income: loc.incomeStatementPages, balance: loc.balanceSheetPages, cashflow: loc.cashFlowPages },
+        fields,   // { revenue, ebit, da, netIncome, cash, totalDebt } each { value, page, label, status }
+      });
+    } catch (e) {
+      cleanup();
+      console.error('EXTRACT_ERR', e.message);
+      return res.status(422).json({ error: 'Extraction failed.', detail: e.message.slice(0, 300) });
     }
   });
 });

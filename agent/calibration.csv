@@ -4,3 +4,4 @@ run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,cap
 20260816-165953,1,"1. Leg-availability / LTM gross-profit blanking — 32 pairs",NO_VERDICT,671,61,4.976858499999998,68,68,N+1,false,true,error_max_turns,ABSENT
 20260816-202617,1,"2. Target debt dropped via null preferred path — 6 pairs (GATE-2A root: debt-dropped). Corrupts EV/leverage.",NO_VERDICT,736,61,5.093158999999999,13,13,N+1,false,true,error_max_turns,ABSENT
 20260816-222441,1,"2. Target debt dropped via null preferred path — 6 pairs (GATE-2A root: debt-dropped). Corrupts EV/leverage.",NO_VERDICT,1079,38,2.5022875000000004,25,25,N+1,false,true,success,ABSENT
+20260817-163640,1,"2d. Unresolved companies get a zeroed payload stub instead of nulls — (root: null-is-not-zero;",UNVERIFIED,527,30,1.3699900000000003,9,9,2N,false,false,success,DONE,6,0
