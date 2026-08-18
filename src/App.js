@@ -195,6 +195,17 @@ function DocFactsPanel({ facts, onChange }) {
   );
 }
 
+// Phase 7 — private-company toggle. When on, the panel swaps shares/EPS/share-price (market data) for a
+// single Total Equity Value input and the company carries hasMarketData:false (drives §8 deck suppression).
+function PrivateToggle({ checked, onChange }) {
+  return (
+    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#374151', margin: '2px 0 12px', cursor: 'pointer' }}>
+      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} />
+      Private company — no public market data
+    </label>
+  );
+}
+
 // eslint-disable-next-line no-unused-vars
 function Hint({ children, onUse }) {
   return (
@@ -487,10 +498,12 @@ const defaultInputs = {
   companyAShares: 0, companyADilutedShares: 0, companyAEPS: 0, companyACash: 0, companyASti: null, companyADebt: 0,
   companyABsAsOf: null, companyABsBasis: null, companyALtmRevenue: null,
   currentSharePriceA: 0,
+  companyAPrivate: false, companyATotalEquity: 0,   // Phase 7 — private company: no market data, equity value entered directly
   companyBRevenue: 0, companyBEBITDA: 0, companyBNetIncome: 0, companyBOperatingIncome: 0, companyBGrossProfit: null,
   companyBShares: 0, companyBDilutedShares: 0, companyBEPS: 0, companyBCash: 0, companyBSti: null, companyBDebt: 0,
   companyBBsAsOf: null, companyBBsBasis: null, companyBLtmRevenue: null,
   currentSharePriceB: 0,
+  companyBPrivate: false, companyBTotalEquity: 0,   // Phase 7 — private company: no market data, equity value entered directly
   offerPricePerShare: 0, cashPercent: 60, transactionFees: 0,
   synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
   // Stage 2E — min operating cash the pro-forma co retains, as a % of pro-forma LTM revenue (scaled default,
@@ -717,6 +730,12 @@ function App() {
     const resolvedWithBank = { ...calcInputs, bankDeal, applySourcesOfFunds: true };
     const r = calculate(resolvedWithBank);
     r.basis = basis;
+    // Phase 7 — carry the private-company flags so §8 suppresses market-data sections. A private company
+    // has no shares/price; its equity value is the entered Total Equity Value (hasMarketData:false).
+    r.hasMarketDataA = !effectiveInputs.companyAPrivate;
+    r.hasMarketDataB = !effectiveInputs.companyBPrivate;
+    r.totalEquityA = effectiveInputs.companyAPrivate ? (parseFloat(effectiveInputs.companyATotalEquity) || null) : null;
+    r.totalEquityB = effectiveInputs.companyBPrivate ? (parseFloat(effectiveInputs.companyBTotalEquity) || null) : null;
     setResults(r);
     setResolvedInputs(resolvedWithBank);
     setAccretionBasis(basis);
@@ -1382,37 +1401,47 @@ function App() {
                   <h2 style={sectionTitle}>Company A — Acquirer</h2>
                   <UploadZone uploading={uploadingA} error={uploadErrA} onFile={f => handleExtract(f, 'A')} />
                   <DocFactsPanel facts={docFactsA} onChange={setDocFactsA} />
+                  <PrivateToggle checked={inputs.companyAPrivate} onChange={v => setInputs(prev => ({ ...prev, companyAPrivate: v }))} />
                   <LargeNumericField label="Annual Revenue ($M)" name="companyARevenue" value={inputs.companyARevenue} onChange={changeWithOverride('A')} placeholder="Enter revenue in millions" />
                   <ExtractCite cite={uploadA && uploadA.fields.revenue} overridden={overrideA.companyARevenue} />
                   <LargeNumericField label="EBITDA ($M)" name="companyAEBITDA" value={inputs.companyAEBITDA} onChange={changeWithOverride('A')} />
                   <ExtractCite cite={ebitdaCite(uploadA)} overridden={overrideA.companyAEBITDA} />
                   <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={changeWithOverride('A')} placeholder="Enter net income in millions" />
                   <ExtractCite cite={uploadA && uploadA.fields.netIncome} overridden={overrideA.companyANetIncome} />
-                  <InputField label="Shares Outstanding (millions)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
-                  <InputField label="Earnings Per Share ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
+                  {inputs.companyAPrivate
+                    ? <LargeNumericField label="Total Equity Value ($M)" name="companyATotalEquity" value={inputs.companyATotalEquity} onChange={handleChange} placeholder="Enter equity value in millions" />
+                    : <>
+                        <InputField label="Shares Outstanding (millions)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
+                        <InputField label="Earnings Per Share ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
+                      </>}
                   <LargeNumericField label="Cash on Hand ($M)" name="companyACash" value={inputs.companyACash} onChange={changeWithOverride('A')} />
                   <ExtractCite cite={uploadA && uploadA.fields.cash} overridden={overrideA.companyACash} />
                   <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={changeWithOverride('A')} />
                   <ExtractCite cite={uploadA && uploadA.fields.totalDebt} overridden={overrideA.companyADebt} />
-                  <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceA" value={inputs.currentSharePriceA} onChange={handleChange} placeholder="e.g., 749.28" />
+                  {!inputs.companyAPrivate && <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceA" value={inputs.currentSharePriceA} onChange={handleChange} placeholder="e.g., 749.28" />}
                 </div>
                 <div style={cardStyle}>
                   <h2 style={sectionTitle}>Company B — Target</h2>
                   <UploadZone uploading={uploadingB} error={uploadErrB} onFile={f => handleExtract(f, 'B')} />
                   <DocFactsPanel facts={docFactsB} onChange={setDocFactsB} />
+                  <PrivateToggle checked={inputs.companyBPrivate} onChange={v => setInputs(prev => ({ ...prev, companyBPrivate: v }))} />
                   <LargeNumericField label="Annual Revenue ($M)" name="companyBRevenue" value={inputs.companyBRevenue} onChange={changeWithOverride('B')} placeholder="Enter revenue in millions" />
                   <ExtractCite cite={uploadB && uploadB.fields.revenue} overridden={overrideB.companyBRevenue} />
                   <LargeNumericField label="EBITDA ($M)" name="companyBEBITDA" value={inputs.companyBEBITDA} onChange={changeWithOverride('B')} />
                   <ExtractCite cite={ebitdaCite(uploadB)} overridden={overrideB.companyBEBITDA} />
                   <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={changeWithOverride('B')} placeholder="Enter net income in millions" />
                   <ExtractCite cite={uploadB && uploadB.fields.netIncome} overridden={overrideB.companyBNetIncome} />
-                  <InputField label="Shares Outstanding (millions)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
-                  <InputField label="Earnings Per Share ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />
+                  {inputs.companyBPrivate
+                    ? <LargeNumericField label="Total Equity Value ($M)" name="companyBTotalEquity" value={inputs.companyBTotalEquity} onChange={handleChange} placeholder="Enter equity value in millions" />
+                    : <>
+                        <InputField label="Shares Outstanding (millions)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
+                        <InputField label="Earnings Per Share ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />
+                      </>}
                   <LargeNumericField label="Cash on Hand ($M)" name="companyBCash" value={inputs.companyBCash} onChange={changeWithOverride('B')} />
                   <ExtractCite cite={uploadB && uploadB.fields.cash} overridden={overrideB.companyBCash} />
                   <LargeNumericField label="Total Debt ($M)" name="companyBDebt" value={inputs.companyBDebt} onChange={changeWithOverride('B')} />
                   <ExtractCite cite={uploadB && uploadB.fields.totalDebt} overridden={overrideB.companyBDebt} />
-                  <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceB" value={inputs.currentSharePriceB} onChange={handleChange} placeholder="e.g., 749.28" />
+                  {!inputs.companyBPrivate && <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceB" value={inputs.currentSharePriceB} onChange={handleChange} placeholder="e.g., 749.28" />}
                 </div>
               </div>
               <div style={col2}>
