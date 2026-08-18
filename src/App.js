@@ -206,6 +206,50 @@ function PrivateToggle({ checked, onChange }) {
   );
 }
 
+// Phase 9 — private valuation panel. For a private company the equity value is DERIVED, not typed blind:
+// a peer-median EV/EBITDA (from the filing's classified sector) × EBITDA − net debt. The multiple is
+// pre-filled and editable; the peer set + count are shown (a median of two is not a median). When peer
+// resolution fails or is too thin, the failure is SURFACED and the user enters a multiple — never a silent
+// default. EV / net debt / equity value update live from the multiple + the extracted figures.
+function ValuationPanel({ panel, valuation, classification, multiple, ebitda, debt, cash, onMultipleChange, overridden }) {
+  const mult = parseFloat(multiple) || 0;
+  const eb = parseFloat(ebitda);
+  const dbt = parseFloat(debt), csh = parseFloat(cash);
+  const ev = (mult > 0 && Number.isFinite(eb)) ? mult * eb : null;
+  const netDebt = (Number.isFinite(dbt) && Number.isFinite(csh)) ? dbt - csh : null;
+  const equity = (ev != null && netDebt != null) ? ev - netDebt : null;
+  const fmtM = v => v == null ? '—' : (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString()}M)` : `$${Math.round(v).toLocaleString()}M`);
+  const fmtX = v => v == null ? '—' : `${(+v).toFixed(1)}×`;
+  const resolved = !!(valuation && valuation.ok && valuation.peers && valuation.peers.length);
+  const failed = !!(valuation && !valuation.ok);
+  return (
+    <div style={{ border: '1px solid #E5E7EB', background: '#FCFCFD', borderRadius: 8, padding: '10px 12px', marginBottom: 12 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: '#0F2244', textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 6 }}>Private valuation — peer-median EV/EBITDA</div>
+      {classification && (
+        <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
+          Sector: <strong style={{ color: '#374151' }}>{classification.sector}</strong>{classification.sic ? ` (SIC ${classification.sic})` : ''} · classified from filing ({classification.confidence} confidence)
+        </div>
+      )}
+      {resolved && (
+        <div style={{ fontSize: 11, color: '#059669', marginBottom: 6, lineHeight: 1.5 }}>
+          ✓ median {fmtX(valuation.median)} from {valuation.n} peer{valuation.n === 1 ? '' : 's'}: {valuation.peers.map(p => `${p.ticker} ${fmtX(p.evEbitda)}`).join(', ')}
+          {valuation.source === 'sic-group' && <span style={{ color: '#B45309' }}> · ⚠ group-level match — verify</span>}
+        </div>
+      )}
+      {failed && (
+        <div style={{ fontSize: 11, color: '#B45309', marginBottom: 6, lineHeight: 1.5 }}>⚠ No peer median — {valuation.note} Enter a multiple below.</div>
+      )}
+      <LargeNumericField label="EV / EBITDA multiple (×)" name={`company${panel}ValuationMultiple`} value={multiple} onChange={onMultipleChange} placeholder="e.g., 12.5" />
+      {overridden && <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 8, fontStyle: 'italic' }}>✎ multiple edited by user</div>}
+      <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.8, marginTop: 2, paddingTop: 6, borderTop: '1px solid #F3F4F6' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>EV = {mult > 0 ? `${fmtX(mult)} × ` : 'multiple × '}EBITDA {fmtM(Number.isFinite(eb) ? eb : null)}</span><strong>{fmtM(ev)}</strong></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>− Net debt (total debt − cash)</span><strong>{fmtM(netDebt)}</strong></div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#0F2244', fontWeight: 700 }}><span>= Equity value</span><span>{fmtM(equity)}</span></div>
+      </div>
+    </div>
+  );
+}
+
 // eslint-disable-next-line no-unused-vars
 function Hint({ children, onUse }) {
   return (
@@ -499,11 +543,13 @@ const defaultInputs = {
   companyABsAsOf: null, companyABsBasis: null, companyALtmRevenue: null,
   currentSharePriceA: 0,
   companyAPrivate: false, companyATotalEquity: 0,   // Phase 7 — private company: no market data, equity value entered directly
+  companyAValuationMultiple: 0,   // Phase 9 — EV/EBITDA multiple (peer-median pre-fill, user-editable) for a private company
   companyBRevenue: 0, companyBEBITDA: 0, companyBNetIncome: 0, companyBOperatingIncome: 0, companyBGrossProfit: null,
   companyBShares: 0, companyBDilutedShares: 0, companyBEPS: 0, companyBCash: 0, companyBSti: null, companyBDebt: 0,
   companyBBsAsOf: null, companyBBsBasis: null, companyBLtmRevenue: null,
   currentSharePriceB: 0,
   companyBPrivate: false, companyBTotalEquity: 0,   // Phase 7 — private company: no market data, equity value entered directly
+  companyBValuationMultiple: 0,   // Phase 9 — EV/EBITDA multiple (peer-median pre-fill, user-editable) for a private company
   offerPricePerShare: 0, cashPercent: 60, transactionFees: 0,
   synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
   // Stage 2E — min operating cash the pro-forma co retains, as a % of pro-forma LTM revenue (scaled default,
@@ -581,6 +627,12 @@ function App() {
   const [docFactsB, setDocFactsB] = useState(null);
   const [overrideA, setOverrideA] = useState({});  // form-field name -> user edited a pre-filled value
   const [overrideB, setOverrideB] = useState({});
+  // Phase 9 — private valuation: sector classification from the uploaded filing, and the resolved peer-median
+  // EV/EBITDA (or an honest failure). The multiple itself lives in inputs (editable + override-tracked).
+  const [classA, setClassA] = useState(null);          // { sector, sic, confidence, rationale } | null
+  const [classB, setClassB] = useState(null);
+  const [valuationA, setValuationA] = useState(null);  // /api/private-comps result { ok, median, peers, n, source, note } | null
+  const [valuationB, setValuationB] = useState(null);
 
   const handleChange = (e) => setInputs(prev => ({ ...prev, [e.target.name]: parseFloat(e.target.value) || 0 }));
   // Phase 5 — wrap a field's onChange to also mark it a user override (so its page cite becomes "user override").
@@ -594,13 +646,14 @@ function App() {
     const setErr       = panel === 'A' ? setUploadErrA : setUploadErrB;
     const setDocFacts  = panel === 'A' ? setDocFactsA : setDocFactsB;
     const setOverride  = panel === 'A' ? setOverrideA : setOverrideB;
+    const setClass     = panel === 'A' ? setClassA : setClassB;
     setUploading(true); setErr('');
     const fd = new FormData(); fd.append('file', file);
     fetch(apiUrl('/api/extract'), { method: 'POST', body: fd })
       .then(r => r.json().then(j => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
         if (!ok || !j || !j.ok) { setErr((j && j.error) || 'Extraction failed.'); setUploading(false); return; }
-        setUpload(j); setDocFacts(j.docFacts); setOverride({});
+        setUpload(j); setDocFacts(j.docFacts); setOverride({}); setClass(j.classification || null);
         const f = j.fields, P = panel, toM = v => v == null ? null : Math.round(v / 1e6);
         const ebitM = toM(f.ebit.value), daM = toM(f.da.value);
         const ebitdaM = (ebitM != null && daM != null) ? ebitM + daM : ebitM;   // EBITDA = operating income + D&A
@@ -622,6 +675,31 @@ function App() {
     if (upload && upload.fields) return ['revenue', 'ebit', 'da', 'netIncome', 'cash', 'totalDebt'].every(k => upload.fields[k] && upload.fields[k].value != null);
     return inputs[`company${P}Revenue`] > 0 && inputs[`company${P}EBITDA`] > 0;
   };
+  // Phase 9 — resolve a private company's peer-median EV/EBITDA once it is flagged private AND its filing
+  // has been classified into a sector. The multiple is pre-filled from the median (unless the user has
+  // edited it). No confident sector, or a peer set too thin, sets an honest failure the panel surfaces —
+  // the user then enters a multiple. There is deliberately NO default multiple.
+  useEffect(() => {
+    let cancelled = false;
+    const resolve = async (P, isPrivate, cls, override, setVal) => {
+      if (!isPrivate) { setVal(null); return; }
+      if (!cls) { setVal(null); return; }                       // private but no uploaded filing → manual multiple only
+      if (!cls.sic) { setVal({ ok: false, sector: cls.sector, note: `No peer set for the classified sector "${cls.sector}".` }); return; }
+      try {
+        const r = await fetch(apiUrl(`/api/private-comps?sic=${encodeURIComponent(cls.sic)}&sector=${encodeURIComponent(cls.sector || '')}`)).then(x => x.json());
+        if (cancelled) return;
+        setVal(r);
+        if (r && r.ok && r.median != null && !override[`company${P}ValuationMultiple`]) {
+          setInputs(prev => ({ ...prev, [`company${P}ValuationMultiple`]: r.median }));   // pre-fill (not an override)
+        }
+      } catch (e) { if (!cancelled) setVal({ ok: false, note: `Peer lookup failed: ${e.message}` }); }
+    };
+    resolve('A', inputs.companyAPrivate, classA, overrideA, setValuationA);
+    resolve('B', inputs.companyBPrivate, classB, overrideB, setValuationB);
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inputs.companyAPrivate, inputs.companyBPrivate, classA, classB]);
+
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
 
   // Auto-set cash% default when bank mode activates/deactivates
@@ -734,8 +812,20 @@ function App() {
     // has no shares/price; its equity value is the entered Total Equity Value (hasMarketData:false).
     r.hasMarketDataA = !effectiveInputs.companyAPrivate;
     r.hasMarketDataB = !effectiveInputs.companyBPrivate;
-    r.totalEquityA = effectiveInputs.companyAPrivate ? (parseFloat(effectiveInputs.companyATotalEquity) || null) : null;
-    r.totalEquityB = effectiveInputs.companyBPrivate ? (parseFloat(effectiveInputs.companyBTotalEquity) || null) : null;
+    // Phase 9 — a private company's equity value is DERIVED: peer-median (editable) EV/EBITDA × EBITDA −
+    // net debt (total debt − cash). Null-honest: an absent multiple or EBITDA leaves it null (renders "—").
+    const valEquity = (P) => {
+      if (!effectiveInputs[`company${P}Private`]) return null;
+      const mult = parseFloat(effectiveInputs[`company${P}ValuationMultiple`]) || null;
+      const eb = parseFloat(effectiveInputs[`company${P}EBITDA`]);
+      const dbt = parseFloat(effectiveInputs[`company${P}Debt`]);
+      const csh = parseFloat(effectiveInputs[`company${P}Cash`]);
+      const ev = (mult > 0 && Number.isFinite(eb)) ? mult * eb : null;
+      const nd = (Number.isFinite(dbt) && Number.isFinite(csh)) ? dbt - csh : null;
+      return (ev != null && nd != null) ? ev - nd : null;
+    };
+    r.totalEquityA = valEquity('A');
+    r.totalEquityB = valEquity('B');
     setResults(r);
     setResolvedInputs(resolvedWithBank);
     setAccretionBasis(basis);
@@ -878,8 +968,44 @@ function App() {
     return { rows, docFacts, hasUpload: !!(upload && upload.fields) };
   };
 
+  // Phase 9 — private valuation: peer-median (editable) EV/EBITDA × EBITDA − net debt = equity value. Every
+  // input is an extracted, page-cited figure (EBITDA, total debt, cash) or a user entry; the multiple is the
+  // peer median or, when the peer set was too thin, a user entry. Returns nulls (→ "—") when the multiple or
+  // EBITDA is absent — never a fabricated equity value. Only meaningful for a private company (else null).
+  const computeValuation = (P) => {
+    if (!inputs[`company${P}Private`]) return null;
+    const val = P === 'A' ? valuationA : valuationB;
+    const cls = P === 'A' ? classA : classB;
+    const override = P === 'A' ? overrideA : overrideB;
+    const multiple = parseFloat(inputs[`company${P}ValuationMultiple`]) || null;
+    const ebitda = parseFloat(inputs[`company${P}EBITDA`]);
+    const debt = parseFloat(inputs[`company${P}Debt`]);
+    const cash = parseFloat(inputs[`company${P}Cash`]);
+    const ev = (multiple > 0 && Number.isFinite(ebitda)) ? multiple * ebitda : null;
+    // Net debt = total debt − cash. The debt figure is the extractor's total-debt line (the debtConcepts
+    // resolver's incl-current-maturities definition, sourced to a page cite); cash likewise. Both null → null.
+    const netDebt = (Number.isFinite(debt) && Number.isFinite(cash)) ? debt - cash : null;
+    const equityValue = (ev != null && netDebt != null) ? ev - netDebt : null;
+    const peersResolved = !!(val && val.ok && val.peers && val.peers.length);
+    const multipleSource = override[`company${P}ValuationMultiple`] ? 'user' : (peersResolved ? 'peer-median' : (multiple ? 'user' : null));
+    return {
+      sector: cls ? cls.sector : (val ? val.sector : null),
+      sic: cls ? cls.sic : null,
+      confidence: cls ? cls.confidence : null,
+      multiple, multipleSource,
+      ebitda: Number.isFinite(ebitda) ? ebitda : null,
+      ev, netDebt, equityValue,
+      peersResolved,
+      peers: peersResolved ? val.peers : [],
+      n: peersResolved ? val.n : 0,
+      peerMedian: peersResolved ? val.median : null,
+      peerSource: peersResolved ? val.source : null,
+      peerNote: val ? val.note : null,
+    };
+  };
+
   const buildTargetForDeck = () => ({
-    name: nameB || 'Target Company', ticker: tickerB, provenance: buildProvenance('B'),
+    name: nameB || 'Target Company', ticker: tickerB, provenance: buildProvenance('B'), valuation: computeValuation('B'),
     sic: sicB, sicDescription: sicDescriptionB,
     revenue: inputs.companyBRevenue, ebitda: inputs.companyBEBITDA,
     grossProfit: inputs.companyBGrossProfit, operatingIncome: inputs.companyBOperatingIncome,
@@ -916,7 +1042,7 @@ function App() {
   });
 
   const buildAcquirerForDeck = () => ({
-    name: nameA || 'Acquirer', ticker: tickerA, provenance: buildProvenance('A'),
+    name: nameA || 'Acquirer', ticker: tickerA, provenance: buildProvenance('A'), valuation: computeValuation('A'),
     sic: sicA, sicDescription: sicDescriptionA,
     revenue: inputs.companyARevenue, ebitda: inputs.companyAEBITDA,
     grossProfit: inputs.companyAGrossProfit, operatingIncome: inputs.companyAOperatingIncome,
@@ -1436,7 +1562,9 @@ function App() {
                   <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={changeWithOverride('A')} placeholder="Enter net income in millions" />
                   <ExtractCite cite={uploadA && uploadA.fields.netIncome} overridden={overrideA.companyANetIncome} />
                   {inputs.companyAPrivate
-                    ? <LargeNumericField label="Total Equity Value ($M)" name="companyATotalEquity" value={inputs.companyATotalEquity} onChange={handleChange} placeholder="Enter equity value in millions" />
+                    ? <ValuationPanel panel="A" valuation={valuationA} classification={classA}
+                        multiple={inputs.companyAValuationMultiple} ebitda={inputs.companyAEBITDA} debt={inputs.companyADebt} cash={inputs.companyACash}
+                        onMultipleChange={changeWithOverride('A')} overridden={overrideA.companyAValuationMultiple} />
                     : <>
                         <InputField label="Shares Outstanding (millions)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
                         <InputField label="Earnings Per Share ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
@@ -1459,7 +1587,9 @@ function App() {
                   <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={changeWithOverride('B')} placeholder="Enter net income in millions" />
                   <ExtractCite cite={uploadB && uploadB.fields.netIncome} overridden={overrideB.companyBNetIncome} />
                   {inputs.companyBPrivate
-                    ? <LargeNumericField label="Total Equity Value ($M)" name="companyBTotalEquity" value={inputs.companyBTotalEquity} onChange={handleChange} placeholder="Enter equity value in millions" />
+                    ? <ValuationPanel panel="B" valuation={valuationB} classification={classB}
+                        multiple={inputs.companyBValuationMultiple} ebitda={inputs.companyBEBITDA} debt={inputs.companyBDebt} cash={inputs.companyBCash}
+                        onMultipleChange={changeWithOverride('B')} overridden={overrideB.companyBValuationMultiple} />
                     : <>
                         <InputField label="Shares Outstanding (millions)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
                         <InputField label="Earnings Per Share ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />

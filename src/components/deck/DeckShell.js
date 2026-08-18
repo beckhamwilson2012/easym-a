@@ -21,6 +21,7 @@ import { SectionPricePerformance } from './sections/SectionPricePerformance';
 import { SectionRelativeContribution } from './sections/SectionRelativeContribution';
 import { SectionAnalystConsensus } from './sections/SectionAnalystConsensus';
 import { SectionCreditStats } from './sections/SectionCreditStats';
+import { SectionPrivateValuation } from './sections/SectionPrivateValuation';
 import { SectionSources }          from './sections/SectionSources';
 import { SectionDataVerificationA, SectionDataVerificationB } from './sections/SectionDataVerification';
 import { DECK_ORDER, exhibitLabelOf, setActiveSections } from './deckRegistry';
@@ -39,7 +40,7 @@ const COMPONENTS = {
   dashboard: SectionDashboard, title: SectionTitlePage, comparables: SectionComparables,
   profiles: SectionCompanyProfiles, targetprofile: SectionTargetOverview, shareholders: SectionShareholderAnalysis,
   plAcquirer: SectionStandalonePLAcquirer, plTarget: SectionStandalonePLTarget, proforma: SectionProFormaPLA,
-  txnstructure: SectionTransactionStructure, creditstats: SectionCreditStats, exchange: SectionExchangeRatio, exchangeratio: SectionExchangeRatioAnalysis,
+  txnstructure: SectionTransactionStructure, privatevaluation: SectionPrivateValuation, creditstats: SectionCreditStats, exchange: SectionExchangeRatio, exchangeratio: SectionExchangeRatioAnalysis,
   equity: SectionPricePerformance, contribution: SectionRelativeContribution, analyst: SectionAnalystConsensus,
   sources: SectionSources, verification: SectionDataVerificationA, verification2: SectionDataVerificationB,
 };
@@ -61,20 +62,24 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
   // exhibit letter / page number / prose cross-ref over the visible set (closes the stale-"Exhibit I" bug).
   // Public decks: hasMarketData !== false → nothing suppressed, byte-identical to before.
   const SUPPRESS_PRIVATE = new Set(['equity', 'analyst', 'exchangeratio']);
+  const PRIVATE_ONLY = new Set(['privatevaluation', 'creditstats']);   // Phase 8/9 exhibits — private decks only
   const hasMarketData = deal ? deal.hasMarketData !== false : true;
   let activeSections;
   if (hasMarketData) {
-    activeSections = SECTIONS.filter(s => s.id !== 'creditstats');   // public: no credit-stats exhibit (deck unchanged)
+    activeSections = SECTIONS.filter(s => !PRIVATE_ONLY.has(s.id));   // public: no private valuation / credit-stats exhibits (deck unchanged)
   } else {
-    // private: drop the market-data exhibits, KEEP Pro-Forma Credit Stats, and PROMOTE Relative Contribution
-    // to the headline exhibit slot (right after the Title) — contribution + ownership split lead a private deck.
+    // private: drop the market-data exhibits, KEEP Private Valuation + Pro-Forma Credit Stats, and PROMOTE the
+    // Private Valuation then Relative Contribution to the headline slots (right after the Title) — the derived
+    // valuation and the ownership/contribution split lead a private deck. Both moves recompute exhibit letters.
     const kept = SECTIONS.filter(s => !SUPPRESS_PRIVATE.has(s.id));
-    const contrib = kept.find(s => s.id === 'contribution');
     const titleIdx = kept.findIndex(s => s.id === 'title');
-    if (contrib && titleIdx >= 0) {
-      const rest = kept.filter(s => s.id !== 'contribution');
+    if (titleIdx >= 0) {
+      const rest = kept.filter(s => s.id !== 'contribution' && s.id !== 'privatevaluation');
       const ti = rest.findIndex(s => s.id === 'title');
-      rest.splice(ti + 1, 0, contrib);
+      const promote = ['privatevaluation', 'contribution']
+        .map(id => kept.find(s => s.id === id))
+        .filter(Boolean);
+      rest.splice(ti + 1, 0, ...promote);   // Title → Private Valuation → Relative Contribution → …
       activeSections = rest;
     } else activeSections = kept;
   }

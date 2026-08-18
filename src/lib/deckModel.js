@@ -83,8 +83,30 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
   // visible 0%). A pro-forma total omitting the (unknown) pre-deal or new shares implies zero dilution —
   // the fabrication we are removing. Render "—", not a coerced sum.
   const proFormaShares = (preDealShares != null && newShares != null) ? preDealShares + newShares : null;
-  const ownershipExistingPct = proFormaShares > 0 ? (preDealShares / proFormaShares) * 100 : null;
-  const ownershipNewPct      = proFormaShares > 0 ? (newShares     / proFormaShares) * 100 : null;
+  const ownershipExistingPctShares = proFormaShares > 0 ? (preDealShares / proFormaShares) * 100 : null;
+  const ownershipNewPctShares      = proFormaShares > 0 ? (newShares     / proFormaShares) * 100 : null;
+
+  // ── Phase 9 — equity-value ownership split (private deal: no share price → share-based split is null) ──
+  // Each side's equity value = its live market cap when public, else the private valuation's equity value
+  // (peer-median EV/EBITDA × EBITDA − net debt, computed in App.js from page-cited figures). Ownership is
+  // adjusted for the CASH consideration: only the STOCK portion of the purchase issues new ownership; cash
+  // paid does not dilute the acquirer's holders. tgtOwn = stockConsideration / (acquirerEquity + stock).
+  const equityAcquirer = A.marketCap != null ? A.marketCap : num(acquirer.valuation?.equityValue);
+  const equityTarget   = T.marketCap != null ? T.marketCap : num(target.valuation?.equityValue);
+  const stockPctModel  = dealAssumptions.stockPercent;
+  const stockConsiderationEq = (equityTarget != null && stockPctModel != null) ? equityTarget * (stockPctModel / 100) : null;
+  const ownByValue = (equityAcquirer != null && stockConsiderationEq != null && (equityAcquirer + stockConsiderationEq) > 0)
+    ? { newPct: (stockConsiderationEq / (equityAcquirer + stockConsiderationEq)) * 100,
+        existingPct: (equityAcquirer / (equityAcquirer + stockConsiderationEq)) * 100 }
+    : null;
+  // Prefer the share-based split (public deals — unchanged, byte-identical); use the value-based split ONLY
+  // when the share-based one is unavailable (private deal). Never fabricate: both null → null (renders "—").
+  const ownershipExistingPct = ownershipExistingPctShares != null ? ownershipExistingPctShares : (ownByValue ? ownByValue.existingPct : null);
+  const ownershipNewPct      = ownershipNewPctShares      != null ? ownershipNewPctShares      : (ownByValue ? ownByValue.newPct      : null);
+  // Relative-valuation exchange ratio: target equity value per unit of acquirer equity value. For a private
+  // deal with no per-share prices, this VALUE ratio is the meaningful "exchange ratio" (the per-share ratio
+  // below needs prices, so it stays null). Null-honest when either equity value is absent.
+  const valuationExchangeRatio = (equityTarget != null && equityAcquirer > 0) ? equityTarget / equityAcquirer : null;
 
   // ── Trading enterprise value (cap + debt − cash). Mirrors §2/§6 'trading EV' — distinct from
   //    the TRANSACTION EV (offer-based) used for deal multiples. Kept separate on purpose. ──
@@ -138,6 +160,13 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
     ownershipExistingPct,
     ownershipNewPct,
     exchangeRatio,
+    // Phase 9 — equity-value split + relative valuation (private deals; null on public, which use the
+    // share-based fields above). equityAcquirer/equityTarget: live cap when public, else private valuation.
+    equityAcquirer,
+    equityTarget,
+    stockConsiderationEq,
+    valuationExchangeRatio,
+    ownershipBasis: ownershipNewPctShares != null ? 'shares' : (ownByValue ? 'equity-value' : null),
     // transaction
     totalConsideration,
     pfEquityValue,
