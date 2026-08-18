@@ -21,6 +21,7 @@ const { locateStatements } = require('./server/services/locatorAgent'); // Phase
 const { extractPage } = require('./server/services/extractorAgent');    // Phase 3 — Sonnet line-item extractor
 const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
 const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
+const { classifySector } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
 const app = express();
@@ -2050,6 +2051,57 @@ app.get('/api/sector-multiple/:ticker', async (req, res) => {
   }
 });
 
+// ── /api/private-comps — sector-median EV/EBITDA for a PRIVATE company (no ticker) ─────────────────────
+// The classifier (classifierAgent, from the filing's Item 1 prose) yields a SIC. This maps that SIC to the
+// SAME curated peer pool the ticker flow uses (sectorPoolForSic → SECTOR_PEERS — one source of peer data)
+// and returns the MEDIAN of the peers' EV/EBITDA, read from FMP key-metrics-ttm `evToEBITDATTM` (the same
+// field /api/key-metrics and /api/sector-multiple already consume). Used to PRE-FILL a private valuation
+// multiple, which the user can override.
+//
+// NO fabricated fallback. If there is no peer pool for the SIC, or fewer than PRIVATE_COMPS_MIN peers carry
+// a usable EV/EBITDA, we return ok:false with a reason — the caller surfaces it and asks the user to enter
+// a multiple. A median of two is not a median; a silent default multiple is the exact failure this pipeline
+// exists to avoid.
+const PRIVATE_COMPS_MIN = 3;
+const pcCache = new Map();
+const PC_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+app.get('/api/private-comps', async (req, res) => {
+  const sic = String(req.query.sic || '').trim();
+  const sector = String(req.query.sector || '').trim() || null;
+  if (!sic) return res.json({ ok: false, error: 'no_sic', sector, note: 'No sector/SIC — classify the filing first, or enter a multiple manually.' });
+  const hit = pcCache.get(sic);
+  if (hit && Date.now() - hit.ts < PC_CACHE_TTL_MS) return res.json({ ...hit.payload, sector: sector || hit.payload.sector, cached: true });
+  try {
+    const pool = sectorPoolForSic(sic);
+    if (!pool) return res.json({ ok: false, sic, sector, note: `No peer set for SIC ${sic} — enter a valuation multiple manually.` });
+    const peerList = [...new Set(pool.pool)].slice(0, 8);
+    const kmFor = (t) => get(`https://financialmodelingprep.com/stable/key-metrics-ttm?symbol=${encodeURIComponent(t)}&apikey=${FMP_KEY}`).then(a => Array.isArray(a) ? a[0] : a).catch(() => null);
+    const kms = await Promise.all(peerList.map(kmFor));
+    // Keep only peers with a usable EV/EBITDA: positive and < 100 (a negative or absurd multiple is n/m —
+    // a loss-making or barely-profitable peer — and must NOT poison the median).
+    const peers = kms.map((k, i) => ({ ticker: peerList[i], evEbitda: (k && Number.isFinite(k.evToEBITDATTM)) ? +k.evToEBITDATTM.toFixed(1) : null }))
+      .filter(p => p.evEbitda != null && p.evEbitda > 0 && p.evEbitda < 100);
+    const n = peers.length;
+    if (n < PRIVATE_COMPS_MIN) {
+      return res.json({ ok: false, sic, sector, peers, n,
+        note: `Only ${n} peer EV/EBITDA multiple${n === 1 ? '' : 's'} available for SIC ${sic} — too few for a median (need ${PRIVATE_COMPS_MIN}). Enter a valuation multiple manually.` });
+    }
+    const sorted = peers.map(p => p.evEbitda).sort((a, b) => a - b);
+    const median = medianOf(sorted);
+    const payload = {
+      ok: true, sic, sector,
+      source: pool.exact ? 'sic-exact' : 'sic-group',
+      trust: pool.exact ? 'trusted' : 'untrusted',
+      peers, n, median: +median.toFixed(1),
+      note: pool.exact ? null : `SIC ${sic} matched only at the 2-digit group level — peers may be cross-industry; verify the multiple before relying on it.`,
+    };
+    pcCache.set(sic, { ts: Date.now(), payload });
+    res.json(payload);
+  } catch (e) {
+    res.json({ ok: false, sic, sector, error: 'private_comps_failed', note: e.message });
+  }
+});
+
 // FMP verified-data engine (provenance/basis-tagged, computed market cap, calendarized, graceful
 // free-tier degradation). Separate path from /api/verified so the deck's existing source is untouched.
 // Reads process.env.FMP_KEY. See fmpEngine.js.
@@ -2797,11 +2849,20 @@ app.post('/api/extract', uploadPerIp, uploadDailyGate, (req, res) => {
       const fy = latestFyFromItems(items);
       const fields = mapFields(items, fy);
 
+      // Phase 9 — sector classification from the filing's business description (Item 1). One cheap Haiku
+      // call; used ONLY to seed a private company's peer set (→ median EV/EBITDA). A classifier failure is
+      // non-fatal to extraction: the six figures already resolved, so we return classification:null and the
+      // client falls back to a user-entered multiple. 'other'/null sic is an honest "no confident sector".
+      let classification = null;
+      try { classification = await classifySector(pages); }
+      catch (e) { console.error('CLASSIFY_ERR', e.message); }
+
       return res.json({
         ok: true, filename: req.file.originalname, pageCount, ms: Date.now() - started,
         docFacts: { scale: loc.facts.scale, currency: loc.facts.currency, fiscalYearEnd: loc.facts.fiscalYearEnd, exceptPerShare: loc.facts.exceptPerShare, fiscalYear: fy },
         located: { income: loc.incomeStatementPages, balance: loc.balanceSheetPages, cashflow: loc.cashFlowPages },
         fields,   // { revenue, ebit, da, netIncome, cash, totalDebt } each { value, page, label, status }
+        classification,   // Phase 9 — { sector, sic, confidence, rationale } or null (classifier unavailable)
       });
     } catch (e) {
       cleanup();
