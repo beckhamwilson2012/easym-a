@@ -111,7 +111,40 @@ function SourceCell({ meta, unit, isSot, bg }) {
 
 // Shared core — `part` selects which row group + which chrome renders. Both parts call useVerifiedData
 // (memCached, single fetch); only part 'b' fetches /api/analyst-targets (reconcile + ratings).
-function DataVerificationCore({ target, pageNum, part, exhibitLabel }) {
+// Phase 8 (§16) — uploaded-filing provenance table: every figure with its page cite, the line as printed
+// in the filing (verbatim label), and its source (extracted / review / user override / user input).
+function ProvenanceTable({ title, prov }) {
+  if (!prov) return null;
+  const fmt = v => v == null ? '—' : Number(v).toLocaleString('en-US');
+  const srcColor = s => s === 'extracted' ? '#059669' : s === 'review' ? '#B45309' : '#6B7280';
+  const th = { padding: '4px 6px', fontWeight: 600 };
+  const td = { padding: '4px 6px', borderBottom: '1px solid #F3F4F6' };
+  return (
+    <div style={{ marginBottom: 18 }}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: '#0F2244', marginBottom: 6 }}>
+        {title}{prov.docFacts ? <span style={{ fontWeight: 400, color: '#6B7280', fontSize: 11 }}> · in {prov.docFacts.scale} · {prov.docFacts.currency} · FY end {prov.docFacts.fiscalYearEnd}</span> : null}
+      </div>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead><tr style={{ borderBottom: '1px solid #E5E7EB', color: '#6B7280', textAlign: 'left' }}>
+          <th style={th}>Figure</th><th style={{ ...th, textAlign: 'right' }}>Value ($M)</th><th style={th}>Page</th><th style={th}>As printed in the filing</th><th style={th}>Source</th>
+        </tr></thead>
+        <tbody>
+          {prov.rows.map((r, i) => (
+            <tr key={i}>
+              <td style={td}>{r.label}</td>
+              <td style={{ ...td, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{fmt(r.valueM)}</td>
+              <td style={td}>{r.page != null ? `p.${r.page}` : '—'}</td>
+              <td style={{ ...td, color: '#374151' }}>{r.verbatimLabel || '—'}</td>
+              <td style={{ ...td, color: srcColor(r.source), fontWeight: r.source === 'user override' ? 600 : 400 }}>{r.source}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function DataVerificationCore({ target, acquirer, pageNum, part, exhibitLabel }) {
   const { data, loading } = useVerifiedData(target?.ticker ?? null);
 
   // Deck analyst headline + FMP ratings — ONLY needed on §16b (reconcile callout + ratings row).
@@ -205,6 +238,30 @@ function DataVerificationCore({ target, pageNum, part, exhibitLabel }) {
   ];
 
   const isA = part === 'a';
+
+  // Phase 8 (§16) — uploaded/manual deck (no ticker → no EDGAR reconciliation to run). Show the extractor
+  // provenance instead: every figure → page cite + verbatim label + source. This is the audit trail a
+  // private-company deck needs, so no number is asserted without a way to check it.
+  const hasProvenance = (target?.provenance?.hasUpload) || (acquirer?.provenance?.hasUpload);
+  if (hasProvenance && !target?.ticker) {
+    return (
+      <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
+        <PageHeader
+          title={`Data Verification${isA ? '' : ' (continued)'}`}
+          subtitle="Uploaded-filing provenance — every figure traces to the page and the line as printed; a figure marked “user override” was edited after extraction"
+        />
+        <div style={{ padding: '12px 20px 24px' }}>
+          {isA
+            ? <>
+                <ProvenanceTable title={`${acquirer?.name || 'Acquirer'} — acquirer`} prov={acquirer?.provenance} />
+                <ProvenanceTable title={`${target?.name || 'Target'} — target`} prov={target?.provenance} />
+              </>
+            : <div style={{ fontSize: 12, color: '#6B7280' }}>Figure-by-figure provenance is on page 1 of this exhibit.</div>}
+        </div>
+      </PageFrame>
+    );
+  }
+
   return (
     <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
       <PageHeader

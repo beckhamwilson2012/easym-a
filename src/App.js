@@ -854,8 +854,32 @@ function App() {
 
   // ── Deck data builders ───────────────────────────────────────────────────────
 
+  // Phase 8 (§16) — per-company provenance for every required figure: the page cite + verbatim label the
+  // extractor recorded from the uploaded 10-K, or "user override" / "user input" when typed. Threaded to
+  // §16 (Data Verification) so a private/manual deck still shows an auditable trail for each number.
+  const buildProvenance = (P) => {
+    const upload   = P === 'A' ? uploadA : uploadB;
+    const override = P === 'A' ? overrideA : overrideB;
+    const docFacts = P === 'A' ? docFactsA : docFactsB;
+    const map = [
+      ['Revenue',          `company${P}Revenue`,         'revenue'],
+      ['Operating income', `company${P}OperatingIncome`, 'ebit'],
+      ['D&A',              null,                          'da'],
+      ['Net income',       `company${P}NetIncome`,       'netIncome'],
+      ['Cash',             `company${P}Cash`,            'cash'],
+      ['Total debt',       `company${P}Debt`,            'totalDebt'],
+    ];
+    const rows = map.map(([label, inputName, key]) => {
+      const uf = upload && upload.fields ? upload.fields[key] : null;
+      if (inputName && override[inputName]) return { label, valueM: inputs[inputName], page: null, verbatimLabel: null, source: 'user override' };
+      if (uf && uf.value != null) return { label, valueM: Math.round(uf.value / 1e6), page: uf.page, verbatimLabel: uf.label, source: uf.status === 'review' ? 'review' : 'extracted' };
+      return { label, valueM: inputName ? inputs[inputName] : null, page: null, verbatimLabel: null, source: 'user input' };
+    });
+    return { rows, docFacts, hasUpload: !!(upload && upload.fields) };
+  };
+
   const buildTargetForDeck = () => ({
-    name: nameB || 'Target Company', ticker: tickerB,
+    name: nameB || 'Target Company', ticker: tickerB, provenance: buildProvenance('B'),
     sic: sicB, sicDescription: sicDescriptionB,
     revenue: inputs.companyBRevenue, ebitda: inputs.companyBEBITDA,
     grossProfit: inputs.companyBGrossProfit, operatingIncome: inputs.companyBOperatingIncome,
@@ -892,7 +916,7 @@ function App() {
   });
 
   const buildAcquirerForDeck = () => ({
-    name: nameA || 'Acquirer', ticker: tickerA,
+    name: nameA || 'Acquirer', ticker: tickerA, provenance: buildProvenance('A'),
     sic: sicA, sicDescription: sicDescriptionA,
     revenue: inputs.companyARevenue, ebitda: inputs.companyAEBITDA,
     grossProfit: inputs.companyAGrossProfit, operatingIncome: inputs.companyAOperatingIncome,
