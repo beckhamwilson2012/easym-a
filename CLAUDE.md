@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Standing rules, read at session start. Sessions launch `claude --dangerously-skip-permissions`, so the deny list in `.claude/settings.json` is **not enforced** — the guardrails below are self-enforced.
+Standing rules, read at session start. The `.claude/settings.json` deny list is **live even under `--dangerously-skip-permissions`** (it refused `git branch` on 2026-08-17); everything else here is on me.
 
 ## File ownership
 
