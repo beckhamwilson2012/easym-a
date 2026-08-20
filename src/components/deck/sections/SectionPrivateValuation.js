@@ -15,6 +15,7 @@ const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : nu
 const fmtM = (v) => v == null ? '—' : (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString()}M)` : `$${Math.round(v).toLocaleString()}M`);
 const fmtX = (v) => v == null ? '—' : `${(+v).toFixed(1)}×`;
 const fmtPct = (v) => v == null ? '—' : `${(+v).toFixed(1)}%`;
+const fmtDate = (iso) => { if (!iso) return null; const d = new Date(iso); return Number.isNaN(d.getTime()) ? null : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); };
 
 // Page cite for a required input, from the company's §16 provenance rows (single source of the page trail).
 function citeFor(company, label) {
@@ -67,6 +68,7 @@ function ValuationCard({ role, company }) {
         {peerResolved ? (
           <div style={{ fontSize: 10.5, color: '#374151', marginBottom: 8, lineHeight: 1.5 }}>
             Multiple: <strong>{fmtX(v.multiple)}</strong>{v.multipleSource === 'user' ? ' (user-edited)' : ' — peer median'} of {v.n} peer{v.n === 1 ? '' : 's'}
+            {fmtDate(v.asOf) ? ` as of ${fmtDate(v.asOf)}` : ''}
             {v.multipleSource !== 'user' && v.peerMedian != null ? '' : (v.peerMedian != null ? ` (peer median ${fmtX(v.peerMedian)})` : '')}
             <div style={{ color: '#6B7280', marginTop: 2 }}>
               {v.peers.map((p) => `${p.ticker} ${fmtX(p.evEbitda)}`).join(' · ')}
