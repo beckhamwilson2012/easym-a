@@ -23,8 +23,7 @@ dirty and moving. Do not edit them without asking first, and never stage them in
 - Never `git add -A` or `git add .`. Stage explicit paths, one at a time.
 - `git status` before every commit. If a path is not mine, it does not go in the commit.
 - Never print `.env` contents or any key — not to stdout, not into a scratch file, not into a commit.
-- Never run `UNDO.txt` or any clause of it. Its first clause (`git checkout <base>`) is safe alone and the
-  rest (`branch -D`, `tag -d`) is not; running it has already destroyed a branch and its restore tag.
+- Never run `UNDO.txt` or any clause of it: the first (`git checkout <base>`) is safe alone, the rest (`branch -D`, `tag -d`) is not — it has already destroyed a branch and its restore tag.
 - Never launch a sweep (`agent/run-sweep.sh`) unless asked.
 - Scratch files go in the session scratchpad, never `/tmp` — names collide and stale probes get re-run as new.
 
@@ -32,14 +31,15 @@ dirty and moving. Do not edit them without asking first, and never stage them in
 
 - Diagnosis before implementation. Trace the real code path to `file:line` and print **live values at each
   hop**, source data to rendered cell. Never reason from symptoms or from the queue text.
-- No-op proof: show unaffected cases stay byte-identical via `tools/noop-ab/ab.sh` — manual entry does no
-  network fetch, so identical inputs give identical decks. A frozen live capture proves nothing: data drifts.
+- No-op proof: unaffected cases stay byte-identical via `tools/noop-ab/ab.sh` (manual entry does no network
+  fetch, so identical inputs give identical decks). A frozen live capture proves nothing — data drifts.
+- `docs/DEFERRED.md` is a LIVE register, not an archive: check it before filing a `## Discovered` entry, and
+  file in QUEUE.md's `pair · observed · expected · source` shape (D18 was rediscovered from scratch once).
 - Never fabricate a number. Absent → `null`, which renders as a dash. A genuine `0` and an absent value are
   different states and must render differently. `x || 0` is the defect, not the fix — `?? 0` and `: 0` are
   the same defect, so a `|| 0` grep is a floor, not a census.
 - Reuse the single-source-of-truth helper. No parallel code path for one pair or one ticker.
-- Making a value nullable is not safe alone: guard every sum and ratio consuming it in the **same commit**.
-  JS coerces `null` to 0 in addition, so an unguarded sum turns a conspicuous zero into a plausible number.
+- Making a value nullable is not safe alone: guard every sum and ratio consuming it in the **same commit** — JS coerces `null` to 0 in addition, turning a conspicuous zero into a plausible number.
 
 ## Named failure patterns
 

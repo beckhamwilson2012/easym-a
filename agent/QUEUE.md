@@ -213,6 +213,34 @@
 
 ## Discovered
 
+- **`dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null, in the same function 2b fixes.**
+  `const excessCashAvail = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0;` — when the
+  combined cash bucket does not resolve, "how much cash is available to fund the deal" is UNKNOWN, and this
+  publishes it as **$0 available**, which then flows into `newDebt` (the deal is funded entirely with new
+  borrowing) and `excessCashUsed`. It is the identical Pattern B as `:104`, three lines below it, on a
+  different input — and the ternary `: 0` shape is precisely the one a `|| 0` grep does not find
+  (docs/03-PATTERNS.md P3). Left untouched by the 2b work, which was scoped to the debt leg.
+  (pair: — (no deck repro on hand; needs a filer whose cash bucket fails to resolve) · observed:
+  `combinedCash == null` yields `excessCashAvail = 0`, so the model reports no cash available rather than
+  unknown, and `newDebt` absorbs the whole consideration · expected: absent → null, propagated through
+  `newDebt`/`excessCashUsed` exactly as the 2b fix propagates an absent debt; a genuine $0 stays 0 ·
+  source: `src/utils/dealCalc.js:107`)
+
+- **`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES, currently latent.**
+  Both read `parseFloat(results.newInterestAfterTax) > 0 ? [row] : []`. Once 2b lands, `newInterestAfterTax`
+  is **null** whenever the target's debt is unavailable; `parseFloat(null)` is `NaN` and `NaN > 0` is false,
+  so the After-Tax Financing Cost row silently **disappears** instead of rendering "—". It does not
+  fabricate — which is why it is filed here and not ranked — but it is safe by ACCIDENT: the guard is a
+  magnitude test standing in for a presence test, and it holds only because a NaN comparison happens to be
+  false. That is the textbook Pattern C. **It is not reproducible today**: at HEAD the value is never null,
+  so this becomes live only when the 2b fix is applied. Fix it in the same commit as 2b, or it ships as a
+  vanishing row nobody ordered.
+  (pair: RKLB/IRDM, once 2b lands — not reproducible before that · observed: with
+  `newInterestAfterTax = null` the financing-cost row is omitted entirely, so a deck whose financing cost is
+  UNKNOWN reads identically to one with no financing cost · expected: an unknown drag renders "—" like every
+  other absent figure; absence and zero must look different · source: `src/components/deck/sections/
+  SectionDashboard.js:338` and `:347`, both `parseFloat(...) > 0` used as a presence check)
+
 - **`capture.js:9` hardcodes `localhost:3001`, so a sweep can only ever run on that one port — and takes
   it by force.** `const BASE = 'http://localhost:3001'` is a module constant read by every deck fetch
   (`capture.js:32`) and the page load (`:112`); nothing in capture.js consults `BASE_URL`, which the runner

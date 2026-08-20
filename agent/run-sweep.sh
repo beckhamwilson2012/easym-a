@@ -450,22 +450,25 @@ restart_server() {
 #
 # echoes TAB-separated: defects <TAB> analyzable <TAB> not_analyzable <TAB> na_list <TAB> ok_list
 # rc 2 = analyzer CRASHED (a crash is not a defect — callers still die on it)
-measure_defects() {                            # $1 = snapshot dir
-  local dir="$1" flags="$RUN_DIR/flags-$$.json"
-  if ! RAW_DIR="$dir" FLAGS="$flags" EXPECTED="$RUN_DIR/expected-$$.json" node "$ANALYZE_JS" >/dev/null 2>&1; then
-    return 2
-  fi
-  DECK_DIR="$dir" node -e '
+measure_defects() {                            # $1 = snapshot dir, $2 = optional CSV of pairs to EXCLUDE
+  # EXCLUDE drops a pair from the numerator AND the denominator together (GATE_SPEC §13). Never one side:
+  # removing a pair defects while keeping it in the denominator would flatter the change, and keeping its
+  # defects while dropping it from the denominator would punish it. Both or neither.
+  local dir="$1" excl="${2:-}" flags="$RUN_DIR/flags-$$.json"
+  flags_of "$dir" "$flags" || return 2
+  DECK_DIR="$dir" EXCLUDE="$excl" node -e '
     const fs=require("fs");
-    const flags=JSON.parse(fs.readFileSync(process.argv[1]));
+    const drop=new Set((process.env.EXCLUDE||"").split(",").map(x=>x.trim()).filter(Boolean));
+    const flags=JSON.parse(fs.readFileSync(process.argv[1])).filter(f=>!drop.has(f.pair));
     const defects=flags.filter(f=>f.sev!=="build").length;
     // The analyzable/not-analyzable SETS come from the decks themselves, not from the flag list: a deck
     // that built cleanly emits no flag at all, so counting flag pairs would miss every clean pair.
     const dir=process.env.DECK_DIR; const ok=[], na=[];
     for(const f of fs.readdirSync(dir)){
       if(!f.endsWith(".json")) continue;
-      try{ const j=JSON.parse(fs.readFileSync(dir+"/"+f)); (j.ok?ok:na).push(j.pair||f.replace(/\.json$/,"")); }
-      catch(e){ na.push(f.replace(/\.json$/,"")); }
+      try{ const j=JSON.parse(fs.readFileSync(dir+"/"+f)); const pr=j.pair||f.replace(/\.json$/,"");
+           if(drop.has(pr)) continue; (j.ok?ok:na).push(pr); }
+      catch(e){ const pr=f.replace(/\.json$/,""); if(!drop.has(pr)) na.push(pr); }
     }
     ok.sort(); na.sort();
     process.stdout.write([defects, ok.length, na.length, na.join(","), ok.join(",")].join("\t"));
@@ -494,6 +497,124 @@ became_not_analyzable() {                       # $1 = diff json, $2 = after dir
         console.log(pair+" "+reason);
       }
     }' "$1" "$2"
+}
+
+# ── RENDER DEPTH (GATE_SPEC §13) ─────────────────────────────────────────────────────────────────────
+# The gate could not tell a DEGRADED capture from a healthy one, so it compared a half-rendered baseline
+# against a full after-capture and charged the difference to the change. Run 20260820-133803: ABNB/EXPE
+# rendered 31,571 chars at baseline under a pageError and 41,020 after (+29.9%), and the two defects that
+# became visible were pre-existing classes (queue items 1 and 4). Density read 1.17 -> 1.50 and a correct,
+# test-proven fix was reverted.
+#
+# depth = total innerText across a deck sections; errs = pageErrors. BOTH already exist in every capture —
+# this measures what was always recorded and never read.
+#
+# THE RULE IS ASYMMETRIC, AND THAT IS THE WHOLE DESIGN. The only way for a pair to leave the comparison is
+# to render MORE. Rendering LESS is harm and scores REGRESSION, so a capture can never be shrunk into a
+# better grade — the §2(b) hazard at a finer grain than build success. It also closes that hole in the
+# other direction: until now a deck could render half its content without failing its build, its defects
+# would silently vanish, and the change would look BETTER for it.
+#
+# ERROR MOVEMENT IS NOT ERROR GROWTH. Errors are judged on the signature multiset across the WHOLE capture
+# set, never per pair. In 20260820-133803 one pageError (Cannot read properties of undefined, reading
+# length) left ABNB/EXPE and appeared on KO/NSRGY — one before, one after. Per pair, KO/NSRGY gained an
+# error and shrank 4.9%; corpus-wide nothing new appeared. Charging a moved flake to the change is exactly
+# what §5 forbids for a 429, and the same reasoning applies here: a pair that gains an error whose
+# signature did not grow corpus-wide is INDETERMINATE, never a regression. Manufacturing that excuse would
+# require emitting an error signature that already exists elsewhere WITHOUT increasing its count, which is
+# not what breaking a deck does.
+#
+# A NULL-HONESTY FIX SHRINKS TEXT — deliberately, and far below the tolerance. Turning $2,467 into a dash
+# removes ~5 characters from a ~41,000-character deck (0.01%). DEPTH_TOL is three orders of magnitude above
+# that, so the class of fix this harness exists to enable can never trip the FELL rule.
+depth_states() {                               # $1 = before dir, $2 = after dir
+  # TSV: pair <TAB> STABLE|FELL|ROSE|INDET_ERRMOVE <TAB> depthBefore <TAB> depthAfter <TAB> pct <TAB> errB <TAB> errA
+  BEFORE_DIR="$1" AFTER_DIR="$2" DEPTH_TOL="$DEPTH_TOL" node -e '
+    const fs=require("fs"),path=require("path");
+    const read=d=>{ const m=new Map();
+      let files=[]; try{ files=fs.readdirSync(d); }catch(e){ return m; }
+      for(const f of files){ if(!f.endsWith(".json")) continue;
+        let j; try{ j=JSON.parse(fs.readFileSync(path.join(d,f),"utf8")); }catch(e){ continue; }
+        const sec=j.sections||{}; let depth=0;
+        for(const k of Object.keys(sec)) depth+=String(sec[k]==null?"":sec[k]).length;
+        const errs=(j.pageErrors||[]).map(e=>String(e).slice(0,160));
+        m.set(j.pair||f.replace(/\.json$/,"").replace("_","/"),{depth,errs});
+      } return m; };
+    const B=read(process.env.BEFORE_DIR), A=read(process.env.AFTER_DIR);
+    const TOL=parseFloat(process.env.DEPTH_TOL||"3");
+    const bag=m=>{ const c=new Map(); for(const v of m.values()) for(const e of v.errs) c.set(e,(c.get(e)||0)+1); return c; };
+    const cb=bag(B), ca=bag(A); let grew=false;
+    for(const [sig,n] of ca) if(n>(cb.get(sig)||0)) grew=true;
+    for(const p of [...new Set([...B.keys(),...A.keys()])].sort()){
+      const x=B.get(p), y=A.get(p);
+      if(!x||!y) continue;
+      const pct = x.depth===0 ? 0 : ((y.depth-x.depth)/x.depth*100);
+      const de  = y.errs.length - x.errs.length;
+      let state;
+      if(de>0)                    state = grew ? "FELL" : "INDET_ERRMOVE";
+      else if(pct<=-TOL)          state = "FELL";
+      else if(pct>=TOL || de<0)   state = "ROSE";
+      else                        state = "STABLE";
+      process.stdout.write([p,state,x.depth,y.depth,pct.toFixed(1),x.errs.length,y.errs.length].join("\t")+"\n");
+    }'
+}
+depth_pairs() {                                # $1 = TSV, $2... = states to select → space-separated pairs
+  local tsv="$1"; shift
+  printf '%s\n' "$tsv" | awk -F'\t' -v want=" $* " '$2!="" && index(want," "$2" ")>0 {printf "%s ",$1}'
+}
+
+# Run the analyzer over a capture dir, writing its flag array to $2. Split out of measure_defects so the
+# gate can hold the BEFORE and AFTER flag sets at the same time — comparing flag IDENTITY needs both, and
+# the single overwritten flags file could only ever hold the most recent one.
+flags_of() {                                   # $1 = capture dir, $2 = out json ; rc 2 = analyzer crashed
+  RAW_DIR="$1" FLAGS="$2" EXPECTED="$RUN_DIR/expected-$$.json" node "$ANALYZE_JS" >/dev/null 2>&1 || return 2
+  return 0
+}
+
+# Flags in AFTER and not in BEFORE, for ONE pair. Two uses: routing an INDETERMINATE pair newly-visible
+# findings into ## Discovered, and supplying the harm evidence the count demotion (§12c) requires before a
+# risen density may veto a test-proven fix.
+new_flags_for() {                              # $1 = before flags json, $2 = after flags json, $3 = pair
+  BF="$1" AF="$2" PAIR="$3" node -e '
+    const fs=require("fs");
+    const rd=f=>{ try{ return JSON.parse(fs.readFileSync(f,"utf8")).filter(x=>x.sev!=="build"); }catch(e){ return []; } };
+    const key=f=>[f.pair,f.root||"",f.kind||"",f.what||""].join(" | ");
+    const b=new Set(rd(process.env.BF).map(key));
+    for(const f of rd(process.env.AF)){
+      if(f.pair!==process.env.PAIR) continue;
+      if(b.has(key(f))) continue;
+      process.stdout.write([f.sev,f.root||"-",String(f.what||"").replace(/[\t\n]+/g," ").slice(0,300)].join("\t")+"\n");
+    }'
+}
+
+# The newly-visible flags of an INDETERMINATE pair are FINDINGS, not verdicts: they were invisible at
+# baseline because the deck did not render that far, so they say nothing about the change. They go to
+# QUEUE.md ## Discovered in its own pair/observed/expected/source shape rather than being dropped, because
+# "not caused by this change" is not the same as "not a defect".
+route_newly_visible() {                        # $1 = before flags, $2 = after flags, $3 = pairs, $4 = why
+  local pair sev root what n=0 body=""
+  for pair in $3; do
+    while IFS=$(printf '\t') read -r sev root what; do
+      [[ -n "$what" ]] || continue
+      n=$(( n + 1 ))
+      body+="
+- **Newly visible on $pair once its deck rendered further (run $RUN_ID iter $CUR_ITER).** NOT attributed to
+  that iteration change: $4, so this flag could not have been observed in the before-capture. Routed here by
+  GATE_SPEC §13 rather than counted against the change. Diagnose before promoting it to ## Open.
+  (pair: $pair · observed: [analyzer $sev/$root] $what · expected: not established here — this records an
+  observation the gate could finally see, not a diagnosis · source: analyzer flag root=$root, first observed
+  in agent/runs/$RUN_ID/cap/after-$CUR_ITER)
+"
+    done < <(new_flags_for "$1" "$2" "$pair")
+  done
+  [[ "$n" -eq 0 ]] && { log "  no newly-visible flags to route"; return 0; }
+  QUEUE_F="$QUEUE" BODY="$body" node -e '
+    const fs=require("fs"); const f=process.env.QUEUE_F;
+    let t=fs.readFileSync(f,"utf8");
+    if(!/^## Discovered/m.test(t)) t=t.replace(/\s*$/,"\n\n## Discovered\n");
+    t=t.replace(/^## Discovered[^\n]*\n/m, m=>m+process.env.BODY);
+    fs.writeFileSync(f,t);' || { log "  WARNING: could not append the newly-visible flags to QUEUE.md"; return 1; }
+  log "  routed $n newly-visible flag(s) to QUEUE.md ## Discovered"
 }
 
 # ── agent verdict (Part 2) ────────────────────────────────────────────────────────────────────────────
@@ -728,6 +849,14 @@ finalize_abnormal() {
 # before the fix: an agent that writes the fix first, then a test tuned to that fix's signature, passes
 # red/green too. That residual is closed by reading the test, not by this code.
 TEST_TIMEOUT="${TEST_TIMEOUT:-120}"            # a declared test is a unit check, not a capture
+# DEPTH_TOL — the % change in a pair rendered-text total that counts as MATERIAL (GATE_SPEC §13). DERIVED
+# from the archive, not chosen: across 23 pair-comparisons in four archived runs (20260815-150838,
+# 20260817-153300, 20260817-163640, 20260820-133803) the largest drift on a pair whose error state did not
+# change is 1.2% (BRK.B/PGR, genuine data movement, twice; every other stable pair reads 0.0-1.2%). The two
+# real render events in that archive measure -4.9% and +29.9%. 3% sits 2.5x above the observed noise
+# ceiling and well below the smallest real event, separating them with margin on both sides. Re-derive it
+# against the corpus if the decks change size; do not round it up to a friendlier number.
+DEPTH_TOL="${DEPTH_TOL:-3}"
 
 # Exit codes ARE the contract: 0 = PASS · 1 = FAIL · 2 = ERROR (could not run). Anything else — a missing
 # module, a syntax error, a signal, a timeout — is read as ERROR, never as a fail. This is GATE_SPEC §5's
@@ -1255,6 +1384,60 @@ while :; do
   # ── THE GATE (per GATE_SPEC) ──
   DEN_BEFORE="$(density "$DEF_BEFORE" "$ANA_BEFORE")"; DEN_AFTER="$(density "$DEF_AFTER" "$ANA_AFTER")"
   log "GATE: $DEF_BEFORE/$ANA_BEFORE = $DEN_BEFORE per pair  ->  $DEF_AFTER/$ANA_AFTER = $DEN_AFTER per pair (not-analyzable $NA_BEFORE -> $NA_AFTER)"
+
+  # ── DEPTH GATE (GATE_SPEC §13) — evaluated BEFORE the density comparison ────────────────────────────
+  # Skipped when §2(b) already has a lost pair to report: a deck that did not build is the coarser and
+  # older signal and owns that verdict. depth_states cannot see such a pair anyway (no after entry).
+  if [[ -z "$(lost_analyzable "$OK_LIST_BEFORE" "$OK_LIST_AFTER")" ]]; then
+    DEPTH_TSV="$(depth_states "$CUR_BEFORE_DIR" "$AFTER_DIR")"
+    printf '%s\n' "$DEPTH_TSV" | awk -F'\t' '$2!="STABLE" && $2!="" {printf "      | %-12s %-14s depth %s -> %s (%s%%)  errs %s -> %s\n",$1,$2,$3,$4,$5,$6,$7}'
+    D_FELL="$(depth_pairs "$DEPTH_TSV" FELL)"
+    D_INDET="$(depth_pairs "$DEPTH_TSV" ROSE INDET_ERRMOVE)"
+    D_STABLE="$(depth_pairs "$DEPTH_TSV" STABLE)"
+    if [[ -n "$D_FELL" ]]; then
+      log "GATE §13 VIOLATED: pair(s) rendered materially LESS after the change: $D_FELL → REGRESSION"
+      decide "iter $CUR_ITER REGRESSION per GATE_SPEC §13: $D_FELL rendered materially less content after the change (tolerance ${DEPTH_TOL}%), or gained an error signature new to the whole corpus. A deck that renders less silently drops its own defects out of the count, so this is breakage at a finer grain than a build failure — never an improvement."
+      revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+      finalize REGRESSION "~" "$FORCED" "GATE_SPEC §13: $D_FELL rendered materially less after the change (>${DEPTH_TOL}% of section text, or a corpus-new page error). Density would have read $DEN_BEFORE -> $DEN_AFTER, but a deck that renders less is breakage: its unrendered sections cannot be flagged, so the count improves for the wrong reason."
+      PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+      log "REVERTED (REGRESSION §13) · consecutive fail = $CONSEC_FAIL"; continue
+    fi
+    if [[ -n "$D_INDET" ]]; then
+      # GUARD 1 — the item OWN repro pair. If that deck is not comparable then nothing was measured about
+      # the item at all, and §5 precedent applies: an unmeasurable capture is INDETERMINATE, never a grade.
+      if [[ " $D_INDET " == *" $ITEM_PAIR "* ]]; then
+        log "GATE §13: the repro pair $ITEM_PAIR is not comparable between captures → INDETERMINATE (nothing was measured about this item)"
+        decide "iter $CUR_ITER INDETERMINATE per GATE_SPEC §13: the repro pair $ITEM_PAIR rendered a materially different amount of content between the two captures, so the deck carrying the defect could not be compared; reverted conservatively, breaker untouched."
+        revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+        finalize INDETERMINATE "~" "$FORCED" "GATE_SPEC §13: repro pair $ITEM_PAIR not comparable (render depth moved materially between captures), so no measurement of this item was possible."
+        PENDING_FRESH_BASELINE=1
+        log "INDETERMINATE (§13 repro pair) · consecutive fail unchanged = $CONSEC_FAIL"; continue
+      fi
+      # GUARD 2 — nothing comparable left. Never DONE on an unmeasured set.
+      if [[ -z "$D_STABLE" ]]; then
+        log "GATE §13: every captured pair is incomparable → INDETERMINATE (never DONE on an unmeasured set)"
+        decide "iter $CUR_ITER INDETERMINATE per GATE_SPEC §13: every captured pair rendered differently between the two captures, so the comparable set is empty and no density can be computed; reverted conservatively, breaker untouched."
+        revert_to "$CHECKPOINT"; WALL=$(( $(date +%s) - ITER_T0 ))
+        finalize INDETERMINATE "~" "$FORCED" "GATE_SPEC §13: no comparable pairs remained between the two captures."
+        PENDING_FRESH_BASELINE=1
+        log "INDETERMINATE (§13 empty comparable set) · consecutive fail unchanged = $CONSEC_FAIL"; continue
+      fi
+      D_EXCL="$(printf '%s' "$D_INDET" | sed 's/ *$//; s/  */,/g')"
+      log "GATE §13: $D_INDET not comparable (their baseline rendered differently) → excluded from BOTH captures; comparing on: $D_STABLE"
+      flags_of "$CUR_BEFORE_DIR" "$RUN_DIR/flags-before-$CUR_ITER.json" || true
+      flags_of "$AFTER_DIR"      "$RUN_DIR/flags-after-$CUR_ITER.json"  || true
+      route_newly_visible "$RUN_DIR/flags-before-$CUR_ITER.json" "$RUN_DIR/flags-after-$CUR_ITER.json" "$D_INDET" \
+        "its deck rendered a materially different amount of content between the two captures (tolerance ${DEPTH_TOL}%)"
+      if MEAS="$(measure_defects "$CUR_BEFORE_DIR" "$D_EXCL")"; then
+        IFS=$'\t' read -r DEF_BEFORE ANA_BEFORE NA_BEFORE NA_LIST_BEFORE OK_LIST_BEFORE <<< "$MEAS"
+      fi
+      if MEAS="$(measure_defects "$AFTER_DIR" "$D_EXCL")"; then
+        IFS=$'\t' read -r DEF_AFTER ANA_AFTER NA_AFTER NA_LIST_AFTER OK_LIST_AFTER <<< "$MEAS"
+      fi
+      DEN_BEFORE="$(density "$DEF_BEFORE" "$ANA_BEFORE")"; DEN_AFTER="$(density "$DEF_AFTER" "$ANA_AFTER")"
+      log "GATE §13 re-measured on the comparable set: $DEF_BEFORE/$ANA_BEFORE = $DEN_BEFORE  ->  $DEF_AFTER/$ANA_AFTER = $DEN_AFTER per pair"
+    fi
+  fi
   # ── CONDITION (b) FIRST — GATE_SPEC §2(b): "`analyzable_pairs_set` is a superset of
   #    `baseline_analyzable_pairs_set`", and §3: "it requires that no pair which was analyzable at baseline
   #    becomes not-analyzable. Do not remove condition (b) in any future edit; without it the gate is
@@ -1279,9 +1462,33 @@ while :; do
     revert_to "$CHECKPOINT"; finalize INDETERMINATE "~" "$FORCED"; PENDING_FRESH_BASELINE=1
     log "INDETERMINATE (no analyzable pairs) · consecutive fail unchanged = $CONSEC_FAIL"
   elif awk -v a="$DEN_AFTER" -v b="$DEN_BEFORE" 'BEGIN{exit !(a>b)}'; then
-    log "GATE: density $DEN_BEFORE -> $DEN_AFTER (rose) → REGRESSION"
-    revert_to "$CHECKPOINT"; finalize REGRESSION "~" "$FORCED"; PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
-    log "REVERTED (REGRESSION) · consecutive fail = $CONSEC_FAIL"
+    # ── COUNT DEMOTION for test-graded items (GATE_SPEC §12c) ────────────────────────────────────────
+    # An honest null can only hold the defect count FLAT or RAISE it: the analyzer flags a dash that hides a
+    # figure present elsewhere, and the cross-surface checks fire on dash-vs-value asymmetry. So for the
+    # class of fix this harness exists to enable, a risen count is not evidence of harm — it is the
+    # expected signature of the fix. The count keeps its veto, but it must now SHOW the harm: a pair lost
+    # (§2(b)), a pair rendering less (§13), or a NEW FLAG ON THE REPRO PAIR. Absent all three, a test that
+    # fails at the checkpoint and passes here outranks the number.
+    NEW_ON_REPRO=""
+    if [[ "$TESTED" -eq 1 ]]; then
+      flags_of "$CUR_BEFORE_DIR" "$RUN_DIR/flags-before-$CUR_ITER.json" || true
+      flags_of "$AFTER_DIR"      "$RUN_DIR/flags-after-$CUR_ITER.json"  || true
+      NEW_ON_REPRO="$(new_flags_for "$RUN_DIR/flags-before-$CUR_ITER.json" "$RUN_DIR/flags-after-$CUR_ITER.json" "$ITEM_PAIR")"
+    fi
+    if [[ "$TESTED" -eq 1 && -z "$NEW_ON_REPRO" ]]; then
+      log "GATE: density rose $DEN_BEFORE -> $DEN_AFTER, but the test went RED->GREEN, §2(b) and §13 hold, and NO new flag appeared on the repro pair $ITEM_PAIR → the count shows no harm → DONE_TESTED (§12c)"
+      decide "iter $CUR_ITER DONE_TESTED over a risen count: density $DEN_BEFORE -> $DEN_AFTER, but $ITEM_TEST fails at the checkpoint and passes on this tree, no pair was lost (§2(b)), none rendered less (§13), and no new flag appeared on the repro pair $ITEM_PAIR. An honest null can only hold the count flat or raise it, so a risen count carrying no evidence of harm does not overrule the test."
+      finalize DONE_TESTED "x" "$FORCED" "Graded by TEST over a risen count (GATE_SPEC §12c): $ITEM_TEST exits 1 at $CHECKPOINT and 0 here. Density $DEN_BEFORE -> $DEN_AFTER rose, but with no harm evidence — no lost pair, no pair rendering less, no new flag on $ITEM_PAIR. The count vetoes on harm; it does not certify."
+      CUR_BEFORE_DIR="$AFTER_DIR"; DEF_BEFORE="$DEF_AFTER"; ANA_BEFORE="$ANA_AFTER"; OK_LIST_BEFORE="$OK_LIST_AFTER"; CONSEC_FAIL=0
+      log "COMMITTED (item closed, test-graded over a risen count) iter $CUR_ITER"
+    else
+      log "GATE: density $DEN_BEFORE -> $DEN_AFTER (rose) → REGRESSION"
+      decide "iter $CUR_ITER REGRESSION: defect density rose $DEN_BEFORE -> $DEN_AFTER per analyzable pair after the change${TESTED:+ (test-graded: $TESTED)}${NEW_ON_REPRO:+, including a NEW flag on the repro pair $ITEM_PAIR}; reverted, item parked. §2(b) held and no pair rendered less, so the rise is attributed to the change itself."
+      revert_to "$CHECKPOINT"
+      finalize REGRESSION "~" "$FORCED" "Defect density rose $DEN_BEFORE -> $DEN_AFTER per analyzable pair.${NEW_ON_REPRO:+ New flag(s) on the repro pair $ITEM_PAIR: ${NEW_ON_REPRO}}"
+      PENDING_FRESH_BASELINE=1; CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+      log "REVERTED (REGRESSION) · consecutive fail = $CONSEC_FAIL"
+    fi
   elif [[ "$REVERT_SIGNAL" == "true" ]]; then
     BNA="$(became_not_analyzable "$DIFF_OUT" "$AFTER_DIR" | head -1)"; BNA_PAIR="${BNA%% *}"; BNA_REASON="${BNA##* }"
     log "GATE: $BNA_PAIR became not-analyzable (reason=$BNA_REASON)"

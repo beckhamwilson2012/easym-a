@@ -375,15 +375,36 @@ residual is closed by reading the test, not by the harness.
 
 ### 12c. What the gate does with the result
 
-A passing test **never overrides the count downward**. §2(b) and the density check run exactly as before;
-a test cannot license breaking other pairs. It speaks only where the count is silent:
+**THE COUNT VETOES ON HARM; IT NEVER CERTIFIES.** For a test-graded item the count is demoted to a
+one-sided instrument, and the reason is structural: **an honest null can only hold the defect count flat or
+RAISE it.** Check 22 flags a "—" that hides a figure present elsewhere, and the cross-surface checks fire on
+dash-vs-value asymmetry — so for the null-honesty class this harness exists to fix, a risen count is not
+evidence of harm, it is the expected signature of the fix. Run 20260820-133803 is the proof: a correct,
+red-then-green-proven fix to `dealCalc.js:104` was reverted on a count that rose for reasons no part of the
+change touched.
+
+So a risen count may veto a passing test only when it can SHOW harm, which means one of exactly three things:
+
+  1. **§2(b) violated** — a pair that was analyzable is not any more; or
+  2. **§13 violated** — a pair rendered materially less; or
+  3. **a NEW flag on the item's own repro pair** — flag identity, not count.
+
+Absent all three, a test that fails at the checkpoint and passes on the agent's tree outranks the number.
+The full table:
 
   - test RED->GREEN + density improved → `DONE` (unchanged).
   - test RED->GREEN + density **unchanged** → **`DONE_TESTED`**: item closes, breaker resets. This is the
     branch that used to be `UNVERIFIED`, and it is the whole point of the mechanism.
-  - test RED->GREEN + density **rose**, or §2(b) violated → still `REGRESSION`, still reverted.
+  - test RED->GREEN + density **rose, with none of the three harm signals** → **`DONE_TESTED`**, and the
+    rise is recorded in the commit body rather than acted on.
+  - test RED->GREEN + **any** of the three harm signals → `REGRESSION`, reverted. A passing test can never
+    buy off a lost pair or a deck that renders less: §13 fires before the density comparison and does not
+    consult the test at all.
   - test FAILS on the agent's tree → `TEST_FAILED`, reverted, **after-capture skipped** — a falsified fix
     short-circuits the ~10-minute capture the way `NO_VERDICT` does at the verdict gate.
+
+None of this loosens the count for a **count-graded** item: with no `test:` line a risen density is a
+`REGRESSION` exactly as before. The demotion is bought with a test, and only with a test.
 
 ### 12d. A committed test is READ-ONLY to the agent
 
@@ -401,6 +422,65 @@ writes *this* iteration is its own until it reports, and it may loosen that one 
 requires that the result discriminate. Note also that a reverted iteration's test is discarded with its
 code — `revert_to` does not preserve `agent/tests/` — which is what stops a `TEST_VACUOUS` tautology from
 persisting into the next iteration and becoming unfixable under rule 1.
+
+## 13. Render depth — a degraded capture is not a worse code
+
+`ok: true` and `checks_run == 24` say a deck BUILT. They do not say it RENDERED. A deck can hit a
+`pageError`, keep all 17 section containers, and fill half of them — and the analyzer, seeing no content,
+raises no flag on content that was never there. The count then measures **how far the decks rendered**, not
+the code, which is §2a's lesson at a finer grain.
+
+Measured, not asserted: on run `20260820-133803` ABNB/EXPE rendered **31,571** characters of section text at
+baseline under a pageError and **41,020** after (**+29.9%**), with `plAcquirer` 1520→3373, `plTarget`
+1524→3325, `proforma` 2245→4517 and `equity` 231→1158. The two defects that "appeared" are queue items 1 and
+4 — long-known classes, newly *visible*. Density read 1.17 → 1.50 and reverted a correct fix.
+
+### 13a. The two measurements
+
+Per pair, per capture, both already recorded in every capture file and never read until now:
+
+  - **depth** = total `innerText` across the deck's sections.
+  - **errs**  = `pageErrors.length`.
+
+### 13b. The rule is ASYMMETRIC, and that is the whole design
+
+  - **depth fell more than `DEPTH_TOL`, or a corpus-new error appeared → `REGRESSION`.**
+  - **depth rose more than `DEPTH_TOL`, or an error disappeared → that pair is INDETERMINATE**: dropped from
+    the numerator **and** the denominator together, named in the log, and its newly-visible flags routed to
+    `## Discovered` rather than counted against the change.
+  - **otherwise → compared exactly as before.**
+
+**The only way for a pair to leave the comparison is to render MORE.** Rendering less is harm and is scored
+as such, so a capture can never be shrunk into a better grade. This is the §2(b) hazard one level finer, and
+it closes a hole that ran the other way too: until now a deck could render half its content without failing
+its build, its defects would silently vanish, and the change would look BETTER for it. Nothing caught that.
+
+### 13c. `DEPTH_TOL` = 3%, derived from the archive
+
+Across 23 pair-comparisons in four archived runs (`20260815-150838`, `20260817-153300`, `20260817-163640`,
+`20260820-133803`) the largest drift on a pair whose error state did not change is **1.2%** (BRK.B/PGR,
+genuine data movement, twice); every other stable pair reads 0.0–1.2%. The two real render events measure
+**−4.9%** and **+29.9%**. 3% sits 2.5× above the observed noise ceiling and well below the smallest real
+event. Re-derive it if the decks change size; do not round it up to a friendlier number.
+
+**A null-honesty fix shrinks text on purpose, and cannot trip this.** Turning `$2,467` into `—` removes ~5
+characters from a ~41,000-character deck: **0.01%**, three orders of magnitude below the tolerance.
+
+### 13d. Error MOVEMENT is not error GROWTH
+
+Errors are judged on the signature multiset across the **whole capture set**, never per pair. On
+`20260820-133803` one pageError (`Cannot read properties of undefined (reading 'length')`) left ABNB/EXPE and
+appeared on KO/NSRGY — one before, one after. Per pair, KO/NSRGY "gained an error" and shrank 4.9%;
+corpus-wide, nothing new appeared. Charging a moved flake to the change is exactly what §5 forbids for a 429.
+So a pair that gains an error whose signature did **not** grow corpus-wide is INDETERMINATE, never a
+regression. Manufacturing that excuse would require emitting an error signature that already exists elsewhere
+*without* increasing its count — which is not what breaking a deck does.
+
+### 13e. Two guards, so an unmeasured set is never a pass
+
+  1. **The item's own repro pair is INDETERMINATE → the whole iteration is `INDETERMINATE`.** If the deck
+     carrying the defect could not be compared, nothing was measured about the item; §5's precedent applies.
+  2. **Every pair INDETERMINATE → `INDETERMINATE`, never `DONE`.** An empty comparable set is not a clean one.
 
 ## 11. Known blind spots
 
