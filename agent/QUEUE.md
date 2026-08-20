@@ -213,6 +213,30 @@
 
 ## Discovered
 
+- **`capture.js:9` hardcodes `localhost:3001`, so a sweep can only ever run on that one port — and takes
+  it by force.** `const BASE = 'http://localhost:3001'` is a module constant read by every deck fetch
+  (`capture.js:32`) and the page load (`:112`); nothing in capture.js consults `BASE_URL`, which the runner
+  otherwise threads through as `APP_PORT`. `restart_server` then kills **whoever holds that port**, by PID
+  (`run-sweep.sh:412` — `lsof -ti tcp:$APP_PORT`, escalating to `-9`), so launching a sweep terminates any
+  other session's app server without asking. On 2026-08-17 that was pid 73095, a second session's server in
+  this same repo.
+  **This is what makes worktree isolation a PARTIAL mitigation, and the reason is worth stating plainly:** a
+  dedicated worktree fixes the two tree-level hazards — the branch switch on the shared checkout, and
+  GATE_SPEC §6a's staging gap where a concurrent writer's file is committed into the sweep commit — but it
+  does NOT fix this one, because both trees still resolve `localhost:3001` to the same socket. Two sweeps,
+  or a sweep and a human session, still collide on the port and kill each other's servers. **Making `BASE`
+  configurable is therefore the PRECONDITION for two sessions ever running at once**; until it is, "one
+  writer per tree" (§6a) has to be read as the stronger "one app server per machine", and worktree
+  parallelism cannot be offered as a solution.
+  Note the constant already exists in three other places (`tools/noop-ab/run.js:16`,
+  `server/harness/edgar.js:8`, and the runner's own `BASE_URL` default), so a fix is a shared-source
+  question, not a one-line edit — the same drift shape as item 2c's three debt-concept lists.
+  (pair: — (harness artifact, no deck repro) · observed: `capture.js:9` is a hardcoded literal; a sweep
+  launched with `BASE_URL=http://localhost:3002` still captures against :3001, and `restart_server` kills
+  the unrelated process holding :3001 · expected: the collector reads the port from one shared source the
+  runner sets, so a sweep can be pinned to a private port and cannot kill another session's server ·
+  source: `tools/sweep-analyzer/capture.js:9`, consumed at `:32` and `:112`; kill at `run-sweep.sh:412`)
+
 - **`SNAP_N` reads "0\n0" on a CLEAN tree, and the log line is garbled by a shell syntax error.**
   `run-sweep.sh:1018` is `SNAP_N="$(grep -c '' "$SNAP_FILE" 2>/dev/null || echo 0)"`. On an empty snapshot
   file `grep -c ''` PRINTS `0` and EXITS 1 (no matches), so `|| echo 0` fires as well and `SNAP_N` becomes
