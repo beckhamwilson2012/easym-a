@@ -195,17 +195,6 @@ function DocFactsPanel({ facts, onChange }) {
   );
 }
 
-// Phase 7 — private-company toggle. When on, the panel swaps shares/EPS/share-price (market data) for a
-// single Total Equity Value input and the company carries hasMarketData:false (drives §8 deck suppression).
-function PrivateToggle({ checked, onChange }) {
-  return (
-    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#374151', margin: '2px 0 12px', cursor: 'pointer' }}>
-      <input type="checkbox" checked={checked} onChange={e => onChange(e.target.checked)} />
-      Private company — no public market data
-    </label>
-  );
-}
-
 // Phase 9 — private valuation panel. For a private company the equity value is DERIVED, not typed blind:
 // a peer-median EV/EBITDA (from the filing's classified sector) × EBITDA − net debt. The sector is an
 // EDITABLE dropdown, not a fact — the classifier's pick is a default the user can switch. When the top two
@@ -575,7 +564,7 @@ const defaultInputs = {
   companyBPrivate: false, companyBTotalEquity: 0,   // Phase 7 — private company: no market data, equity value entered directly
   companyBValuationMultiple: 0,   // Phase 9 — EV/EBITDA multiple (peer-median pre-fill, user-editable) for a private company
   companyBValuationPin: null,      // Phase 9 — pinned peer median { sic, sector, median, asOf, n, source, peers } so a saved deal reproduces
-  offerPricePerShare: 0, cashPercent: 60, transactionFees: 0,
+  offerPricePerShare: 0, offerValueTotal: 0, cashPercent: 60, transactionFees: 0,   // offerValueTotal ($M): total consideration for a PRIVATE target (no per-share price)
   synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
   // Stage 2E — min operating cash the pro-forma co retains, as a % of pro-forma LTM revenue (scaled default,
   // user-overridable). Drives the sources-of-funds construction in dealCalc (excess cash funds part of the deal).
@@ -589,6 +578,8 @@ function App() {
   const isMobile = windowWidth < 768;
 
   const [mode, setMode] = useState(null);
+  const [dealType, setDealType] = useState(null);   // Phase 9 — 'pubpub' | 'pubpriv' | 'privpriv'; derives each side's public/private + hasMarketData
+  const [offerValueTouched, setOfferValueTouched] = useState(false);
   const [inputs, setInputs] = useState(defaultInputs);
   const [results, setResults] = useState(null);
   const [analysisRun, setAnalysisRun] = useState(false);
@@ -952,7 +943,11 @@ function App() {
   const handleEditInputs = () => setAnalysisRun(false);
 
   const handleReset = () => {
-    setInputs(defaultInputs); setResults(null); setMode(null); setAnalysisRun(false);
+    setInputs(defaultInputs); setResults(null); setMode(null); setDealType(null); setAnalysisRun(false);
+    setOfferValueTouched(false);
+    setClassA(null); setClassB(null); setValuationA(null); setValuationB(null);
+    setAltValuationA(null); setAltValuationB(null); setSectorSicA(null); setSectorSicB(null);
+    setUploadA(null); setUploadB(null); setDocFactsA(null); setDocFactsB(null); setOverrideA({}); setOverrideB({});
     setFetchedA(false); setFetchedB(false);
     setNameA(''); setNameB(''); setTickerA(''); setTickerB('');
     setErrorA(''); setErrorB('');
@@ -979,7 +974,7 @@ function App() {
       nameB: nameB || 'Company B',
       tickerA, tickerB,
       companyTypeA, companyTypeB,
-      results, inputs, mode, fetchedA, fetchedB,
+      results, inputs, mode, dealType, fetchedA, fetchedB,
       bankFactsA, bankFactsB,
       savedAt: new Date().toLocaleDateString(),
     }, ...prev]);
@@ -989,7 +984,10 @@ function App() {
     setInputs(saved.inputs); setResults(saved.results);
     setNameA(saved.nameA); setNameB(saved.nameB);
     setTickerA(saved.tickerA || ''); setTickerB(saved.tickerB || '');
-    setMode(saved.mode || 'manual');
+    // Restore the deal type (derive from the saved private flags for pre-deal-type saves), and route the
+    // input screen to the unified entry view (the old 'auto'/'manual' modes were replaced by 'entry').
+    const dt = saved.dealType || (saved.inputs?.companyAPrivate ? 'privpriv' : (saved.inputs?.companyBPrivate ? 'pubpriv' : 'pubpub'));
+    setDealType(dt); setMode('entry');
     setCompanyTypeA(saved.companyTypeA || 'standard'); setCompanyTypeB(saved.companyTypeB || 'standard');
     setFetchedA(saved.fetchedA ?? true); setFetchedB(saved.fetchedB ?? true);
     setBankFactsA(saved.bankFactsA || null); setBankFactsB(saved.bankFactsB || null);
@@ -1208,6 +1206,176 @@ function App() {
   const sectionTitle = { color: '#0F2244', fontSize: 16, marginTop: 0, marginBottom: 16 };
   const col2 = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, marginBottom: 24 };
 
+  // ── Phase 9 — deal-type entry flow ──────────────────────────────────────────────────────────────────
+  // The deal type answers "public or private?" for each side, so there is no separate "Private company"
+  // checkbox (hasMarketData derives from the deal type). aPub/bPub decide which panel each side renders and
+  // whether the offer is per-share (public target) or a total consideration (private target, no per-share price).
+  const aPub = dealType === 'pubpub' || dealType === 'pubpriv';
+  const bPub = dealType === 'pubpub';
+  const chooseDealType = (dt) => {
+    setDealType(dt);
+    setInputs(prev => ({ ...prev, companyAPrivate: dt === 'privpriv', companyBPrivate: dt !== 'pubpub' }));
+    setMode('entry');
+  };
+  const handleOfferValueChange = (e) => { setOfferValueTouched(true); handleChange(e); };
+  const sideReady = (P, pub) => pub ? (P === 'A' ? fetchedA : fetchedB) : sixReady(P === 'A' ? uploadA : uploadB, P);
+  const bothReady = sideReady('A', aPub) && sideReady('B', bPub);
+  const targetEquity = (() => { const v = computeValuation('B'); return v ? v.equityValue : null; })();
+  const offerSet = bPub ? inputs.offerPricePerShare > 0 : parseFloat(inputs.offerValueTotal) > 0;
+  const entryDealSize = bPub
+    ? (inputs.offerPricePerShare > 0 && inputs.companyBShares > 0 ? inputs.offerPricePerShare * inputs.companyBShares : 0)
+    : (parseFloat(inputs.offerValueTotal) || 0);
+
+  const backLink = (
+    <button onClick={() => { setMode(null); setDealType(null); }}
+      style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 13, cursor: 'pointer', padding: 0, marginBottom: 16 }}>← Change deal type</button>
+  );
+
+  // Public side — ticker search + name confirmation + collapsible editable financials (unchanged from auto).
+  const renderTickerPanel = (P) => {
+    const isA = P === 'A';
+    const fetched = isA ? fetchedA : fetchedB;
+    const priceStatus = isA ? priceStatusA : priceStatusB;
+    const expanded = isA ? expandedA : expandedB;
+    const setExpanded = isA ? setExpandedA : setExpandedB;
+    const companyType = isA ? companyTypeA : companyTypeB;
+    const bankFacts = isA ? bankFactsA : bankFactsB;
+    return (
+      <div style={cardStyle}>
+        <h2 style={sectionTitle}>Company {P} — {isA ? 'Acquirer' : 'Target'}</h2>
+        <TickerSelect onSelect={isA ? handleSelectA : handleSelectB} error={isA ? errorA : errorB} fetched={fetched}
+          companyName={isA ? nameA : nameB} loading={isA ? loadingA : loadingB} dataSource={isA ? dataSrcA : dataSrcB} />
+        {fetched && (
+          <div style={{ marginTop: 10 }}>
+            {priceStatus.loading && <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6, fontStyle: 'italic' }}>⟳ Fetching live price…</div>}
+            <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
+              <div style={{ fontSize: 12, color: '#374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Rev {fmtMoney(inputs[`company${P}Revenue`])} · {inputs[`company${P}Shares`] > 0 ? `${Number(inputs[`company${P}Shares`]).toFixed(0)}M sh` : '— sh'} · {fmtPerShare(inputs[`company${P}EPS`])} EPS · {fmtMoney(inputs[`company${P}Cash`])} cash
+                  {inputs[`currentSharePrice${P}`] > 0 && <span style={{ color: '#6B7280', marginLeft: 4 }}>· {fmtPerShare(inputs[`currentSharePrice${P}`])} mkt</span>}
+                </span>
+                <button onClick={() => setExpanded(v => !v)} style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 12, cursor: 'pointer', padding: 0, flexShrink: 0 }}>
+                  {expanded ? 'Collapse ↑' : 'Edit financials ↓'}
+                </button>
+              </div>
+            </div>
+            {expanded && (
+              <div style={{ marginTop: 4 }}>
+                <LargeNumericField label="Revenue ($M)" name={`company${P}Revenue`} value={inputs[`company${P}Revenue`]} onChange={handleChange} />
+                {companyType === 'financial'
+                  ? <BankFactsDisplay bankFacts={bankFacts} />
+                  : <LargeNumericField label="EBITDA ($M)" name={`company${P}EBITDA`} value={inputs[`company${P}EBITDA`]} onChange={handleChange} />}
+                <LargeNumericField label="Net Income ($M)" name={`company${P}NetIncome`} value={inputs[`company${P}NetIncome`]} onChange={handleChange} />
+                <InputField label="Shares Outstanding (M)" name={`company${P}Shares`} value={inputs[`company${P}Shares`]} onChange={handleChange} />
+                <InputField label="EPS ($)" name={`company${P}EPS`} value={inputs[`company${P}EPS`]} onChange={handleChange} />
+                <LargeNumericField label="Cash ($M)" name={`company${P}Cash`} value={inputs[`company${P}Cash`]} onChange={handleChange} />
+                <LargeNumericField label="Total Debt ($M)" name={`company${P}Debt`} value={inputs[`company${P}Debt`]} onChange={handleChange} />
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  // Private side — upload dropzone (fast path) + six figures by hand (fallback) + the peer-median valuation.
+  // No shares/EPS/share-price (a private company has none); no "Private company" checkbox (the deal type said so).
+  const renderPrivatePanel = (P) => {
+    const isA = P === 'A';
+    const upload = isA ? uploadA : uploadB;
+    const override = isA ? overrideA : overrideB;
+    return (
+      <div style={cardStyle}>
+        <h2 style={sectionTitle}>Company {P} — {isA ? 'Acquirer' : 'Target'}</h2>
+        <UploadZone uploading={isA ? uploadingA : uploadingB} error={isA ? uploadErrA : uploadErrB} onFile={f => handleExtract(f, P)} />
+        <DocFactsPanel facts={isA ? docFactsA : docFactsB} onChange={isA ? setDocFactsA : setDocFactsB} />
+        <div style={{ fontSize: 11, color: '#6B7280', margin: '0 0 12px' }}>Upload a 10-K to pre-fill every figure with a page cite — or enter the six by hand below.</div>
+        <LargeNumericField label="Annual Revenue ($M)" name={`company${P}Revenue`} value={inputs[`company${P}Revenue`]} onChange={changeWithOverride(P)} placeholder="Enter revenue in millions" />
+        <ExtractCite cite={upload && upload.fields.revenue} overridden={override[`company${P}Revenue`]} />
+        <LargeNumericField label="EBITDA ($M)" name={`company${P}EBITDA`} value={inputs[`company${P}EBITDA`]} onChange={changeWithOverride(P)} />
+        <ExtractCite cite={ebitdaCite(upload)} overridden={override[`company${P}EBITDA`]} />
+        <LargeNumericField label="Net Income ($M)" name={`company${P}NetIncome`} value={inputs[`company${P}NetIncome`]} onChange={changeWithOverride(P)} placeholder="Enter net income in millions" />
+        <ExtractCite cite={upload && upload.fields.netIncome} overridden={override[`company${P}NetIncome`]} />
+        <ValuationPanel panel={P} valuation={isA ? valuationA : valuationB} altValuation={isA ? altValuationA : altValuationB} classification={isA ? classA : classB}
+          sectorList={sectorList} selectedSic={isA ? sectorSicA : sectorSicB}
+          multiple={inputs[`company${P}ValuationMultiple`]} ebitda={inputs[`company${P}EBITDA`]} debt={inputs[`company${P}Debt`]} cash={inputs[`company${P}Cash`]}
+          onMultipleChange={changeWithOverride(P)} onSectorChange={handleSectorChange(P)} overridden={override[`company${P}ValuationMultiple`]} />
+        <LargeNumericField label="Cash on Hand ($M)" name={`company${P}Cash`} value={inputs[`company${P}Cash`]} onChange={changeWithOverride(P)} />
+        <ExtractCite cite={upload && upload.fields.cash} overridden={override[`company${P}Cash`]} />
+        <LargeNumericField label="Total Debt ($M)" name={`company${P}Debt`} value={inputs[`company${P}Debt`]} onChange={changeWithOverride(P)} />
+        <ExtractCite cite={upload && upload.fields.totalDebt} overridden={override[`company${P}Debt`]} />
+      </div>
+    );
+  };
+
+  // Deal terms — offer is per-share for a public target, a total consideration for a private one (no per-share).
+  const renderDealTerms = () => (
+    <div style={{ ...cardStyle, border: '2px solid #0F2244' }}>
+      <h2 style={sectionTitle}>Deal Terms</h2>
+      {bPub ? (
+        <>
+          {suggestedPrice != null && suggestedPrice > 0 && (() => {
+            const sp = inputs.currentSharePriceB;
+            const prem = sp > 0 ? Math.round(((suggestedPrice - sp) / sp) * 100) : null;
+            const asOf = fmtPriceAsOf(priceStatusB.asOf);
+            return <SuggestionBadge primary={prem != null ? `${fmtPerShare(suggestedPrice)}/share (${prem}% premium)` : `${fmtPerShare(suggestedPrice)}/share`}
+              caption={sp > 0 ? `30% control premium over ${fmtPerShare(sp)} live market price${asOf ? ` · as of ${asOf}` : ''}` : null}
+              tooltip={buildOfferPriceTooltip(partialTarget)} onUse={() => setInputs(prev => ({ ...prev, offerPricePerShare: suggestedPrice }))} />;
+          })()}
+          <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
+            placeholder={suggestedPrice > 0 ? `e.g., ${fmtPerShare(suggestedPrice)}` : 'e.g., 128.08'} />
+          {inputs.offerPricePerShare > 0 && <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} asOf={priceStatusB.asOf} />}
+        </>
+      ) : (
+        <>
+          {targetEquity != null && (
+            <SuggestionBadge primary={fmtMoneyDual(targetEquity)} caption="Derived equity value (peer-median EV/EBITDA × EBITDA − net debt)"
+              onUse={() => { setOfferValueTouched(true); setInputs(prev => ({ ...prev, offerValueTotal: Math.round(targetEquity) })); }} />
+          )}
+          <LargeNumericField label="Offer / Total Equity Value ($M)" name="offerValueTotal" value={inputs.offerValueTotal} onChange={handleOfferValueChange} placeholder="Total consideration in millions" />
+          <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 8, fontStyle: 'italic' }}>Private target — the deal is a total consideration; there is no per-share offer price.</div>
+        </>
+      )}
+      <CashPercentageSlider value={inputs.cashPercent} onChange={(v) => setInputs(prev => ({ ...prev, cashPercent: v }))}
+        tooltip={buildCashPercentTooltip(bankDeal)} dealSize={entryDealSize}
+        acquirerSharePrice={acquirerSharePriceForSlider} acquirerSharesOutstanding={inputs.companyAShares} />
+      <div style={{ margin: '16px 0', borderTop: '1px solid #E5E7EB' }} />
+      {(() => {
+        const totalFee = calcSuggestedTransactionFees(entryDealSize);
+        if (!totalFee) return <SuggestionBadge label="Typical M&A fees: advisor (Lehman Formula) + legal" tooltip={buildTransactionFeesTooltip(0, bankDeal)} />;
+        return <SuggestionBadge primary={fmtMoneyDual(totalFee)} tooltip={buildTransactionFeesTooltip(entryDealSize, bankDeal)} onUse={() => setInputs(prev => ({ ...prev, transactionFees: totalFee }))} />;
+      })()}
+      <LargeNumericField label="Transaction Fees ($M)" name="transactionFees" value={inputs.transactionFees} onChange={handleChange} placeholder="e.g., 2,187" />
+    </div>
+  );
+
+  // Synergies — revenue-based suggestions (unchanged from the manual flow).
+  const renderSynergies = () => (
+    <div style={cardStyle}>
+      <h2 style={sectionTitle}>{bankDeal ? 'Cost Takeouts (Year 1 → Year 3)' : 'Synergies (Year 1 → Year 3)'}</h2>
+      {(() => {
+        const t = { companyType: 'standard', revenue: inputs.companyBRevenue, nonInterestExpense: 0 };
+        const a = { companyType: 'standard', revenue: inputs.companyARevenue, nonInterestExpense: 0 };
+        const s = [1, 2, 3].map(yr => calcSuggestedSynergy(t, a, yr));
+        const hasSug = s.every(x => x != null);
+        return [1, 2, 3].map(yr => {
+          const name = `synergiesY${yr}`;
+          const sug = s[yr - 1];
+          const caption = `Year ${yr}: ${['2%', '3.5%', '5%'][yr - 1]} of combined revenue`;
+          return (
+            <div key={yr}>
+              {hasSug && sug != null && (
+                <SuggestionBadge primary={fmtMoneyDual(sug)} caption={caption} tooltip={buildSynergyTooltip(t, a, yr)}
+                  onUse={() => setInputs(prev => ({ ...prev, [name]: sug }))} />
+              )}
+              <InputField label={`Year ${yr} Synergies ($M)`} name={name} value={inputs[name]} onChange={handleChange} placeholder="Enter synergies" />
+            </div>
+          );
+        });
+      })()}
+    </div>
+  );
+
   // ── Render: wait-then-build hold state (#5) — deck is deferred until the non-GAAP basis settles, so
   //    it is never painted on the wrong basis. Auto-advances to the deck via the settle/timeout effects. ──
   if (pendingBuild) {
@@ -1317,445 +1485,56 @@ function App() {
           </div>
 
           {/* Input screens */}
+          {/* Phase 9 — deal-type chooser: the deal type decides how each side is entered (no separate
+              public/private checkbox). Public side → ticker; private side → upload or manual. */}
           {!mode && (
             <div>
-              <h2 style={{ color: '#0F2244', textAlign: 'center', marginBottom: 8 }}>How would you like to enter company data?</h2>
-              <p style={{ color: '#6B7280', textAlign: 'center', marginBottom: 32 }}>Choose auto-lookup to pull real financials, or enter numbers manually.</p>
-              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 24, maxWidth: 1000, margin: '0 auto' }}>
-                <button style={btnStyle()} onClick={() => setMode('auto')}>
+              <h2 style={{ color: '#0F2244', textAlign: 'center', marginBottom: 8 }}>What kind of deal is this?</h2>
+              <p style={{ color: '#6B7280', textAlign: 'center', marginBottom: 32 }}>Pick the deal type — it decides how each side’s data is entered.</p>
+              <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 24, maxWidth: 1100, margin: '0 auto' }}>
+                <button style={btnStyle()} onClick={() => chooseDealType('pubpub')}>
                   <SearchIcon />
-                  <div style={{ fontWeight: 'bold', fontSize: 18, color: '#0F2244', marginBottom: 8 }}>Auto-Lookup</div>
-                  <div style={{ fontSize: 14, color: '#6B7280' }}>Search by company name or ticker and we pull the financials automatically.</div>
+                  <div style={{ fontWeight: 'bold', fontSize: 18, color: '#0F2244', margin: '8px 0' }}>Public → Public</div>
+                  <div style={{ fontSize: 14, color: '#6B7280' }}>Both are listed. Ticker lookup on both sides — everything automated.</div>
                 </button>
-                <button style={btnStyle()} onClick={() => setMode('manual')}>
+                <button style={btnStyle()} onClick={() => chooseDealType('pubpriv')}>
+                  <SearchIcon />
+                  <div style={{ fontWeight: 'bold', fontSize: 18, color: '#0F2244', margin: '8px 0' }}>Public → Private</div>
+                  <div style={{ fontSize: 14, color: '#6B7280' }}>Listed acquirer, private target. Ticker for the acquirer; upload or enter the target.</div>
+                </button>
+                <button style={btnStyle()} onClick={() => chooseDealType('privpriv')}>
                   <PencilIcon />
-                  <div style={{ fontWeight: 'bold', fontSize: 18, color: '#0F2244', marginBottom: 8 }}>Manual Entry</div>
-                  <div style={{ fontSize: 14, color: '#6B7280' }}>Enter the financial data yourself. Good for private companies or custom scenarios.</div>
+                  <div style={{ fontWeight: 'bold', fontSize: 18, color: '#0F2244', margin: '8px 0' }}>Private → Private</div>
+                  <div style={{ fontSize: 14, color: '#6B7280' }}>Neither is listed. Upload a 10-K or enter the six figures on both sides.</div>
                 </button>
               </div>
             </div>
           )}
 
-          {mode === 'auto' && (
+          {/* Phase 9 — unified entry view: each side renders the panel that fits its public/private nature. */}
+          {mode === 'entry' && (
             <div>
-              {/* ── Two company panels (collapsed by default) ─────────────── */}
+              {backLink}
               <div style={col2}>
-                {/* Panel A — Acquirer */}
-                <div style={cardStyle}>
-                  <h2 style={sectionTitle}>Company A — Acquirer</h2>
-                  <TickerSelect onSelect={handleSelectA} error={errorA} fetched={fetchedA}
-                    companyName={nameA} loading={loadingA} dataSource={dataSrcA} />
-                  {fetchedA && (
-                    <div style={{ marginTop: 10 }}>
-                      {priceStatusA.loading && (
-                        <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6, fontStyle: 'italic' }}>⟳ Fetching live price…</div>
-                      )}
-                      {/* Summary line */}
-                      <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
-                        <div style={{ fontSize: 12, color: '#374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            Rev {fmtMoney(inputs.companyARevenue)} · {inputs.companyAShares > 0 ? `${Number(inputs.companyAShares).toFixed(0)}M sh` : '— sh'} · {fmtPerShare(inputs.companyAEPS)} EPS · {fmtMoney(inputs.companyACash)} cash
-                            {inputs.currentSharePriceA > 0 && (
-                              <span style={{ color: '#6B7280', marginLeft: 4 }}>· {fmtPerShare(inputs.currentSharePriceA)} mkt</span>
-                            )}
-                          </span>
-                          <button onClick={() => setExpandedA(v => !v)}
-                            style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 12, cursor: 'pointer', padding: 0, flexShrink: 0 }}>
-                            {expandedA ? 'Collapse ↑' : 'Edit financials ↓'}
-                          </button>
-                        </div>
-                      </div>
-                      {/* Editable fields */}
-                      {expandedA && (
-                        <div style={{ marginTop: 4 }}>
-                          <LargeNumericField label="Revenue ($M)" name="companyARevenue" value={inputs.companyARevenue} onChange={handleChange} />
-                          {companyTypeA === 'financial'
-                            ? <BankFactsDisplay bankFacts={bankFactsA} />
-                            : <LargeNumericField label="EBITDA ($M)" name="companyAEBITDA" value={inputs.companyAEBITDA} onChange={handleChange} />
-                          }
-                          <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={handleChange} />
-                          <InputField label="Shares Outstanding (M)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
-                          <InputField label="EPS ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
-                          <LargeNumericField label="Cash ($M)" name="companyACash" value={inputs.companyACash} onChange={handleChange} />
-                          <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={handleChange} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Panel B — Target */}
-                <div style={cardStyle}>
-                  <h2 style={sectionTitle}>Company B — Target</h2>
-                  <TickerSelect onSelect={handleSelectB} error={errorB} fetched={fetchedB}
-                    companyName={nameB} loading={loadingB} dataSource={dataSrcB} />
-                  {fetchedB && (
-                    <div style={{ marginTop: 10 }}>
-                      {priceStatusB.loading && (
-                        <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6, fontStyle: 'italic' }}>⟳ Fetching live price…</div>
-                      )}
-                      {/* Summary line */}
-                      <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
-                        <div style={{ fontSize: 12, color: '#374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                          <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            Rev {fmtMoney(inputs.companyBRevenue)} · {inputs.companyBShares > 0 ? `${Number(inputs.companyBShares).toFixed(0)}M sh` : '— sh'} · {fmtPerShare(inputs.companyBEPS)} EPS · {fmtMoney(inputs.companyBCash)} cash
-                            {inputs.currentSharePriceB > 0 && (
-                              <span style={{ color: '#6B7280', marginLeft: 4 }}>· {fmtPerShare(inputs.currentSharePriceB)} mkt</span>
-                            )}
-                          </span>
-                          <button onClick={() => setExpandedB(v => !v)}
-                            style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 12, cursor: 'pointer', padding: 0, flexShrink: 0 }}>
-                            {expandedB ? 'Collapse ↑' : 'Edit financials ↓'}
-                          </button>
-                        </div>
-                      </div>
-                      {/* Editable fields */}
-                      {expandedB && (
-                        <div style={{ marginTop: 4 }}>
-                          <LargeNumericField label="Revenue ($M)" name="companyBRevenue" value={inputs.companyBRevenue} onChange={handleChange} />
-                          {companyTypeB === 'financial'
-                            ? <BankFactsDisplay bankFacts={bankFactsB} />
-                            : <LargeNumericField label="EBITDA ($M)" name="companyBEBITDA" value={inputs.companyBEBITDA} onChange={handleChange} />
-                          }
-                          <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={handleChange} />
-                          <InputField label="Shares Outstanding (M)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
-                          <InputField label="EPS ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />
-                          <LargeNumericField label="Cash ($M)" name="companyBCash" value={inputs.companyBCash} onChange={handleChange} />
-                          <LargeNumericField label="Total Debt ($M)" name="companyBDebt" value={inputs.companyBDebt} onChange={handleChange} />
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
+                {aPub ? renderTickerPanel('A') : renderPrivatePanel('A')}
+                {bPub ? renderTickerPanel('B') : renderPrivatePanel('B')}
               </div>
-
-              {/* ── Deal terms + synergies (shown once both loaded) ────────── */}
-              {fetchedA && fetchedB && (
+              {bothReady && (
                 <>
                   <div style={col2}>
-                    {/* ── Deal Terms Hero (2px navy border) ──────────────── */}
-                    <div style={{ ...cardStyle, border: '2px solid #0F2244' }}>
-                      <h2 style={sectionTitle}>Deal Terms</h2>
-
-                      {/* Offer price suggestion */}
-                      {suggestedPrice != null && suggestedPrice > 0 && (() => {
-                        const sp = inputs.currentSharePriceB;
-                        const prem = sp > 0 ? Math.round(((suggestedPrice - sp) / sp) * 100) : null;
-                        // The suggested price is a 30% premium over the LIVE market price (which moves
-                        // intraday) — label the as-of stamp so its run-to-run drift is explained, not mysterious.
-                        const asOf = fmtPriceAsOf(priceStatusB.asOf);
-                        return (
-                          <SuggestionBadge
-                            primary={prem != null
-                              ? `${fmtPerShare(suggestedPrice)}/share (${prem}% premium)`
-                              : `${fmtPerShare(suggestedPrice)}/share`}
-                            caption={sp > 0
-                              ? `30% control premium over ${fmtPerShare(sp)} live market price${asOf ? ` · as of ${asOf}` : ''}`
-                              : null}
-                            tooltip={buildOfferPriceTooltip(partialTarget)}
-                            onUse={() => setInputs(prev => ({ ...prev, offerPricePerShare: suggestedPrice }))}
-                          />
-                        );
-                      })()}
-                      {!priceStatusB.loading && inputs.currentSharePriceB === 0 && priceStatusB.attempts.length > 0 && (
-                        <PriceDiagnostic attempts={priceStatusB.attempts} />
-                      )}
-
-                      {/* Offer price input */}
-                      <InputField label="Offer Price Per Share ($)" name="offerPricePerShare"
-                        value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
-                        placeholder={suggestedPrice > 0 ? `e.g., ${fmtPerShare(suggestedPrice)}` : 'e.g., 128.08'} />
-                      {inputs.offerPricePerShare > 0 && (
-                        <PremiumCaption offerPrice={inputs.offerPricePerShare}
-                          sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null}
-                          showUnavailable={offerPriceTouched} asOf={priceStatusB.asOf} />
-                      )}
-
-                      {/* Cash/Stock mix */}
-                      <CashPercentageSlider
-                        value={inputs.cashPercent}
-                        onChange={(v) => setInputs(prev => ({ ...prev, cashPercent: v }))}
-                        tooltip={buildCashPercentTooltip(bankDeal)}
-                        dealSize={dealSizeForSlider}
-                        acquirerSharePrice={acquirerSharePriceForSlider}
-                        acquirerSharesOutstanding={inputs.companyAShares}
-                      />
-
-                      {/* Advisory fee */}
-                      <div style={{ margin: '16px 0', borderTop: '1px solid #E5E7EB' }} />
-                      {(() => {
-                        const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare : (suggestedPrice ?? 0);
-                        const dealSizeM = price > 0 && inputs.companyBShares > 0 ? price * inputs.companyBShares : 0;
-                        const fee = calcSuggestedTransactionFees(dealSizeM);
-                        if (!fee) return (
-                          <SuggestionBadge label="Enter offer price to estimate base advisory fee"
-                            tooltip={buildTransactionFeesTooltip(0, bankDeal)} />
-                        );
-                        return (
-                          <SuggestionBadge
-                            primary={fmtMoneyDual(fee)}
-                            caption="Base advisory fee only — legal &amp; regulatory are additional"
-                            tooltip={buildTransactionFeesTooltip(dealSizeM, bankDeal)}
-                            onUse={() => setInputs(prev => ({ ...prev, transactionFees: fee }))}
-                          />
-                        );
-                      })()}
-                      <LargeNumericField label="Transaction Fees — Base Advisory ($M)"
-                        name="transactionFees" value={inputs.transactionFees} onChange={handleChange}
-                        placeholder="Base advisory fee only" />
-                      {/* Stage 2E — min cash the pro-forma co retains (% of PF LTM revenue). Combined cash above it
-                          funds part of the deal, cutting new debt vs the 100%-debt assumption. User-overridable. */}
-                      <InputField label="Min Cash of PF Co (% of pro-forma LTM revenue)"
-                        name="minCashPct"
-                        value={inputs.minCashPct != null ? +(inputs.minCashPct * 100).toFixed(2) : +(MIN_CASH_PCT_DEFAULT * 100).toFixed(2)}
-                        onChange={(e) => { const p = parseFloat(e.target.value); setInputs(prev => ({ ...prev, minCashPct: Number.isFinite(p) ? p / 100 : MIN_CASH_PCT_DEFAULT })); }}
-                        note="Combined cash above this retained minimum funds part of the deal (excess cash used); banks keep the 100%-debt convention." />
-                      {(() => {
-                        const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare : (suggestedPrice ?? 0);
-                        const dealSizeM = price > 0 && inputs.companyBShares > 0 ? price * inputs.companyBShares : 0;
-                        const allIn = calcAllInFeeEstimate(dealSizeM);
-                        if (!allIn) return null;
-                        return (
-                          <CollapsibleNote label="All-in estimate (reference only)">
-                            <AllInFeeBreakdown allIn={allIn} />
-                          </CollapsibleNote>
-                        );
-                      })()}
-                    </div>
-
-                    {/* ── Synergies with preset buttons ───────────────────── */}
-                    <div style={cardStyle}>
-                      <h2 style={sectionTitle}>{bankDeal ? 'Cost Takeouts (Year 1 → Year 3)' : 'Synergies (Year 1 → Year 3)'}</h2>
-
-                      {/* Preset buttons */}
-                      {(() => {
-                        const targetBase = bankDeal
-                          ? (bankFactsB?.nonInterestExpense || 0)
-                          : (inputs.companyBRevenue || 0);
-                        if (!(targetBase > 0)) return null;
-                        const rates = bankDeal ? [0.05, 0.08, 0.11] : [0.02, 0.035, 0.05];
-                        const labels = ['Conservative', 'Base', 'Aggressive'];
-                        return (
-                          <div style={{ marginBottom: 14 }}>
-                            <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6 }}>
-                              Quick presets — fills all three years with a 57%/79%/100% ramp:
-                            </div>
-                            <div style={{ display: 'flex', gap: 8 }}>
-                              {labels.map((label, idx) => {
-                                const rate = rates[idx];
-                                const y3 = Math.round(targetBase * rate);
-                                const y2 = Math.round(y3 * 0.785);
-                                const y1 = Math.round(y3 * 0.57);
-                                return (
-                                  <button key={label}
-                                    onClick={() => setInputs(prev => ({ ...prev, synergiesY1: y1, synergiesY2: y2, synergiesY3: y3 }))}
-                                    style={{
-                                      flex: 1, padding: '8px 4px', borderRadius: 6,
-                                      border: '1px solid #D1D5DB', background: '#F9FAFB',
-                                      color: '#374151', fontSize: 12, cursor: 'pointer',
-                                      fontWeight: 500, textAlign: 'center', lineHeight: 1.4,
-                                    }}>
-                                    {label}
-                                    <div style={{ fontSize: 10, color: '#6B7280', marginTop: 2 }}>
-                                      {(rate * 100).toFixed(1)}% · Y3={fmtMoney(y3)}
-                                    </div>
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
-                        );
-                      })()}
-
-                      {/* Year 1/2/3 inputs with live % caption */}
-                      {[1, 2, 3].map(yr => {
-                        const name = `synergiesY${yr}`;
-                        const val = inputs[name] || 0;
-                        const targetBase = bankDeal ? (bankFactsB?.nonInterestExpense || 0) : (inputs.companyBRevenue || 0);
-                        const pct = targetBase > 0 && val > 0 ? ((val / targetBase) * 100).toFixed(1) : null;
-                        const label = bankDeal ? `Year ${yr} Cost Savings ($M)` : `Year ${yr} Synergies ($M)`;
-                        return (
-                          <div key={yr}>
-                            <LargeNumericField label={label} name={name} value={inputs[name]} onChange={handleChange} placeholder="e.g., 935" />
-                            {pct && (
-                              <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 8, fontStyle: 'italic' }}>
-                                = {pct}% of target {bankDeal ? 'NIE' : 'revenue'}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    {renderDealTerms()}
+                    {renderSynergies()}
                   </div>
-
-                  {/* ── Build button — disabled until offer > 0 ─────────── */}
-                  <button
-                    onClick={handleSubmit}
-                    disabled={inputs.offerPricePerShare === 0}
-                    style={{
-                      width: '100%', padding: 16, borderRadius: 10, fontSize: 16,
-                      fontWeight: 'bold', border: 'none',
-                      cursor: inputs.offerPricePerShare > 0 ? 'pointer' : 'not-allowed',
-                      background: inputs.offerPricePerShare > 0 ? '#0F2244' : '#E5E7EB',
-                      color: inputs.offerPricePerShare > 0 ? '#fff' : '#9CA3AF',
-                      transition: 'background 0.15s',
-                    }}
-                  >
-                    {inputs.offerPricePerShare > 0 ? 'Build merger model →' : 'Enter an offer price to build →'}
+                  <button onClick={handleSubmit} disabled={!(bothReady && offerSet)}
+                    title={!offerSet ? (bPub ? 'Enter an offer price to build.' : 'Enter a total offer value to build.') : undefined}
+                    style={{ width: '100%', padding: 16, background: (bothReady && offerSet) ? '#0F2244' : '#9CA3AF', color: '#fff', border: 'none', borderRadius: 10, fontSize: 16, fontWeight: 'bold', cursor: (bothReady && offerSet) ? 'pointer' : 'not-allowed' }}>
+                    {offerSet ? 'Run Analysis →' : (bPub ? 'Enter an offer price to build →' : 'Enter a total offer value to build →')}
                   </button>
                 </>
               )}
             </div>
           )}
 
-          {mode === 'manual' && (
-            <div>
-              <div style={col2}>
-                <div style={cardStyle}>
-                  <h2 style={sectionTitle}>Company A — Acquirer</h2>
-                  <UploadZone uploading={uploadingA} error={uploadErrA} onFile={f => handleExtract(f, 'A')} />
-                  <DocFactsPanel facts={docFactsA} onChange={setDocFactsA} />
-                  <PrivateToggle checked={inputs.companyAPrivate} onChange={v => setInputs(prev => ({ ...prev, companyAPrivate: v }))} />
-                  <LargeNumericField label="Annual Revenue ($M)" name="companyARevenue" value={inputs.companyARevenue} onChange={changeWithOverride('A')} placeholder="Enter revenue in millions" />
-                  <ExtractCite cite={uploadA && uploadA.fields.revenue} overridden={overrideA.companyARevenue} />
-                  <LargeNumericField label="EBITDA ($M)" name="companyAEBITDA" value={inputs.companyAEBITDA} onChange={changeWithOverride('A')} />
-                  <ExtractCite cite={ebitdaCite(uploadA)} overridden={overrideA.companyAEBITDA} />
-                  <LargeNumericField label="Net Income ($M)" name="companyANetIncome" value={inputs.companyANetIncome} onChange={changeWithOverride('A')} placeholder="Enter net income in millions" />
-                  <ExtractCite cite={uploadA && uploadA.fields.netIncome} overridden={overrideA.companyANetIncome} />
-                  {inputs.companyAPrivate
-                    ? <ValuationPanel panel="A" valuation={valuationA} altValuation={altValuationA} classification={classA}
-                        sectorList={sectorList} selectedSic={sectorSicA}
-                        multiple={inputs.companyAValuationMultiple} ebitda={inputs.companyAEBITDA} debt={inputs.companyADebt} cash={inputs.companyACash}
-                        onMultipleChange={changeWithOverride('A')} onSectorChange={handleSectorChange('A')} overridden={overrideA.companyAValuationMultiple} />
-                    : <>
-                        <InputField label="Shares Outstanding (millions)" name="companyAShares" value={inputs.companyAShares} onChange={handleChange} />
-                        <InputField label="Earnings Per Share ($)" name="companyAEPS" value={inputs.companyAEPS} onChange={handleChange} />
-                      </>}
-                  <LargeNumericField label="Cash on Hand ($M)" name="companyACash" value={inputs.companyACash} onChange={changeWithOverride('A')} />
-                  <ExtractCite cite={uploadA && uploadA.fields.cash} overridden={overrideA.companyACash} />
-                  <LargeNumericField label="Total Debt ($M)" name="companyADebt" value={inputs.companyADebt} onChange={changeWithOverride('A')} />
-                  <ExtractCite cite={uploadA && uploadA.fields.totalDebt} overridden={overrideA.companyADebt} />
-                  {!inputs.companyAPrivate && <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceA" value={inputs.currentSharePriceA} onChange={handleChange} placeholder="e.g., 749.28" />}
-                </div>
-                <div style={cardStyle}>
-                  <h2 style={sectionTitle}>Company B — Target</h2>
-                  <UploadZone uploading={uploadingB} error={uploadErrB} onFile={f => handleExtract(f, 'B')} />
-                  <DocFactsPanel facts={docFactsB} onChange={setDocFactsB} />
-                  <PrivateToggle checked={inputs.companyBPrivate} onChange={v => setInputs(prev => ({ ...prev, companyBPrivate: v }))} />
-                  <LargeNumericField label="Annual Revenue ($M)" name="companyBRevenue" value={inputs.companyBRevenue} onChange={changeWithOverride('B')} placeholder="Enter revenue in millions" />
-                  <ExtractCite cite={uploadB && uploadB.fields.revenue} overridden={overrideB.companyBRevenue} />
-                  <LargeNumericField label="EBITDA ($M)" name="companyBEBITDA" value={inputs.companyBEBITDA} onChange={changeWithOverride('B')} />
-                  <ExtractCite cite={ebitdaCite(uploadB)} overridden={overrideB.companyBEBITDA} />
-                  <LargeNumericField label="Net Income ($M)" name="companyBNetIncome" value={inputs.companyBNetIncome} onChange={changeWithOverride('B')} placeholder="Enter net income in millions" />
-                  <ExtractCite cite={uploadB && uploadB.fields.netIncome} overridden={overrideB.companyBNetIncome} />
-                  {inputs.companyBPrivate
-                    ? <ValuationPanel panel="B" valuation={valuationB} altValuation={altValuationB} classification={classB}
-                        sectorList={sectorList} selectedSic={sectorSicB}
-                        multiple={inputs.companyBValuationMultiple} ebitda={inputs.companyBEBITDA} debt={inputs.companyBDebt} cash={inputs.companyBCash}
-                        onMultipleChange={changeWithOverride('B')} onSectorChange={handleSectorChange('B')} overridden={overrideB.companyBValuationMultiple} />
-                    : <>
-                        <InputField label="Shares Outstanding (millions)" name="companyBShares" value={inputs.companyBShares} onChange={handleChange} />
-                        <InputField label="Earnings Per Share ($)" name="companyBEPS" value={inputs.companyBEPS} onChange={handleChange} />
-                      </>}
-                  <LargeNumericField label="Cash on Hand ($M)" name="companyBCash" value={inputs.companyBCash} onChange={changeWithOverride('B')} />
-                  <ExtractCite cite={uploadB && uploadB.fields.cash} overridden={overrideB.companyBCash} />
-                  <LargeNumericField label="Total Debt ($M)" name="companyBDebt" value={inputs.companyBDebt} onChange={changeWithOverride('B')} />
-                  <ExtractCite cite={uploadB && uploadB.fields.totalDebt} overridden={overrideB.companyBDebt} />
-                  {!inputs.companyBPrivate && <InputField label="Current Share Price ($) — optional, for premium calc" name="currentSharePriceB" value={inputs.currentSharePriceB} onChange={handleChange} placeholder="e.g., 749.28" />}
-                </div>
-              </div>
-              <div style={col2}>
-
-                {/* ── Deal Terms (manual) ────────────────────────────── */}
-                <div style={cardStyle}>
-                  <h2 style={sectionTitle}>Deal Terms</h2>
-                  <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange} placeholder="e.g., 974.06" />
-                  {inputs.offerPricePerShare > 0 && (
-                    <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} asOf={priceStatusB.asOf} />
-                  )}
-                  <CashPercentageSlider
-                    value={inputs.cashPercent}
-                    onChange={(v) => setInputs(prev => ({ ...prev, cashPercent: v }))}
-                    tooltip={buildCashPercentTooltip(false)}
-                    dealSize={inputs.offerPricePerShare > 0 && inputs.companyBShares > 0 ? inputs.offerPricePerShare * inputs.companyBShares : 0}
-                    acquirerSharePrice={inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null}
-                    acquirerSharesOutstanding={inputs.companyAShares}
-                  />
-                  {/* Divider before Transaction Fees */}
-                  <div style={{ margin: '16px 0', borderTop: '1px solid #E5E7EB' }} />
-
-                  {(() => {
-                    const dealSizeM = inputs.offerPricePerShare > 0 && inputs.companyBShares > 0
-                      ? inputs.offerPricePerShare * inputs.companyBShares : 0;
-                    const totalFee = calcSuggestedTransactionFees(dealSizeM);
-                    if (!totalFee) {
-                      return (
-                        <SuggestionBadge
-                          label="Typical M&A fees: advisor (Lehman Formula) + legal"
-                          tooltip={buildTransactionFeesTooltip(0, false)}
-                        />
-                      );
-                    }
-                    return (
-                      <SuggestionBadge
-                        primary={fmtMoneyDual(totalFee)}
-                        tooltip={buildTransactionFeesTooltip(dealSizeM, false)}
-                        onUse={() => setInputs(prev => ({ ...prev, transactionFees: totalFee }))}
-                      />
-                    );
-                  })()}
-                  <LargeNumericField label="Transaction Fees ($M)" name="transactionFees" value={inputs.transactionFees} onChange={handleChange} placeholder="e.g., 2,187" />
-                </div>
-
-                {/* ── Synergies (manual) ─────────────────────────────── */}
-                <div style={cardStyle}>
-                  <h2 style={sectionTitle}>Synergies (Year 1 → Year 3)</h2>
-                  {(() => {
-                    const manualTarget = { companyType: 'standard', revenue: inputs.companyBRevenue, nonInterestExpense: 0 };
-                    const manualAcquirer = { companyType: 'standard', revenue: inputs.companyARevenue, nonInterestExpense: 0 };
-                    const s1 = calcSuggestedSynergy(manualTarget, manualAcquirer, 1);
-                    const s2 = calcSuggestedSynergy(manualTarget, manualAcquirer, 2);
-                    const s3 = calcSuggestedSynergy(manualTarget, manualAcquirer, 3);
-                    const hasManualSuggestions = s1 != null && s2 != null && s3 != null;
-
-                    if (!hasManualSuggestions) {
-                      return [1, 2, 3].map(yr => (
-                        <InputField key={yr} label={`Year ${yr} Synergies ($M)`} name={`synergiesY${yr}`} value={inputs[`synergiesY${yr}`]} onChange={handleChange} placeholder="Enter synergies" />
-                      ));
-                    }
-                    return (
-                      <>
-                        {[1, 2, 3].map(yr => {
-                          const suggested = yr === 1 ? s1 : yr === 2 ? s2 : s3;
-                          const name = `synergiesY${yr}`;
-                          const pcts = ['2%', '3.5%', '5%'];
-                          const caption = `Year ${yr}: ${pcts[yr - 1]} of combined revenue`;
-                          return (
-                            <div key={yr}>
-                              {suggested != null && (
-                                <SuggestionBadge
-                                  primary={fmtMoneyDual(suggested)}
-                                  caption={caption}
-                                  tooltip={buildSynergyTooltip(manualTarget, manualAcquirer, yr)}
-                                  onUse={() => setInputs(prev => ({ ...prev, [name]: suggested }))}
-                                />
-                              )}
-                              <InputField label={`Year ${yr} Synergies ($M)`} name={name} value={inputs[name]} onChange={handleChange} placeholder="Enter synergies" />
-                            </div>
-                          );
-                        })}
-                      </>
-                    );
-                  })()}
-                </div>
-              </div>
-              <button onClick={handleSubmit} disabled={!(sixReady(uploadA, 'A') && sixReady(uploadB, 'B'))}
-                title={!(sixReady(uploadA, 'A') && sixReady(uploadB, 'B')) ? 'All six required fields (revenue, EBITDA, net income, cash, debt) must be present for both companies — enter them or upload a 10-K.' : undefined}
-                style={{ width: '100%', padding: 16, background: (sixReady(uploadA, 'A') && sixReady(uploadB, 'B')) ? '#0F2244' : '#9CA3AF', color: '#fff', border: 'none', borderRadius: 10, fontSize: 16, fontWeight: 'bold', cursor: (sixReady(uploadA, 'A') && sixReady(uploadB, 'B')) ? 'pointer' : 'not-allowed' }}>
-                Run Analysis →
-              </button>
-            </div>
-          )}
         </div>
       </div>
 

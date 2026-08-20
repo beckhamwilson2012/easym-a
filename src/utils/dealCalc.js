@@ -121,7 +121,11 @@ export function calculate(inputs) {
   } = inputs;
 
   const stockPercent       = 100 - cashPercent;
-  const totalPurchasePrice = offerPricePerShare * companyBShares;
+  // Purchase price: a PRIVATE target has no per-share price or share count, so the total consideration is
+  // entered directly ($M) as offerValueTotal; a public target uses offer price × shares. offerValueTotal
+  // wins only when > 0, so every existing public deal is byte-identical.
+  const _offerValueTotal   = Number.isFinite(parseFloat(inputs.offerValueTotal)) ? parseFloat(inputs.offerValueTotal) : 0;
+  const totalPurchasePrice = _offerValueTotal > 0 ? _offerValueTotal : offerPricePerShare * companyBShares;
   const cashPortion        = totalPurchasePrice * (cashPercent / 100);
   const stockPortion       = totalPurchasePrice * (stockPercent / 100);
 
