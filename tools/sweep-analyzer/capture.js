@@ -6,7 +6,20 @@ const puppeteer = require('/Users/beckhamwilson/Desktop/EasyM&A/ma-app/node_modu
 const http = require('http');
 const fs = require('fs');
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
-const BASE = 'http://localhost:3001';
+// SWEEP_APP_PORT — the app port this capture talks to. Default 3001, so every existing caller resolves
+// the identical string it did before and nothing about a default run changes.
+//
+// It was a hardcoded literal, which is what made worktree isolation a PARTIAL mitigation: a second tree
+// could have its own checkout and its own branch, but both trees resolved localhost:3001 to the same
+// socket, so a sweep still captured against — and restart_server still killed — whatever else held that
+// port. One writer per tree was therefore not enough; it had to be one app server per machine.
+//
+// The runner sets this from the SAME number it derives APP_PORT from, so the port it frees, the port it
+// starts the server on, and the port this collector fetches from cannot drift apart. They could before:
+// BASE_URL=...:3002 made the runner free :3002 and start a server that still listened on :3001 (no PORT
+// was ever passed), while this constant captured :3001 regardless.
+const APP_PORT = process.env.SWEEP_APP_PORT || '3001';
+const BASE = `http://localhost:${APP_PORT}`;
 // SWEEP_RAW_DIR run-scopes this directory. The default is unchanged, so any other caller behaves exactly
 // as before — this is path plumbing, not a change to what a deck contains or to what counts as dirty.
 //

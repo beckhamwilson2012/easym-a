@@ -54,8 +54,16 @@ PAIRS_LIMIT="${PAIRS_LIMIT:-${CFG_PAIRS_LIMIT:-0}}"   # 0 = all 50; >0 caps pair
 FROZEN_WAIT="${FROZEN_WAIT:-60}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-2700}"           # per-iteration wall-clock cap (45 min); --max-turns does NOT bound a permission-prompt hang
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-300}"          # cap on `npm run build` (measured ~7s); an unattended runner must never hang here
-BASE_URL="${BASE_URL:-http://localhost:3001}"
-APP_PORT="${BASE_URL##*:}"                      # port the app server (and capture.js) listen on — parsed from BASE_URL
+# ── THE APP PORT — one number, shared by the runner, the server it starts, and the collector ─────────
+# Precedence: an explicit BASE_URL wins, else SWEEP_APP_PORT, else 3001. Whatever the source, APP_PORT and
+# SWEEP_APP_PORT end up EQUAL and SWEEP_APP_PORT is exported, so capture.js:9 reads the same number the
+# runner frees and starts the server on. They could drift before: capture.js hardcoded 3001 while APP_PORT
+# came from BASE_URL, and restart_server passed no PORT at all — so BASE_URL=...:3002 freed :3002, started
+# a server still listening on :3001, and captured :3001. The kill was always scoped to the port the runner
+# COMPUTED; the bug was that the port it USED could be a different one.
+BASE_URL="${BASE_URL:-http://localhost:${SWEEP_APP_PORT:-3001}}"
+APP_PORT="${BASE_URL##*:}"                      # port the app server (and capture.js) listen on
+SWEEP_APP_PORT="$APP_PORT"; export SWEEP_APP_PORT
 BASE_BRANCH="${BASE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 RUN_DIR="$AGENT_DIR/runs/$RUN_ID"
@@ -421,7 +429,9 @@ restart_server() {
     sleep 0.5; i=$(( i + 1 ))
   done
   # 3. start fresh — EVERY PATH QUOTED (the & in EasyM&A splits an unquoted path)
-  caffeinate -is nohup node "$ROOT/server.js" > "$SERVER_LOG" 2>&1 &
+  # PORT is passed explicitly: server.js:2905 defaults to 3001, so without it a non-default run started a
+  # server on the one port it had just decided not to use.
+  PORT="$APP_PORT" caffeinate -is nohup node "$ROOT/server.js" > "$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   # 4. poll until the port ACCEPTS a connection, 30s cap (bash /dev/tcp — no curl/lsof needed for readiness)
   i=0
