@@ -21,7 +21,7 @@ const { locateStatements } = require('./server/services/locatorAgent'); // Phase
 const { extractPage } = require('./server/services/extractorAgent');    // Phase 3 — Sonnet line-item extractor
 const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
 const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
-const { classifySector } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
+const { classifySector, SECTORS: CLASSIFIER_SECTORS } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
 const app = express();
@@ -2062,6 +2062,13 @@ app.get('/api/sector-multiple/:ticker', async (req, res) => {
 // a usable EV/EBITDA, we return ok:false with a reason — the caller surfaces it and asks the user to enter
 // a multiple. A median of two is not a median; a silent default multiple is the exact failure this pipeline
 // exists to avoid.
+// The classifier's sector list (label + SIC), for the editable sector dropdown on the valuation panel —
+// one source of truth (the same SECTORS the classifier chooses from), so the UI can offer every sector and
+// the user can switch away from the classified one.
+app.get('/api/sectors', (_req, res) => {
+  res.json({ ok: true, sectors: CLASSIFIER_SECTORS.map(s => ({ sector: s.sector, sic: s.sic })) });
+});
+
 const PRIVATE_COMPS_MIN = 3;
 const pcCache = new Map();
 const PC_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -2093,6 +2100,9 @@ app.get('/api/private-comps', async (req, res) => {
       source: pool.exact ? 'sic-exact' : 'sic-group',
       trust: pool.exact ? 'trusted' : 'untrusted',
       peers, n, median: +median.toFixed(1),
+      // As-of stamp for the peer median: FMP EV/EBITDA moves day to day, so the median drifts even with the
+      // sector fixed. Pinning the date lets a saved deal show the median it was struck against, not a re-fetch.
+      asOf: new Date().toISOString(),
       note: pool.exact ? null : `SIC ${sic} matched only at the 2-digit group level — peers may be cross-industry; verify the multiple before relying on it.`,
     };
     pcCache.set(sic, { ts: Date.now(), payload });

@@ -48,27 +48,30 @@ function buildBusinessDigest(pages) {
     .join('\n');
 }
 
-const SYSTEM = `You classify a company into ONE industry sector, reading ONLY the business-description prose from the front of its SEC filing (the cover and "Item 1. Business"). You are a classifier, not an analyst: you never estimate value, pick a multiple, or read financial numbers.
+const SYSTEM = `You classify a company into industry sectors, reading ONLY the business-description prose from the front of its SEC filing (the cover and "Item 1. Business"). You are a classifier, not an analyst: you never estimate value, pick a multiple, or read financial numbers.
 
-Choose exactly one sector from the allowed list by what the company primarily DOES (its products/services and industry). If the prose does not let you place it CONFIDENTLY into one of the listed sectors, return sector "other" — do NOT force a weak match. "other" is the correct, honest answer for anything outside the list.
+From the allowed list, pick the single best-fit sector by what the company primarily DOES (its products/services and industry). If the prose does not let you place it CONFIDENTLY into one of the listed sectors, return sector "other" — do NOT force a weak match. "other" is the correct, honest answer for anything outside the list.
+
+Also report the plausible RUNNER-UP sectors (0-2), most-likely first, for any company that genuinely spans more than one industry (e.g. a food-and-beverage conglomerate could be beverages OR packaged food). This is not a weakness to hide — it is the point. If exactly one sector fits cleanly, return an empty alternatives list. Set confidence honestly: use "low" or "medium" (not "high") whenever a runner-up is genuinely competitive, because the choice materially changes the peer set.
 
 Allowed sectors (label — what it covers):
 ${SECTORS.map(s => `- ${s.sector} — ${s.hint}`).join('\n')}
 - other — none of the above fit confidently
 
-Call classify_sector with the sector label, your confidence (high/medium/low), and a one-line rationale quoting the descriptive phrase you keyed on. Do not output any financial figure.`;
+Call classify_sector with the best-fit sector, your confidence (high/medium/low), a one-line rationale quoting the descriptive phrase you keyed on, and the ranked runner-up alternatives. Do not output any financial figure.`;
 
 const TOOL = {
   name: 'classify_sector',
-  description: 'Report the single best-fit industry sector from the allowed list, based ONLY on the business-description prose.',
+  description: 'Report the best-fit industry sector plus ranked runner-up alternatives, based ONLY on the business-description prose.',
   input_schema: {
     type: 'object',
     properties: {
       sector:     { type: 'string', enum: [...SECTORS.map(s => s.sector), 'other'], description: 'The single best-fit sector, or "other" if none fit confidently.' },
-      confidence: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How confident the classification is, from the prose alone.' },
+      confidence: { type: 'string', enum: ['high', 'medium', 'low'], description: 'How confident the top choice is. Use low/medium when a runner-up is genuinely competitive.' },
       rationale:  { type: 'string', description: 'One line: the descriptive phrase from the filing you keyed on (no numbers).' },
+      alternatives: { type: 'array', items: { type: 'string', enum: SECTORS.map(s => s.sector) }, description: 'Ranked runner-up sectors (0-2, most-likely first) for a company that spans industries. Empty if exactly one sector fits. Do NOT include "other" or repeat the top sector.' },
     },
-    required: ['sector', 'confidence', 'rationale'],
+    required: ['sector', 'confidence', 'rationale', 'alternatives'],
   },
 };
 
@@ -126,12 +129,19 @@ async function classifySector(pages) {
 
   const sector = out.sector || 'other';
   const sic = SIC_BY_SECTOR[sector] || null;   // 'other' or any off-list value → null (no peer set)
+  // Runner-up sectors → {sector, sic}, deduped, excluding the top pick and any unlisted/other. These carry
+  // the ambiguity forward so the UI can show what each would imply — the choice is the user's, not the model's.
+  const alternatives = [...new Set(Array.isArray(out.alternatives) ? out.alternatives : [])]
+    .filter(s => s && s !== sector && SIC_BY_SECTOR[s])
+    .slice(0, 2)
+    .map(s => ({ sector: s, sic: SIC_BY_SECTOR[s] }));
   return {
     ok: true,
     sector,
     sic,
     confidence: out.confidence || 'low',
     rationale: String(out.rationale || '').slice(0, 240),
+    alternatives,
     model: HAIKU_MODEL,
     usage: { input_tokens: usage.input_tokens || 0, output_tokens: usage.output_tokens || 0 },
     costUsd,
