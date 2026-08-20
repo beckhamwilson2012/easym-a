@@ -213,6 +213,30 @@
 
 ## Discovered
 
+- **BLOCKING: `capture.js` drives a UI that no longer exists — every capture fails at stage `start`.**
+  `capture.js:112-116` opens the app and waits for a button matching `/Auto-Lookup/`, clicks it, then waits
+  for `input[id^="react-select"]`. Commit **`d1bfd2d`** ("feat(entry-flow): deal-type-first entry —
+  public/private per side, no checkbox, back link") removed that flow: `src/App.js:988` records that "the
+  old 'auto'/'manual' modes were replaced by 'entry'", and the string `Auto-Lookup` now appears nowhere in
+  `src/` or in the built bundle. So the collector times out 30s into its first interaction, every deck
+  returns `ok:false stage:"start" error:"Waiting failed: 30000ms exceeded" loadedCount:0`, and **the sweep
+  harness cannot produce a baseline at all.**
+  Measured 2026-08-20 on both ports, so it is not the SWEEP_APP_PORT change: a single-pair capture on
+  :34500 and the identical capture on the unchanged default :3001 both fail with the same stage, error and
+  `loadedCount:0`. The oracle fetches in the same run succeed and carry full data, so the app and the HTTP
+  path are healthy — it is only the browser-driving script that is stale.
+  **NOT fixed here, deliberately, and this is the reason:** re-pointing the driver at the new entry flow
+  changes which decks build and how far they render, which changes what the analyzer can see. That is a
+  change to WHAT GETS MEASURED, and it would silently re-baseline every comparison against the archive.
+  `capture.js` is off-limits to the sweep agent for exactly this reason (ITERATION_PROMPT SCOPE), and the
+  same logic applies to anyone editing it between runs: the re-pointing and the first baseline it produces
+  need to land together, deliberately, with the old and new capture sets compared pair by pair.
+  (pair: AAPL/VZ (reproduces on every pair) · observed: `ok:false stage:"start" error:"Waiting failed:
+  30000ms exceeded" loadedCount:0` on both :3001 and :34500, with oracles fetched successfully in the same
+  record · expected: the collector drives the current entry flow and builds a deck, as it did before
+  `d1bfd2d` · source: `tools/sweep-analyzer/capture.js:113` waiting on `/Auto-Lookup/`, against the entry
+  flow introduced by `d1bfd2d`; `src/App.js:988` documents the replacement)
+
 - **`dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null, in the same function 2b fixes.**
   `const excessCashAvail = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0;` — when the
   combined cash bucket does not resolve, "how much cash is available to fund the deal" is UNKNOWN, and this
