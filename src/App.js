@@ -670,7 +670,10 @@ function App() {
     const setClass     = panel === 'A' ? setClassA : setClassB;
     setUploading(true); setErr('');
     const fd = new FormData(); fd.append('file', file);
-    fetch(apiUrl('/api/extract'), { method: 'POST', body: fd })
+    // Shared-secret header for the upload gate (production only; unset in dev → gate is open). Baked into
+    // the build via REACT_APP_UPLOAD_TOKEN; must equal the server's UPLOAD_SHARED_SECRET. Not real auth.
+    const uploadToken = process.env.REACT_APP_UPLOAD_TOKEN;
+    fetch(apiUrl('/api/extract'), { method: 'POST', body: fd, headers: uploadToken ? { 'x-upload-token': uploadToken } : undefined })
       .then(r => r.json().then(j => ({ ok: r.ok, j })))
       .then(({ ok, j }) => {
         if (!ok || !j || !j.ok) { setErr((j && j.error) || 'Extraction failed.'); setUploading(false); return; }

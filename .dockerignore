@@ -1,0 +1,20 @@
+# Keep the build context (and image) lean, and never copy the host's node_modules over the
+# Linux ones installed by `npm ci` (macOS-built native modules would break in the container).
+node_modules
+build
+.git
+.gitignore
+
+# Sweep harness + local artifacts — not used by server.js at runtime, so they don't belong in
+# the production image (keeps the context small and avoids shipping run data).
+agent/runs
+agent/dashboard
+tools
+docs
+_archive
+*.mp4
+
+# Local scratch / env
+.env
+.env.*
+*.log

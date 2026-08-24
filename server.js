@@ -2763,7 +2763,21 @@ function uploadDailyGate(req, res, next) {
   next();
 }
 
-app.post('/api/upload', uploadPerIp, uploadDailyGate, (req, res) => {
+// Shared-secret gate for the upload endpoints. NOT auth — it stops an open public endpoint from being
+// found and drained (each /api/extract call spends the Anthropic key). When UPLOAD_SHARED_SECRET is set
+// (production), the request must carry a matching `x-upload-token` header; the frontend sends it
+// (REACT_APP_UPLOAD_TOKEN, baked into the build). When the secret is UNSET (local dev), the gate is open
+// so dev and the capture harness work without a token. The hard ceiling on spend is the Anthropic-side
+// budget cap; this is the cheap first line that keeps random traffic off the model. Runs BEFORE the rate
+// limiters so an un-tokened request never consumes rate-limit budget.
+function uploadSecretGate(req, res, next) {
+  const secret = process.env.UPLOAD_SHARED_SECRET;
+  if (!secret) return next();                                   // unset → open (dev)
+  if (req.get('x-upload-token') === secret) return next();      // matching token → allow
+  return res.status(401).json({ error: 'Missing or invalid upload token.' });
+}
+
+app.post('/api/upload', uploadSecretGate, uploadPerIp, uploadDailyGate, (req, res) => {
   uploadMw(req, res, async (mErr) => {
     const cleanup = () => { if (req.file && req.file.path) fs.promises.unlink(req.file.path).catch(() => {}); };
     try {
@@ -2816,7 +2830,7 @@ const latestFyFromItems = (items) => {
   for (const it of items) { const ys = String(it.periodLabel || '').match(/\b(?:19|20)\d{2}\b/g); if (ys) for (const y of ys) mx = Math.max(mx, +y); }
   return mx;
 };
-app.post('/api/extract', uploadPerIp, uploadDailyGate, (req, res) => {
+app.post('/api/extract', uploadSecretGate, uploadPerIp, uploadDailyGate, (req, res) => {
   uploadMw(req, res, async (mErr) => {
     const cleanup = () => { if (req.file && req.file.path) fs.promises.unlink(req.file.path).catch(() => {}); };
     try {
