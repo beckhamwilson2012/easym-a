@@ -176,7 +176,8 @@ must represent a wrong premise, never a correct report or a network event.
 
 **It is the only non-`DONE` status that commits the agent's actual code.** Every other
 failure path calls `revert_to`; this one deliberately does not, then calls
-`finalize`, whose `gitr add -A` sweeps the working tree into the commit.
+`finalize`, which stages the paths the agent changed — see **What gets staged** below.
+`finalize` does **not** use `git add -A`; that was removed deliberately.
 
 That is intentional — run `20260816-202617` diagnosed item 2, wrote the fix, and
 died at turn 61 while verifying, and `NO_VERDICT` reverted a complete $5 fix to

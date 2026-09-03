@@ -1241,7 +1241,9 @@ while :; do
     log "NO_VERDICT (${VERDICT#NO_VERDICT }) — untrustworthy agent result; revert, leave item OPEN, save envelope to diagnosis/"
     # Part 3: the envelope lands in TWO places on purpose.
     #   $AGENT_DIR/diagnosis — the durable, committed record; survives the revert below via revert_to's
-    #                          preserve list, and finalize's `gitr add -A` then commits it.
+    #                          preserve list, and finalize then stages it EXPLICITLY (`gitr add --
+    #                          "$AGENT_DIR/diagnosis"`). NOT `git add -A`: that was removed deliberately —
+    #                          see tree_snapshot() for what replaced it and the gap it does not close.
     #   $RUN_DIR             — gitignored, so it survives regardless of what git does. $AGENT_OUT already
     #                          lives here as agent-N.json; the named copy makes it findable by run+iter
     #                          without knowing the runner's internal filename.
@@ -1279,8 +1281,8 @@ while :; do
     decide "iter $CUR_ITER PARTIAL: ${PARTIAL_DETAIL:-agent reported a split defect class with no detail}; item left OPEN with the remaining half recorded, breaker untouched."
     revert_to "$CHECKPOINT"
     # ORDER MATTERS: QUEUE.md is TRACKED, so it is not on revert_to's preserve list — annotating before the
-    # revert would hand the note straight to `reset --hard`. Write it after, so finalize's `gitr add -A`
-    # commits it. (This is the same ordering finalize/queue_mark already relies on.)
+    # revert would hand the note straight to `reset --hard`. Write it after, so finalize's explicit
+    # `gitr add -- "$QUEUE"` commits it. (Same ordering finalize/queue_mark already relies on.)
     [[ -n "$PARTIAL_DETAIL" ]] && { queue_note "<!-- PARTIAL run $RUN_ID iter $CUR_ITER: $PARTIAL_DETAIL -->" || log "PARTIAL: could not annotate the queue item"; }
     WALL=$(( $(date +%s) - ITER_T0 )); finalize PARTIAL "o" "$FORCED"; PENDING_FRESH_BASELINE=1
     log "PARTIAL · consecutive fail unchanged = $CONSEC_FAIL · next item"; continue
