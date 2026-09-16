@@ -2,7 +2,7 @@
 // per-company oracle (/quote,/api/price) at build time, save a durable raw record
 // per pair to $SWEEP_RAW_DIR/{A}_{B}.json (default /tmp/sweep_v2_raw). Analysis is a separate pass so an
 // expensive live build is never lost. Backoff on failure; never abort the batch.
-const puppeteer = require('/Users/beckhamwilson/Desktop/EasyM&A/ma-app/node_modules/puppeteer-core');
+const puppeteer = require('puppeteer-core');
 const http = require('http');
 const fs = require('fs');
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';

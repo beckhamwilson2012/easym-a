@@ -26,6 +26,8 @@ dirty and moving. Do not edit them without asking first, and never stage them in
 - Never run `UNDO.txt` or any clause of it: the first (`git checkout <base>`) is safe alone, the rest (`branch -D`, `tag -d`) is not — it has already destroyed a branch and its restore tag.
 - Never launch a sweep (`agent/run-sweep.sh`) unless asked.
 - Scratch files go in the session scratchpad, never `/tmp` — names collide and stale probes get re-run as new.
+- Übersicht widget changes are verified with `~/bin/ueb-check.sh <widget.jsx>`, never by running the raw file text: the command is a JS template literal, so JS rewrites its escapes (`\n`) before the shell sees it.
+- `~/.coursework.txt` rows for ACC 310 and REL 250 are managed by `com.beckham.coursework-sync` (Canvas, every 30 min): manual edits to date/done on those rows may be overwritten; a manual `[x]` is preserved.
 
 ## Working method
 

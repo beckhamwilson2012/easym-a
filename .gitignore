@@ -45,3 +45,9 @@ agent/dashboard/dashboard.log
 
 # sweep dashboard working-queue state (paste-replaces; not the harness QUEUE.md)
 agent/dashboard/plan.json
+
+# pre-demo run-through artifacts (scripts/runthrough.mjs) — transient, like agent/runs/
+scripts/.runthrough/
+
+# Claude Code preview-pane launch config — machine-local, written by the app, not project config
+.claude/launch.json

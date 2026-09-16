@@ -1,0 +1,90 @@
+{
+  "note": "Golden fixture for scripts/runthrough.mjs §0a. Frozen /quote fields + prices, and the toCalcInputs() output they must produce. Regenerate ONLY when App.js’s mapping has deliberately changed: node scripts/runthrough.mjs --update-fixture",
+  "generatedAt": "2026-09-01T23:16:43.145Z",
+  "pair": {
+    "acquirer": "NET",
+    "target": "DDOG",
+    "premiumPct": 30,
+    "cashPercent": 50
+  },
+  "quotes": {
+    "NET": {
+      "revenue": 2168,
+      "ebitda": -17,
+      "netIncome": -102,
+      "operatingIncome": -207,
+      "grossProfit": 1615,
+      "freeCashFlow": 919,
+      "shares": 348,
+      "dilutedShares": 348,
+      "eps": -0.29,
+      "cash": 1664,
+      "shortTermInvestments": 2499,
+      "debt": 3270,
+      "ltm": {
+        "trusted": true,
+        "revenue": 2512
+      }
+    },
+    "DDOG": {
+      "revenue": 3427,
+      "ebitda": 5,
+      "netIncome": 108,
+      "operatingIncome": -44,
+      "grossProfit": 2740,
+      "freeCashFlow": 1100,
+      "shares": 347,
+      "dilutedShares": 363,
+      "eps": 0.31,
+      "cash": 435,
+      "shortTermInvestments": 4550,
+      "debt": 986,
+      "ltm": {
+        "trusted": true,
+        "revenue": 3967
+      }
+    }
+  },
+  "prices": {
+    "NET": 285.51,
+    "DDOG": 223.84
+  },
+  "expected": {
+    "companyARevenue": 2168,
+    "companyAEBITDA": -17,
+    "companyANetIncome": -102,
+    "companyAOperatingIncome": -207,
+    "companyAGrossProfit": 1615,
+    "companyAFreeCashFlow": 919,
+    "companyAShares": 348,
+    "companyADilutedShares": 348,
+    "companyAEPS": -0.29,
+    "companyACash": 1664,
+    "companyASti": 2499,
+    "companyADebt": 3270,
+    "companyALtmRevenue": 2512,
+    "companyBRevenue": 3427,
+    "companyBEBITDA": 5,
+    "companyBNetIncome": 108,
+    "companyBOperatingIncome": -44,
+    "companyBGrossProfit": 2740,
+    "companyBFreeCashFlow": 1100,
+    "companyBShares": 347,
+    "companyBDilutedShares": 363,
+    "companyBEPS": 0.31,
+    "companyBCash": 435,
+    "companyBSti": 4550,
+    "companyBDebt": 986,
+    "companyBLtmRevenue": 3967,
+    "currentSharePriceA": 285.51,
+    "currentSharePriceB": 223.84,
+    "offerPricePerShare": 290.992,
+    "offerValueTotal": 0,
+    "cashPercent": 50,
+    "transactionFees": 0,
+    "synergiesY1": 0,
+    "synergiesY2": 0,
+    "synergiesY3": 0,
+    "minCashPct": 0.02
+  }
+}
