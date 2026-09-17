@@ -1,4 +1,7 @@
-require('dotenv').config(); // load FMP_KEY (and any other secrets) from ma-app/.env — gitignored, never committed
+// Pin .env to THIS file's directory. A bare config() resolves against process.cwd(), and the sweep's launchd
+// job runs with WorkingDirectory=…/ma-app/agent, so `node "$ROOT/server.js"` from there loaded no .env at all:
+// FMP_KEY was empty and every FMP call returned 401 (measured 2026-09-17, agent cwd vs ma-app cwd).
+require('dotenv').config({ path: require('path').join(__dirname, '.env') }); // FMP_KEY etc. — gitignored, never committed
 const express = require('express');
 const cors = require('cors');
 const https = require('https');
@@ -795,7 +798,10 @@ async function fetchFromEDGAR(symbol, cik) {
 }
 
 async function fetchFromFMP(symbol) {
-  console.log(`[${symbol}] FMP — fetching income, profile, balance in parallel`);
+  // QUOTE_TRACE=1 for the per-source progress lines: they print before any result exists, so at
+  // default level a failing FMP call would add a line on top of the single `unavailable` WARN.
+  const tlog = (...a) => { if (process.env.QUOTE_TRACE === '1') console.log(...a); };
+  tlog(`[${symbol}] FMP — fetching income, profile, balance in parallel`);
   const [incomeData, profileData, balanceData] = await Promise.all([
     get(`https://financialmodelingprep.com/stable/income-statement?symbol=${symbol}&period=annual&limit=1&apikey=${FMP_KEY}`),
     get(`https://financialmodelingprep.com/stable/profile?symbol=${symbol}&apikey=${FMP_KEY}`),
@@ -806,8 +812,8 @@ async function fetchFromFMP(symbol) {
   const profile = Array.isArray(profileData) ? profileData[0] : null;
   const balance = Array.isArray(balanceData) ? balanceData[0] : null;
 
-  console.log(`[${symbol}] FMP raw — income: ${income ? 'ok' : 'missing/error'}, profile: ${profile ? 'ok' : 'missing/error'}, balance: ${balance ? 'ok' : 'missing/error'}`);
-  if (income)  console.log(`[${symbol}] FMP income — revenue: ${income.revenue}, netIncome: ${income.netIncome}, ebitda: ${income.ebitda}`);
+  tlog(`[${symbol}] FMP raw — income: ${income ? 'ok' : 'missing/error'}, profile: ${profile ? 'ok' : 'missing/error'}, balance: ${balance ? 'ok' : 'missing/error'}`);
+  if (income)  tlog(`[${symbol}] FMP income — revenue: ${income.revenue}, netIncome: ${income.netIncome}, ebitda: ${income.ebitda}`);
 
   return buildFmpCompany(income, balance, profile, symbol);
 }
@@ -835,7 +841,7 @@ async function buildFmpCompany(income, balance, profile, symbol) {
   const rawShares    = Number.isFinite(profile?.sharesOutstanding) ? profile.sharesOutstanding
     : (Number.isFinite(profile?.marketCap) && profile?.price > 0 ? profile.marketCap / profile.price : null);
   const name         = profile?.companyName || symbol;   // string — stays bare
-  if (profile) console.log(`[${symbol}] FMP profile — name: ${name}, shares: ${rawShares}`);
+  if (profile && process.env.QUOTE_TRACE === '1') console.log(`[${symbol}] FMP profile — name: ${name}, shares: ${rawShares}`);
 
   // Optional backfills — already null-honest; swap inM→toMillions so the FMP builder is inM-free.
   const grossProfit     = toMillions(income?.grossProfit);
@@ -935,17 +941,11 @@ function buildYahooCompany(result, symbol) {
   };
 }
 
-async function fetchFromYahoo(symbol) {
-  console.log(`[${symbol}] Yahoo — fetching quoteSummary`);
-  const data = await get(
-    `https://query2.finance.yahoo.com/v10/finance/quoteSummary/${symbol}?modules=financialData,defaultKeyStatistics,incomeStatementHistory,quoteType`,
-    { Accept: 'application/json' }
-  );
-  const result = data?.quoteSummary?.result?.[0];
-  console.log(`[${symbol}] Yahoo raw — result present: ${!!result}, error: ${JSON.stringify(data?.quoteSummary?.error)}`);
-  if (!result) return null;
-  return buildYahooCompany(result, symbol);
-}
+// fetchFromYahoo is RETIRED as a fundamentals source (2026-09-17). Yahoo's v10 quoteSummary needs a
+// cookie+crumb: without one it answers 401 through this app's User-Agent and 404 for a bare symbol, so it
+// never resolved fundamentals (docs/DEFERRED.md D16). Yahoo stays a PRICE source only, via
+// server/services/yahooClient.js (v8/finance/chart, browser UA) behind /api/price. buildYahooCompany above
+// is kept and still unit-tested (src/lib/__tests__/yahooBuilder.test.js).
 
 // ── Live price helpers (used by /api/price/:ticker waterfall) ─────────────────
 
@@ -992,39 +992,45 @@ app.get('/quote', async (req, res) => {
 
     let result = null;
     const cik = cikBySymbol[symbol];
-    console.log(`\n[${symbol}] ── quote request ──`);
-    console.log(`[${symbol}] CIK: ${cik || 'NOT FOUND in SEC ticker list'}`);
+    // Per-source chatter is OFF by default: a 50-deck capture emitted ~800 lines of it and buried the one
+    // line that matters. QUOTE_TRACE=1 brings it back. At default level this route prints exactly one line
+    // per request, and only on failure — the WARN below.
+    const trace = process.env.QUOTE_TRACE === '1';
+    const tlog = (...a) => { if (trace) console.log(...a); };
+    const short = (m) => String(m || '').replace(/\s+/g, ' ').slice(0, 60);
+    let edgarStatus = cik ? 'pending' : 'no-cik';
+    let fmpStatus = 'pending';
+    tlog(`\n[${symbol}] ── quote request ──`);
+    tlog(`[${symbol}] CIK: ${cik || 'NOT FOUND in SEC ticker list'}`);
 
     // Source 1: SEC EDGAR
     if (cik) {
-      console.log(`[${symbol}] Trying SEC EDGAR…`);
+      tlog(`[${symbol}] Trying SEC EDGAR…`);
       try {
         result = await fetchFromEDGAR(symbol, cik);
-        console.log(`[${symbol}] EDGAR result: ${result ? `✓ revenue ${result.revenue}M shares ${result.shares}M` : '✗ null (all zeros)'}`);
+        edgarStatus = result ? 'ok' : 'null';
+        tlog(`[${symbol}] EDGAR result: ${result ? `✓ revenue ${result.revenue}M shares ${result.shares}M` : '✗ null (all zeros)'}`);
       } catch (e) {
-        console.error(`[${symbol}] EDGAR error:`, e.message);
+        edgarStatus = `error:${short(e.message)}`;
+        tlog(`[${symbol}] EDGAR error: ${e.message}`);
       }
     }
 
-    // Source 2: Financial Modeling Prep
+    // Source 2: Financial Modeling Prep — the LAST fundamentals source. Yahoo used to sit behind it and is
+    // gone from this chain (see the retired fetchFromYahoo above): price-only now.
     if (!result) {
-      console.log(`[${symbol}] Trying FMP…`);
-      try {
-        result = await fetchFromFMP(symbol);
-        console.log(`[${symbol}] FMP result: ${result ? `✓ revenue ${result.revenue}M shares ${result.shares}M` : '✗ null'}`);
-      } catch (e) {
-        console.error(`[${symbol}] FMP error:`, e.message);
-      }
-    }
-
-    // Source 3: Yahoo Finance
-    if (!result) {
-      console.log(`[${symbol}] Trying Yahoo Finance…`);
-      try {
-        result = await fetchFromYahoo(symbol);
-        console.log(`[${symbol}] Yahoo result: ${result ? `✓ revenue ${result.revenue}M shares ${result.shares}M` : '✗ null'}`);
-      } catch (e) {
-        console.error(`[${symbol}] Yahoo error:`, e.message);
+      if (!FMP_KEY) {
+        fmpStatus = 'no-key';
+      } else {
+        tlog(`[${symbol}] Trying FMP…`);
+        try {
+          result = await fetchFromFMP(symbol);
+          fmpStatus = result ? 'ok' : 'null';
+          tlog(`[${symbol}] FMP result: ${result ? `✓ revenue ${result.revenue}M shares ${result.shares}M` : '✗ null'}`);
+        } catch (e) {
+          fmpStatus = `error:${short(e.message)}`;
+          tlog(`[${symbol}] FMP error: ${e.message}`);
+        }
       }
     }
 
@@ -1039,7 +1045,8 @@ app.get('/quote', async (req, res) => {
       // shape is a bare null and every read site renders an honest blank.
       // Consumers must detect this stub by `dataSource: 'none'`, NEVER by value: a plausibility
       // heuristic both misses it and misfires on filers that legitimately report zero.
-      console.log(`[${symbol}] All sources failed — returning nulls (absent, not zero)`);
+      // ONE line per request at default log level, naming what each fundamentals source did.
+      console.warn(`[${symbol}] fundamentals unavailable: edgar=${edgarStatus} fmp=${fmpStatus}`);
       const absent = () => field(null, { source: 'none' });
       return res.json(unwrapCompany({
         name: symbol, dataSource: 'none', companyType: 'standard',
@@ -1049,14 +1056,14 @@ app.get('/quote', async (req, res) => {
       }));
     }
 
-    // LTM is EDGAR-only (Stage 1). Non-EDGAR results (FMP/Yahoo fallback — e.g. NSRGY, no CIK) never got
+    // LTM is EDGAR-only (Stage 1). Non-EDGAR results (the FMP fallback — e.g. NSRGY, no CIK) never got
     // an `ltm` from fetchFromEDGAR, so guarantee a flagged one here: data.ltm is ALWAYS present so later
     // consumers can read data.ltm.trusted without an undefined check. Additive — degrades to annual.
     if (result && !result.ltm) {
       result.ltm = { trusted: false, fallback: 'annual', reason: `LTM unavailable — ${result.dataSource} source (EDGAR companyfacts required)` };
     }
 
-    console.log(`[${symbol}] ✓ Final result from ${result.dataSource}`);
+    tlog(`[${symbol}] ✓ Final result from ${result.dataSource}`);
     // Stage 14 boundary: unwrap the canonical wrapped shape → bare number-or-null for the client's
     // bare-value read sites. Strict no-op on all-bare EDGAR/FMP results (isWrapper false per field).
     res.json(unwrapCompany(result));

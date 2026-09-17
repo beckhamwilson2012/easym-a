@@ -1029,6 +1029,15 @@ CHROME_BIN="$(node -e 'const fs=require("fs");const m=fs.readFileSync(process.ar
 acquire_lock                                   # Part 1: FIRST — before we touch the port, the tree, or the tag
 reap_stale_raw                                 # sweep up abandoned per-run capture dirs before making ours
 [[ -z "$(gitr status --porcelain)" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
+# NO SLEEPING MID-RUN. Run 20260916-124247 lost all 50 decks to "FATAL Connection closed." when the Mac
+# slept during the baseline capture: the browser died with it and 409 minutes produced nothing analyzable.
+# `caffeinate -i -w $$` blocks IDLE sleep for the lifetime of THIS shell and exits when it does, so no trap
+# is needed and a deliberate lid-close still sleeps. Placed before the baseline capture, not just the
+# iteration loop, because that capture is the longest unattended stretch. restart_server's own
+# `caffeinate -is` covers only the app server process, not this loop.
+caffeinate -i -w $$ &
+CAFFEINATE_PID=$!
+log "sleep guard: caffeinate -i -w $$ started (pid $CAFFEINATE_PID) — idle sleep blocked for this run"
 
 mkdir -p "$RUN_DIR/cap"
 echo "$$" > "$RUN_DIR/run.pid"   # liveness marker — the dashboard checks kill -0 on this to tell RUNNING from DIED
@@ -1574,3 +1583,22 @@ done
 
 RUN_COMPLETED=1                                # the run ended on its own terms — finalize_abnormal stands down
 log "RUN $RUN_ID COMPLETE · branch sweep/auto-$RUN_ID · undo: $RUN_DIR/UNDO.txt"
+
+# ── exit contract (added 2026-09-17) ─────────────────────────────────────────────────────────────────
+# A run whose FINAL capture summary reads "(0 ok)" produced nothing analyzable: every deck failed, both
+# graders had empty input, and the gate could only compare absent to absent. That is a FAILED run and it has
+# to be visible where the schedulers look — launchd's `last exit code` and the agents widget row — not only
+# in loop.log. Run 20260916-124247 slept mid-capture, logged "50 decks captured (0 ok)" after 409m, exited 0,
+# and the Auto Fixer row read "ok" all night.
+#   0 = a real run (any analyzable decks)   1 = die()   2 = completed but zero analyzable decks
+# Graded from loop.log — the SAME line sweep-watchdog.sh reads — so the two verdicts cannot disagree. A
+# missing or "(? ok)" summary is NOT a proven zero and stays 0: unknown is not failure.
+# The EXIT trap (on_exit) runs after this and never calls exit itself, so the code below is what launchd sees.
+# >>> exit-contract  (scripts/sources-selftest.mjs extracts this block verbatim — keep the sentinels)
+FINAL_SUMMARY="$(grep -oE '[0-9]+ decks captured \([0-9?]+ ok\)' "$RUN_DIR/loop.log" 2>/dev/null | tail -1 || true)"
+if [[ "$FINAL_SUMMARY" == *"(0 ok)"* ]]; then
+  log "RUN $RUN_ID FAILED · $FINAL_SUMMARY — zero analyzable decks; exiting 2 so launchd records a failed run"
+  exit 2
+fi
+exit 0
+# <<< exit-contract

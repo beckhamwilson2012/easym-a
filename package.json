@@ -30,7 +30,9 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "start:server": "node server.js",
-    "build:deploy": "react-scripts build"
+    "build:deploy": "react-scripts build",
+    "sources:check": "node scripts/sources-check.mjs",
+    "sources:selftest": "node scripts/sources-selftest.mjs"
   },
   "engines": {
     "node": ">=20 <25"

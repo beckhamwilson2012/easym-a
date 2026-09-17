@@ -15,8 +15,10 @@ const cache = new Map();
 const inflight = new Map(); // share a single in-flight request across concurrent callers
 const TTL = 300_000;
 
-// Fetch the chart meta. Yahoo rate-limits (429) under load, so try query1 then (only on 429/5xx)
-// query2 — at most 2 hits per ticker. Returns null on failure (never throws to the caller).
+// Fetch the chart meta. A 429 means Yahoo is rate-limiting this IP: SKIP it — log one line and return null
+// WITHOUT retrying and without trying the sibling host. A second hit while rate-limited never returns data
+// and only deepens the limit (every Yahoo host answered 429 on 2026-09-17). A 5xx still falls through to
+// query2 once. Returns null on failure, never throws to the caller.
 async function fetchYahooMeta(ticker) {
   const hosts = ['query1.finance.yahoo.com', 'query2.finance.yahoo.com'];
   for (let i = 0; i < hosts.length; i++) {
@@ -26,7 +28,11 @@ async function fetchYahooMeta(ticker) {
       if (meta) return meta;
       return null; // valid response, no meta → don't hammer the other host
     } catch (e) {
-      if (i < hosts.length - 1 && /HTTP (429|5\d\d)/.test(e.message)) { await sleep(250); continue; }
+      if (/HTTP 429/.test(e.message)) {
+        console.warn(`[${ticker}] yahoo price skipped: HTTP 429 (rate limited, not retried)`);
+        return null;
+      }
+      if (i < hosts.length - 1 && /HTTP 5\d\d/.test(e.message)) { await sleep(250); continue; }
       return null;
     }
   }
