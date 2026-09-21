@@ -123,8 +123,12 @@ async function runPair(browser, A, B, offerOverride) {
   const rec = { pair: `${A}/${B}`, A, B, offerOverride: offerOverride || null, ts: new Date().toISOString(), ok: false, stage: 'start' };
   try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(x => /Auto-Lookup/.test(x.textContent)), { timeout: 30000 });
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(x => /Auto-Lookup/.test(x.textContent)).click());
+    // POST-d1bfd2d ENTRY FLOW (re-pointed 2026-09-17). The old Auto-Lookup/Manual mode chooser is gone;
+    // the landing screen is deal-type-first and `Public → Public` (chooseDealType('pubpub'), src/App.js:1498)
+    // sets both sides public and mode='entry' in one click. Every capture pair is ticker/ticker, so pubpub is
+    // always the right branch. The arrow class tolerates → / -> / - so a glyph change does not break capture.
+    await page.waitForFunction(() => [...document.querySelectorAll('button')].some(x => /Public\s*[→>-]+\s*Public/.test(x.textContent)), { timeout: 30000 });
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(x => /Public\s*[→>-]+\s*Public/.test(x.textContent)).click());
     await page.waitForSelector('input[id^="react-select"]', { timeout: 30000 });
     rec.stage = 'loadA'; await loadTicker(page, 0, A);
     rec.stage = 'loadB'; await loadTicker(page, 1, B);
@@ -150,8 +154,10 @@ async function runPair(browser, A, B, offerOverride) {
       rec.suggestedOfferApplied = await page.evaluate(() => { const el = [...document.querySelectorAll('button')].find(b => /Use this/.test(b.textContent)); if (el) { el.click(); return true; } return false; });
     }
     rec.stage = 'buildEnable';
-    await page.waitForFunction(() => { const el = [...document.querySelectorAll('button')].find(e => /Build merger model/.test(e.textContent)); return el && !el.disabled; }, { timeout: 30000 });
-    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => /Build merger model/.test(e.textContent)).click());
+    // d1bfd2d also renamed this button: 'Build merger model →' → 'Run Analysis →', now gated on
+    // (bothReady && offerSet) rather than offerPricePerShare > 0 (src/App.js:1534). Same !disabled wait.
+    await page.waitForFunction(() => { const el = [...document.querySelectorAll('button')].find(e => /Run Analysis/.test(e.textContent)); return el && !el.disabled; }, { timeout: 30000 });
+    await page.evaluate(() => [...document.querySelectorAll('button')].find(e => /Run Analysis/.test(e.textContent)).click());
     rec.stage = 'deck';
     await page.waitForSelector('[data-section-id="verification2"]', { timeout: 80000 });
     let prev = -1, st = 0; for (let i = 0; i < 32; i++) { await sleep(1500); const n = await page.$$eval('[data-section-id="verification"] tbody tr', e => e.length).catch(() => 0); if (n === prev && n > 0) { if (++st >= 2) break; } else st = 0; prev = n; }
