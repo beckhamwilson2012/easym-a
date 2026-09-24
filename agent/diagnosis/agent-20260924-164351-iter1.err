@@ -1,0 +1,1 @@
+Ignoring 59 permissions.allow entries from .claude/settings.json and .claude/settings.local.json: this workspace has not been trusted. Run Claude Code interactively here once and accept the trust dialog, or set projects["/Users/beckhamwilson/src/EasyM&A/ma-app"].hasTrustDialogAccepted: true in /Users/beckhamwilson/.claude.json.
