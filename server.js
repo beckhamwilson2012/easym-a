@@ -49,12 +49,19 @@ const rateLimit = require('express-rate-limit');
 
 // General: sized so one user — or a NATed shared campus/corporate network — building
 // decks never trips it. One CRM/TEAM build ≈ 83 requests; 500 ≈ 6 builds / 15 min per IP.
+const { isLoopback } = require('./server/utils/isLoopback');
 const general = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 500,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Too many requests. Try again shortly.' }
+  message: { error: 'Too many requests. Try again shortly.' },
+  // The sweep harness builds 50 decks back to back from 127.0.0.1 (~83 requests each), so it exhausted
+  // the 500/window budget meant for public callers and the capture recorded our OWN 429 as a failed
+  // ticker load. Loopback is this machine driving its own app — there is no quota to protect from it,
+  // and with `trust proxy` off req.ip is the socket peer, which a remote client cannot forge.
+  // The llm limiter is deliberately NOT skipped: those requests cost money wherever they come from.
+  skip: (req) => isLoopback(req.ip)
 });
 
 // LLM: each request costs money. Far tighter.

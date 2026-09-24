@@ -38,7 +38,9 @@ STOP_FILE="$AGENT_DIR/STOP"
 #    env var > sweep.settings > hardcoded fallback. Changes only WHERE a default comes from, never behavior.
 SWEEP_SETTINGS="${SWEEP_SETTINGS:-$AGENT_DIR/sweep.settings}"
 [[ -f "$SWEEP_SETTINGS" ]] && source "$SWEEP_SETTINGS" 2>/dev/null || true
-MAX_ITER="${MAX_ITER:-${CFG_MAX_ITER:-999}}"
+# SWEEP_MAX_ITER / SWEEP_PAIRS are the demo-mode overrides (agent/demo.sh): a short, bounded run for a
+# meeting. Unset, both resolve to exactly what the runner did before them.
+MAX_ITER="${SWEEP_MAX_ITER:-${MAX_ITER:-${CFG_MAX_ITER:-999}}}"
 # MAX_TURNS is DELIBERATELY NOT config-backed — no CFG_MAX_TURNS, so sweep.settings cannot raise it and the
 # dashboard cannot either. An env var at launch still wins, for supervised terminal runs.
 #   40->60 already failed. Run 20260815-150838 died at the 40-turn cap; the cap was raised to 60 and runs
@@ -51,6 +53,11 @@ MAX_TURNS="${MAX_TURNS:-60}"
 BUDGET_USD="${BUDGET_USD:-${CFG_BUDGET_USD:-50}}"
 GAP_MS="${GAP_MS:-12000}"                      # rate-safe inter-pair spacing for capture.js
 PAIRS_LIMIT="${PAIRS_LIMIT:-${CFG_PAIRS_LIMIT:-0}}"   # 0 = all 50; >0 caps pairs (tests)
+# SWEEP_PAIRS caps the TOTAL capture set, repro pairs included — PAIRS_LIMIT caps only the filler and so
+# can never produce a 5-pair run. 0 = off (the default, i.e. unchanged behaviour). A cap BELOW the repro
+# count drops mandatory repro pairs: fine for a demo, wrong for a graded run, so it is announced in the
+# log rather than applied silently.
+SWEEP_PAIRS="${SWEEP_PAIRS:-0}"
 FROZEN_WAIT="${FROZEN_WAIT:-60}"
 ITER_TIMEOUT="${ITER_TIMEOUT:-2700}"           # per-iteration wall-clock cap (45 min); --max-turns does NOT bound a permission-prompt hang
 BUILD_TIMEOUT="${BUILD_TIMEOUT:-300}"          # cap on `npm run build` (measured ~7s); an unattended runner must never hang here
@@ -273,7 +280,9 @@ build_pairs_json() {
     let filler=seed.filter(x=>!seen.has(x));
     if(lim>0) filler=filler.slice(0,lim);       // PAIRS_LIMIT caps the FILLER only — never a repro pair
     for(const x of filler) if(!seen.has(x)){seen.add(x);out.push(x);}
-    process.stdout.write(JSON.stringify(out.map(x=>{const i=x.indexOf("/");return [x.slice(0,i),x.slice(i+1),null];})));
+    const cap=+process.env.SWEEP_PAIRS||0;      // SWEEP_PAIRS caps the WHOLE set (demo mode), repro included
+    const capped = cap>0 ? out.slice(0,cap) : out;
+    process.stdout.write(JSON.stringify(capped.map(x=>{const i=x.indexOf("/");return [x.slice(0,i),x.slice(i+1),null];})));
   ' "$ROOT/docs/sweep-v2/captures" "$PAIRS_LIMIT")"
 }
 do_capture() {                                 # $1 = dest snapshot dir, $2 = phase label; rc 2 = capture failed
@@ -1061,10 +1070,11 @@ EST_S=$(( SWEEPS * PER_SWEEP_S + QCOUNT * 120 ))
 END_HUMAN="$(date -v +"${EST_S}"S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "+${EST_S} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')"
 # MAX_ITER and BUDGET_USD are the two halt conditions the loop can hit without anything going wrong,
 # and the dashboard could not show how far a run had left to go without them (QUEUE.md Discovered).
-log "RUN $RUN_ID · branch sweep/auto-$RUN_ID · $NPAIRS pairs · $QCOUNT open items · mode $CAP_MODE · max_iter $MAX_ITER · budget \$$BUDGET_USD"
+log "RUN $RUN_ID · branch sweep/auto-$RUN_ID · $NPAIRS pairs · $QCOUNT open items · mode $CAP_MODE · max_iter $MAX_ITER · budget \$$BUDGET_USD · sweep_pairs $SWEEP_PAIRS"
 NREPRO="$(printf '%s' "$REPRO_PAIRS" | wc -w | tr -d ' ')"
 NOPAIR="$(repro_pair queue "$QUEUE" | grep -c '^-$' || true)"
 log "capture set: $NPAIRS pairs = $NREPRO mandatory repro + filler (PAIRS_LIMIT=$PAIRS_LIMIT caps filler only)"
+  [[ "$SWEEP_PAIRS" -gt 0 && "$SWEEP_PAIRS" -lt "$NREPRO" ]] && log "WARNING: SWEEP_PAIRS=$SWEEP_PAIRS is below the $NREPRO repro pairs — this run is a DEMO, not a graded measurement"
 log "repro pairs (forced): ${REPRO_PAIRS:-<none>}"
 [[ "$NOPAIR" -gt 0 ]] && log "WARNING: $NOPAIR open item(s) name no repro pair — each is BLOCKED at its iteration (never guessed)"
 log "START $(date '+%Y-%m-%d %H:%M:%S')  →  PROJECTED END ~$END_HUMAN  (${SWEEPS} sweeps × ~${PER_SWEEP_S}s + agent)"
