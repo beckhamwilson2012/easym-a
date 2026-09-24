@@ -31,3 +31,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [16:43:15 · run 20260924-163754 · iter 1] iter 1 NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (error-envelope:success); reverted, item left OPEN.
 
 - [16:49:08 · run 20260924-164351 · iter 1] iter 1 NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (error-envelope:success); reverted, item left OPEN.
+
+- [17:06:57 · run 20260924-170138 · iter 1] iter 1 NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (error-envelope:success); reverted, item left OPEN.
