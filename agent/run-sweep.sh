@@ -1059,7 +1059,9 @@ PER_SWEEP_S=$(( NPAIRS * 12 + 15 ))
 if [[ "$CAP_MODE" == "N+1" ]]; then SWEEPS=$(( QCOUNT + 1 )); else SWEEPS=$(( QCOUNT * 2 + 1 )); fi
 EST_S=$(( SWEEPS * PER_SWEEP_S + QCOUNT * 120 ))
 END_HUMAN="$(date -v +"${EST_S}"S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "+${EST_S} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')"
-log "RUN $RUN_ID · branch sweep/auto-$RUN_ID · $NPAIRS pairs · $QCOUNT open items · mode $CAP_MODE"
+# MAX_ITER and BUDGET_USD are the two halt conditions the loop can hit without anything going wrong,
+# and the dashboard could not show how far a run had left to go without them (QUEUE.md Discovered).
+log "RUN $RUN_ID · branch sweep/auto-$RUN_ID · $NPAIRS pairs · $QCOUNT open items · mode $CAP_MODE · max_iter $MAX_ITER · budget \$$BUDGET_USD"
 NREPRO="$(printf '%s' "$REPRO_PAIRS" | wc -w | tr -d ' ')"
 NOPAIR="$(repro_pair queue "$QUEUE" | grep -c '^-$' || true)"
 log "capture set: $NPAIRS pairs = $NREPRO mandatory repro + filler (PAIRS_LIMIT=$PAIRS_LIMIT caps filler only)"
