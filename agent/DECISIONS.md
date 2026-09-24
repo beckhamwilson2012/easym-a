@@ -27,3 +27,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [20:33:43 · run 20260922-194237 · iter ?] Prices not frozen at startup; capture mode = 2N.
 
 - [2026-09-24 · manual edit · no run] server.js: the `general` rate limiter (500 req / 15 min per IP on /api, /quote, /search) now skips loopback via server/utils/isLoopback.js. It exists to stop PUBLIC callers draining FMP/Anthropic quota; the sweep drives ~83 requests per deck × 50 decks from 127.0.0.1, so it exhausted that budget every run and the capture recorded OUR OWN 429 as a failed ticker load — 11 of the 12 failed decks in 20260922-194237. The llm tier (30/hr) is deliberately NOT skipped: those requests cost money wherever they come from. With `trust proxy` off, req.ip is the socket peer and cannot be forged remotely. Expect more analyzable decks per run from here: this changes how many decks survive capture, not what the graders measure.
+
+- [16:43:15 · run 20260924-163754 · iter 1] iter 1 NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (error-envelope:success); reverted, item left OPEN.
