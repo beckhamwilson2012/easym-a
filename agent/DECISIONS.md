@@ -23,3 +23,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [16:20:55 · run 20260917-161955 · iter ?] Prices not frozen at startup; capture mode = 2N.
 
 - [15:12:40 · manual edit · no run] **Baseline discontinuity 2026-09-17: capture.js re-pointed; runs before this date are not comparable.** capture.js drove the pre-`d1bfd2d` entry flow — it waited on an `Auto-Lookup` button and a `Build merger model` button, both removed 2026-08-20 — so every capture since has timed out 30s into stage `start` and produced 0 analyzable decks. Two selectors re-pointed, nothing else: `Public → Public` (chooseDealType('pubpub'), src/App.js:1498) and `Run Analysis` (src/App.js:1534). Timings, viewport, waits, oracle fetches and the record schema are untouched — 16 keys, identical across records, verified by scripts/capture-selftest.mjs on AAPL/VZ, KO/NSRGY and NET/DDOG (ok:true, stage:'done', pdfPages 17). This is a NEW baseline, not a re-baseline: there is no valid old capture set to compare against, every run since 2026-08-20 having scored 0 ok. Entry written 2026-09-21.
+
+- [20:33:43 · run 20260922-194237 · iter ?] Prices not frozen at startup; capture mode = 2N.
