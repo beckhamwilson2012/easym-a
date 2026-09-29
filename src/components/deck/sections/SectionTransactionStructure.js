@@ -57,41 +57,47 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const minCashRetained  = num(r.minCashRetained);
   const minCashPct       = num(r.minCashPct);
 
-  const totalUses = (equityPurchase || 0) + (targetDebtRepaid || 0) + fees;
+  // Banks: target debt is not repaid and no excess cash is drawn — a genuine 0 in the sums. Non-bank: null means
+  // the target's debt is unavailable (dealCalc propagates it), so every total it feeds is unknown, never $0-based.
+  const debtRepaidAmt = bankFin ? 0 : targetDebtRepaid;
+  const excessUsedAmt = bankFin ? (excessCashUsed || 0) : excessCashUsed;
+  const suKnown   = debtRepaidAmt != null && excessUsedAmt != null && newDebt != null;
+  const totalUses = debtRepaidAmt != null ? (equityPurchase || 0) + debtRepaidAmt + fees : null;
   // Fee cash = the balancing draw (≈ fees; absorbs sub-$M rounding), so Sources === Uses exactly.
-  const feeCash   = totalUses - (newDebt || 0) - (newStock || 0) - (excessCashUsed || 0);
-  const totalSources = (newDebt || 0) + (newStock || 0) + (excessCashUsed || 0) + feeCash;
-  const foots = Math.abs(totalUses - totalSources) < 1;
+  const feeCash   = suKnown ? totalUses - newDebt - (newStock || 0) - excessUsedAmt : null;
+  const totalSources = suKnown ? newDebt + (newStock || 0) + excessUsedAmt + feeCash : null;
+  const foots = suKnown ? Math.abs(totalUses - totalSources) < 1 : null;   // null = cannot be footed (input unavailable)
 
   const usesRows = [
     { k: `Purchase of ${bTk} equity (offer × shares)`, v: equityPurchase },
-    ...(targetDebtRepaid ? [{ k: `Repay ${bTk} debt (assumed 100%)`, v: targetDebtRepaid }] : []),
+    ...((targetDebtRepaid || (!bankFin && targetDebtRepaid == null)) ? [{ k: `Repay ${bTk} debt (assumed 100%)`, v: targetDebtRepaid }] : []),
     { k: 'Transaction fees (one-time)', v: fees },
   ];
   const sourcesRows = [
     { k: 'New acquisition debt', v: newDebt },
     { k: `New ${aTk} equity issued (stock consideration)`, v: newStock },
-    ...(excessCashUsed ? [{ k: 'Excess cash on hand used', v: excessCashUsed }] : []),
+    ...((excessCashUsed || (!bankFin && excessCashUsed == null)) ? [{ k: 'Excess cash on hand used', v: excessCashUsed }] : []),
     { k: 'Cash on hand (funds fees)', v: feeCash },
   ];
 
   // ── Pro-forma capitalization / leverage ─────────────────────────────────────────────────────────────
-  const aDebt = num(inp.companyADebt) || 0, bDebt = num(inp.companyBDebt) || 0;
+  const aDebt = num(inp.companyADebt) || 0, bDebt = num(inp.companyBDebt);   // bDebt null = unavailable, never $0
   const aCash = num(inp.companyACash) || 0, bCash = num(inp.companyBCash) || 0;
   const aSti  = num(inp.companyASti),      bSti  = num(inp.companyBSti);
   const aBsAsOf = fmtAsOf(inp.companyABsAsOf, inp.companyABsBasis), bBsAsOf = fmtAsOf(inp.companyBBsAsOf, inp.companyBBsBasis);
-  const preDebt      = aDebt + bDebt;
+  const sub = (x, y) => (x != null && y != null) ? x - y : null;   // null-propagating difference
+  const preDebt      = bDebt != null ? aDebt + bDebt : null;
   // Non-bank: target debt is repaid (assumption) → pro-forma debt = acquirer debt + new acquisition debt.
   // Bank (Guard 1): target debt stays outstanding → legacy pre-deal debt + new debt.
-  const proFormaDebt = bankFin ? preDebt + (newDebt || 0) : aDebt + (newDebt || 0);
+  const proFormaDebt = newDebt == null ? null : (bankFin ? (preDebt != null ? preDebt + newDebt : null) : aDebt + newDebt);
   // ONE cash definition (convention b): cash & equivalents + short-term marketable securities, both companies.
   const preCash      = cashBucket(aCash, aSti).value + cashBucket(bCash, bSti).value;
-  const pfCash       = preCash - (excessCashUsed || 0) - feeCash;   // cash drawn to fund the deal + fees
-  const preNetDebt   = preDebt - preCash;
-  const pfNetDebt    = proFormaDebt - pfCash;
+  const pfCash       = (excessUsedAmt != null && feeCash != null) ? preCash - excessUsedAmt - feeCash : null;   // cash drawn to fund the deal + fees
+  const preNetDebt   = sub(preDebt, preCash);
+  const pfNetDebt    = sub(proFormaDebt, pfCash);
   const combinedEBITDA = num(deal?.combinedEBITDA);          // SAME non-GAAP EBITDA as §6/§7 (incl. Y1 synergies)
   const bankDeal       = isBankDeal(target, acquirer);
-  const lev  = (v) => (!bankDeal && combinedEBITDA > 0) ? `${(v / combinedEBITDA).toFixed(1)}x` : (bankDeal ? 'n/m' : '—');
+  const lev  = (v) => bankDeal ? 'n/m' : ((v != null && combinedEBITDA > 0) ? `${(v / combinedEBITDA).toFixed(1)}x` : '—');
 
   // Robustness (the real defense): the accretion conclusion is unchanged across the plausible min-cash range —
   // computed from the model at minCash = 0 vs the struck %. Only for non-bank deals (banks don't net cash).
@@ -105,12 +111,13 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const accAtZero    = Number.isFinite(accZeroRaw) ? accZeroRaw : null;
 
   // ── Deal-size header (link, don't duplicate §8) ─────────────────────────────────────────────────────
-  const txnEV = num(d.transactionEV) ?? (equityPurchase != null ? equityPurchase + netCashDebt(bDebt, bCash, bSti) : null);
+  const tgtNetDebt = netCashDebt(bDebt, bCash, bSti);   // null when target debt is unavailable → EV unavailable
+  const txnEV = num(d.transactionEV) ?? ((equityPurchase != null && tgtNetDebt != null) ? equityPurchase + tgtNetDebt : null);
 
   const capRows = [
-    { k: 'Total debt',            pre: preDebt,     pf: proFormaDebt, impact: proFormaDebt - preDebt },
-    { k: 'Cash, equiv. & ST marketable sec.', pre: preCash, pf: pfCash, impact: pfCash - preCash },
-    { k: 'Net debt / (net cash)', pre: preNetDebt,  pf: pfNetDebt, impact: pfNetDebt - preNetDebt, bold: true },
+    { k: 'Total debt',            pre: preDebt,     pf: proFormaDebt, impact: sub(proFormaDebt, preDebt) },
+    { k: 'Cash, equiv. & ST marketable sec.', pre: preCash, pf: pfCash, impact: sub(pfCash, preCash) },
+    { k: 'Net debt / (net cash)', pre: preNetDebt,  pf: pfNetDebt, impact: sub(pfNetDebt, preNetDebt), bold: true },
     { k: 'Debt / EBITDA',         pre: lev(preDebt),    pf: lev(proFormaDebt),  raw: true },
     { k: 'Net debt / EBITDA',     pre: lev(preNetDebt), pf: lev(pfNetDebt),     raw: true },
   ];
@@ -140,9 +147,15 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
           <SUTable title="USES OF FUNDS ($M)" rows={usesRows} total={totalUses} totalLabel="Total uses" accent="#B45309" />
           <SUTable title="SOURCES OF FUNDS ($M)" rows={sourcesRows} total={totalSources} totalLabel="Total sources" accent="#166534" />
         </div>
-        <div style={{ marginTop: 5, fontSize: 8.5, color: foots ? '#166534' : '#DC2626', fontWeight: 600 }}>
-          {foots ? '✓ Sources = Uses' : '⚠ Sources ≠ Uses'} — {dash(totalSources)} funds {dash(totalUses)}.
-        </div>
+        {foots == null ? (
+          <div style={{ marginTop: 5, fontSize: 8.5, color: '#6B7280', fontWeight: 600 }}>
+            — Sources &amp; Uses not footed: {bTk} total debt is unavailable, so the debt repaid and the funding need it drives are unknown.
+          </div>
+        ) : (
+          <div style={{ marginTop: 5, fontSize: 8.5, color: foots ? '#166534' : '#DC2626', fontWeight: 600 }}>
+            {foots ? '✓ Sources = Uses' : '⚠ Sources ≠ Uses'} — {dash(totalSources)} funds {dash(totalUses)}.
+          </div>
+        )}
 
         {/* Block 2 — Pro-forma capitalization / leverage (impact: pre → pro-forma) */}
         <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginTop: 14, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>

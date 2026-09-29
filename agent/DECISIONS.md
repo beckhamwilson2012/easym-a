@@ -33,3 +33,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [16:49:08 · run 20260924-164351 · iter 1] iter 1 NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (error-envelope:success); reverted, item left OPEN.
 
 - [17:06:57 · run 20260924-170138 · iter 1] iter 1 NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (error-envelope:success); reverted, item left OPEN.
+
+- [16:17:03 · run 20260929-160247 · iter 1] iter 1 DONE_TESTED: the count could not move (6->6) but agent/tests/2b-null-not-zero.js fails at the checkpoint and passes on this tree, so the fix is measured rather than merely unmeasurable; item closed.

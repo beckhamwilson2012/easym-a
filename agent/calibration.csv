@@ -8,3 +8,4 @@ run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,cap
 20260924-163754,1,"2b. Unavailable target debt coerced to $0 at the render boundary — (GATE-2A root: debt-dropped).",NO_VERDICT,3,1,0,6,6,N+1,false,true,success,ABSENT,5,0
 20260924-164351,1,"2b. Unavailable target debt coerced to $0 at the render boundary — (GATE-2A root: debt-dropped).",NO_VERDICT,1,1,0,6,6,N+1,false,true,success,ABSENT,5,0
 20260924-170138,1,"2b. Unavailable target debt coerced to $0 at the render boundary — (GATE-2A root: debt-dropped).",NO_VERDICT,3,1,0,6,6,N+1,false,true,success,ABSENT,5,0
+20260929-160247,1,"2b. Unavailable target debt coerced to $0 at the render boundary — (GATE-2A root: debt-dropped).",DONE_TESTED,527,49,1.72109,6,6,N+1,false,false,success,DONE,5,0

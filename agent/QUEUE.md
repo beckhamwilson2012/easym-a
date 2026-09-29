@@ -133,7 +133,7 @@
     individual field guard, 2b's `|| 0` included — fixing 2b alone leaves this stub publishing zeros,
     because `|| 0` never fires on a value the stub already turned into a real 0.
 
-- [ ] **2b. Unavailable target debt coerced to $0 at the render boundary** — (GATE-2A root: debt-dropped).
+- [x] **2b. Unavailable target debt coerced to $0 at the render boundary** — (GATE-2A root: debt-dropped).  <!-- DONE_TESTED run 20260929-160247 -->
       Downstream of 2a, but INDEPENDENT: it fires for any filer whose debt is genuinely unavailable.
   - test: agent/tests/2b-null-not-zero.js
   - pair: RKLB/IRDM · observed: with `companyBDebt = null`, `src/utils/dealCalc.js:104`
@@ -274,6 +274,21 @@
   UNKNOWN reads identically to one with no financing cost · expected: an unknown drag renders "—" like every
   other absent figure; absence and zero must look different · source: `src/components/deck/sections/
   SectionDashboard.js:338` and `:347`, both `parseFloat(...) > 0` used as a presence check)
+  ADDRESSED in the 2b commit (run 20260929-160247): null → a "—" row; a genuine 0 stays hidden as before.
+
+- **`SectionDashboard.js:75-76` — the dashboard EV / Debt÷EBITDA explainers rebuild EV with the target debt
+  coerced to 0, then `explanations.js` coerces again.** `const ev = parseFloat(results.totalPurchasePrice) +
+  (inputs.companyBDebt || 0) - (inputs.companyBCash || 0)` and `combinedDebtForExplain = (inputs.companyADebt
+  || 0) + (inputs.companyBDebt || 0) + …` feed `explainEvEbitda` / `explainDebtEbitda` (`:249`, `:261`), which
+  themselves render `fmtMoney(parseFloat(ev) || 0)` (`src/lib/explanations.js:115-116`, `:140-141`). With
+  debt unavailable, the explainer shows EV = offer value − target cash while the multiple beside it is
+  `N/A` (dealCalc.js:190 correctly nulls it). Nulling `:75` alone would only move the fabrication to
+  `explanations.js`, so both files must change together — left out of 2b, which was scoped to §10/§6 and
+  dealCalc. A candidate (unconfirmed) for the item-2b "NOT SOURCED" EV figure.
+  (pair: RKLB/IRDM, when IRDM debt resolves null · observed: EV explainer input = totalPurchasePrice − cash,
+  i.e. target debt taken as $0 · expected: explainer shows "—" for EV / combined debt when either leg is
+  unavailable, matching the N/A multiple · source: `src/components/deck/sections/SectionDashboard.js:75-76`,
+  `src/lib/explanations.js:115-116,140-141`)
 
 - **`capture.js:9` hardcodes `localhost:3001`, so a sweep can only ever run on that one port — and takes
   it by force.** `const BASE = 'http://localhost:3001'` is a module constant read by every deck fetch

@@ -335,7 +335,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Acquirer Net Income',           value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',             value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Cost Synergies (Y1)', value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true },
-              ...(parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
+              ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
+                : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income',          value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',                 value: fmtPerShare(results.proFormaEPS), bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ] : [
@@ -344,7 +345,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Synergies (Y1)',  value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true, explain: () => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, targetRevenue: target?.revenue, isBank: false }) },
-              ...(parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
+              ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
+                : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income', value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',       value: fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (

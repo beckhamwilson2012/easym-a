@@ -101,9 +101,13 @@ export function acquisitionNewDebt(inputs, offerOverride) {
   const pct = Number.isFinite(num(inputs.minCashPct)) ? num(inputs.minCashPct) : MIN_CASH_PCT_DEFAULT;
   const minCash = pfLtmRevenue * pct;
   const excessCashAvail  = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0; // above the retained min
-  const targetDebtRepaid = num(inputs.companyBDebt) || 0;                              // faculty assumption: 100% repaid
-  const newDebt = Math.max(0, cashConsideration + targetDebtRepaid - excessCashAvail);  // Guard 2 — zero floor
-  const excessCashUsed = cashConsideration + targetDebtRepaid - newDebt;                // = min(avail, need); surplus stays on B/S
+  // Faculty assumption: 100% repaid. Unavailable target debt stays null (never "$0 repaid"), and every sum that
+  // takes it as an addend goes null with it — a coerced 0 here produced newDebt identical to a debt-free target.
+  const targetDebtRepaid = num(inputs.companyBDebt);
+  const newDebt = targetDebtRepaid != null
+    ? Math.max(0, cashConsideration + targetDebtRepaid - excessCashAvail) : null;       // Guard 2 — zero floor
+  const excessCashUsed = newDebt != null
+    ? cashConsideration + targetDebtRepaid - newDebt : null;                            // = min(avail, need); surplus stays on B/S
   return { newDebt, cashConsideration, targetDebtRepaid, combinedCash, minCash,
            excessCashAvail, excessCashUsed, pfLtmRevenue, minCashPct: pct, bank: false };
 }
@@ -155,10 +159,12 @@ export function calculate(inputs) {
   // Sources of funds (Stage 2E): the drag is charged on the NEW debt after combined excess cash funds part of
   // the deal — ONE construction, shared with the sensitivity grid (calcProFormaEPS) and read by §8/§9/§10/§11.
   const sources             = acquisitionNewDebt(inputs);
-  const newInterestAfterTax = sources.newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE);
+  // newDebt is null when the target's debt is unavailable → the drag is unknown, not zero.
+  const newInterestAfterTax = sources.newDebt != null ? sources.newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE) : null;
   // BOTH net incomes required — a null side must NOT coerce to 0 and understate the pro-forma net income
   // that drives EPS and the headline accretion. Null → EPS null → accretion not meaningful → '—' / n/m.
-  const proFormaNetIncome   = (companyANetIncome != null && companyBNetIncome != null)
+  // Same for an unknown financing drag.
+  const proFormaNetIncome   = (companyANetIncome != null && companyBNetIncome != null && newInterestAfterTax != null)
     ? companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax : null;
   const proFormaEPS         = (proFormaNetIncome != null && totalShares > 0) ? proFormaNetIncome / totalShares : null;
 
@@ -194,9 +200,9 @@ export function calculate(inputs) {
     proFormaEPS:       proFormaEPS === null ? null : proFormaEPS.toFixed(2),
     proFormaNetIncome: proFormaNetIncome === null ? null : proFormaNetIncome.toFixed(0),
     afterTaxSynergies: afterTaxSynergies.toFixed(0),
-    newInterestAfterTax: newInterestAfterTax.toFixed(0),
+    newInterestAfterTax: newInterestAfterTax == null ? null : newInterestAfterTax.toFixed(0),
     // ── Sources of funds (Stage 2E) — the drag above is charged on newDebt; §10 renders the build ──
-    newDebt:           sources.newDebt.toFixed(0),
+    newDebt:           sources.newDebt == null ? null : sources.newDebt.toFixed(0),
     cashConsideration: sources.cashConsideration.toFixed(0),
     excessCashUsed:    sources.excessCashUsed  == null ? null : sources.excessCashUsed.toFixed(0),
     excessCashAvail:   sources.excessCashAvail == null ? null : sources.excessCashAvail.toFixed(0),
@@ -248,7 +254,9 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   if (totalShares === 0) return null;
   const afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE);
   // SAME sources-of-funds construction as calculate(), at this grid cell's offer — so the drag never diverges.
-  const newInterestAfterTax = acquisitionNewDebt(inputs, offerPrice).newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE);
+  const newDebt = acquisitionNewDebt(inputs, offerPrice).newDebt;
+  if (newDebt == null) return null; // unknown target debt → unknown drag → null (matches calculate())
+  const newInterestAfterTax = newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE);
   const netIncome = companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax;
   return netIncome / totalShares;
 }

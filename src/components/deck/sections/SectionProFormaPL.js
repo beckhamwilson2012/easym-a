@@ -95,7 +95,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   // financing interest, constant across forward years. §6a previously OMITTED this from PF Net Income
   // (overstating it); we now subtract it so §6a foots to §6b's accretion basis, and §6b shows the full
   // bridge. Read from _results.newInterestAfterTax (dealCalc.js:99/136) — the same value the accretion uses.
-  const finDrag = parseFloat(deal?._results?.newInterestAfterTax) || 0;
+  // null = drag unknown (target debt unavailable → new debt unknown); PF Net Income goes '—', never drag-free.
+  const finDrag = deal?._results?.newInterestAfterTax != null ? parseFloat(deal._results.newInterestAfterTax) : null;
   const _niA = deal?._inputs?.companyANetIncome, _niB = deal?._inputs?.companyBNetIncome;   // null-safe (dead: not rendered since the 7E §9-fold, but no ||0 coercion left behind)
   const bridgeCombNI = (_niA != null && _niB != null) ? parseFloat(_niA) + parseFloat(_niB) : null;
   const bridgeAtSyn  = parseFloat(deal?._results?.afterTaxSynergies) || 0;
@@ -145,8 +146,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           // subtraction is made visible. finDrag = deal._results.newInterestAfterTax, the SAME value the §6b
           // accretion bridge shows (surfaced, not recomputed). Deal-level → "—" in Acq/Tgt/Comb/Syn; the
           // value shows only in PF Total, as a banker-parens negative.
-          { label: 'Net Income',        a: a.netIncome,      b: b.netIncome,      c: cNi,    syn: atSyn,   pf: cNi != null ? cNi + atSyn - finDrag : null, bold: true },
-          { label: 'Less: Acq. financing interest (after-tax)', a: null, b: null, c: null, syn: null, pf: cNi != null ? -finDrag : null, fin: true },
+          { label: 'Net Income',        a: a.netIncome,      b: b.netIncome,      c: cNi,    syn: atSyn,   pf: (cNi != null && finDrag != null) ? cNi + atSyn - finDrag : null, bold: true },
+          { label: 'Less: Acq. financing interest (after-tax)', a: null, b: null, c: null, syn: null, pf: (cNi != null && finDrag != null) ? -finDrag : null, fin: true },
         ],
       });
     }
