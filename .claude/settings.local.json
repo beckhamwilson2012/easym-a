@@ -49,17 +49,17 @@
       "Bash(curl -o /dev/null http://localhost:3001/*)",
       "Bash(curl -s -m * http://localhost:3001/*)",
       "Bash(curl -s -o /dev/null -w * http://localhost:3001/*)",
-      "Bash(curl -s -m * -o /dev/null -w * http://localhost:3001/*)",
+      "Bash(curl -s -m 10 -o /dev/null -w * http://localhost:3001/*)",
 
-      "Bash(RAW_DIR=* node:*)",
-      "Bash(FLAGS=* node:*)",
-      "Bash(OUT=* node:*)",
-      "Bash(EXPECTED=* node:*)",
-      "Bash(PORT=* node:*)",
-      "Bash(GAP_MS=* node:*)",
-      "Bash(NODE_PATH=* node:*)",
-      "Bash(NODE_OPTIONS=* node:*)",
-      "Bash(DEBUG=* node:*)"
+      "Bash(RAW_DIR=* node *)",
+      "Bash(FLAGS=* node *)",
+      "Bash(OUT=* node *)",
+      "Bash(EXPECTED=* node *)",
+      "Bash(PORT=* node *)",
+      "Bash(GAP_MS=* node *)",
+      "Bash(NODE_PATH=* node *)",
+      "Bash(NODE_OPTIONS=* node *)",
+      "Bash(DEBUG=* node *)"
     ]
   }
 }
