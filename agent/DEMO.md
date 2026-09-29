@@ -68,14 +68,20 @@ bash agent/demo.sh
 tree — `git status --porcelain`, commit or stash, rerun. Don't debug live; use `--pairs 3` if you're short
 on time, or fall back to Step 1's finished run.
 
-## Step 5 — Watch the capture (4 min)
+## Step 5 — Watch the capture and the live iteration (13 min)
 
 **Say:** "It's driving a real browser through the app right now — entering tickers, building each deck,
 then reading every figure back out and comparing it to EDGAR."
 **Should appear:** `capture START · baseline · 5 decks`, then a per-deck line roughly every 48 seconds,
 ending `capture END · baseline · 5 decks captured (5 ok) · 4m`, then
 `baseline: 6 defects across 5 analyzable pairs (1.20 per pair)`.
-**Both dry runs:** 5 ok of 5, 6 defects, capture 4m00s.
+**All three runs:** 5 ok of 5, 6 defects — capture 4m00s on the two dry runs, 4m20s on the live run
+`20260929-160247`.
+**Live iteration** (new — the two dry runs never reached it, their agent turn was an empty error): four
+`claude -p working… Nm elapsed` lines, then `verdict: agent returned DONE` at 4m05s — 49 turns, $1.72,
+0 permission denials. A graded iteration then re-captures: `capture START · after-1`, another 4m14s.
+**Budget two four-minute waits here, not one.** The step ran 16:03:56→16:17:03 = 13m07s and the run
+totalled 14m16s, against 5m17s–5m21s back when the agent's OAuth was dead and it never ran.
 **If decks start failing:** if the reason is `RATE_LIMITED`, say so plainly — that's the app's own rate
 limiter, fixed for loopback in `483a910`; on an unpatched build it's the known cause. A failed deck is
 excluded from grading, never counted as a pass. Keep talking over it; 4 of 5 is still a working demo.
