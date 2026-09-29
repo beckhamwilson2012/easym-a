@@ -1,8 +1,9 @@
 # Sweep demo — meeting script
 
-A 6-step walkthrough: a finished overnight run on the dashboard, then a live 5-pair run that finishes in
-about five and a half minutes. Timings below are measured from two end-to-end dry runs on 2026-09-24
-(`20260924-163754`, 5m21s · `20260924-164351`, 5m17s), not estimates.
+A 6-step walkthrough, but **not run in numeric order**: start the live 5-pair run first and leave it
+working, present the finished overnight run while it captures, then come back for the verdict. The live
+run takes about fourteen minutes. Timings below are measured from `20260929-160247` — the first run whose
+agent actually ran, 14m16s on 2026-09-29 — not estimates.
 
 **Before anyone is in the room** — `bash agent/demo.sh` runs its own pre-flight, but these take a minute
 to fix and are awkward live:
@@ -14,10 +15,19 @@ node server.js &                  # :3001
 bash agent/dashboard/open-dashboard.sh   # :3002
 ```
 
-> **Known caveat, 2026-09-24.** The iteration step currently returns `NO_VERDICT`: the sweep agent's
-> `claude` CLI answers `Failed to authenticate: OAuth session expired and could not be refreshed`
-> (`runs/<id>/envelope-iter1.json`). Capture, grading and the ledger all work — only the agent's own turn
-> is empty. Re-authenticate the CLI before the meeting, or plan to use the Step 5 fallback.
+> **Running order — start the run first, then talk over it.** The live run is ~14 minutes, and most of
+> that is two four-minute captures with nothing to watch. Do not walk the steps in numeric order:
+>
+> | minute | do this |
+> |---|---|
+> | 1 | **Step 4** — `bash agent/demo.sh`, wait for the RUN line, then leave the terminal alone |
+> | 1–11 | **Steps 1–3** on `http://localhost:3002/` — the overnight run, a real defect, the gate |
+> | ~14 | back to the terminal for **Steps 5–6** — the verdict and the commit |
+>
+> The 2026-09-24 OAuth failure is fixed: `20260929-160247` returned `DONE_TESTED` off a real 49-turn,
+> $1.72 agent iteration. If it recurs the symptom is `Failed to authenticate: OAuth session expired and
+> could not be refreshed` in `runs/<id>/agent-1.json` with `is_error: true`, and the run still reaches a
+> verdict — `NO_VERDICT`, item left open. Re-authenticate the CLI and rerun.
 
 ---
 
@@ -52,7 +62,7 @@ verdicts — `DONE`, `UNVERIFIED`, `REGRESSION`, `NO_VERDICT`.
 **If asked "has it ever been wrong?"** — yes, say so: run `20260817-153300` scored REGRESSION and was
 reverted; a later commit showed that flag was a phantom. It's in `CLAUDE.md` under hard-won lessons.
 
-## Step 4 — Start the live run (30 sec, then ~1 min of setup)
+## Step 4 — Start the live run (30 sec, then ~1 min of setup) — do this at minute 1
 
 **Run** in a terminal they can see:
 
@@ -64,19 +74,23 @@ bash agent/demo.sh
 **Should appear:** six green `ok` pre-flight lines, then within ~60 seconds the RUN line:
 `RUN <id> · 5 pairs · 6 open items · mode N+1 · max_iter 1 · budget $50 · sweep_pairs 5`.
 **Timing:** pre-flight is instant; the gap to the RUN line is ~60s (lock, stale-capture reap, pair build).
+**Then leave it.** Once the RUN line is up, go to Step 1 — the next 13 minutes are captures and the
+agent's own turn, and none of it needs a watcher. Come back at ~14 min for Steps 5–6.
 **If a pre-flight check fails:** each failure prints the exact fix under it. The common one is a dirty
 tree — `git status --porcelain`, commit or stash, rerun. Don't debug live; use `--pairs 3` if you're short
 on time, or fall back to Step 1's finished run.
 
-## Step 5 — Watch the capture and the live iteration (13 min)
+## Step 5 — The capture and the live iteration (13 min, unattended)
 
+**You are not watching this live** — Steps 1–3 run over it. This is what the terminal will have printed
+by the time you come back, and the one line worth reading aloud on the way past.
 **Say:** "It's driving a real browser through the app right now — entering tickers, building each deck,
 then reading every figure back out and comparing it to EDGAR."
 **Should appear:** `capture START · baseline · 5 decks`, then a per-deck line roughly every 48 seconds,
 ending `capture END · baseline · 5 decks captured (5 ok) · 4m`, then
 `baseline: 6 defects across 5 analyzable pairs (1.20 per pair)`.
-**All three runs:** 5 ok of 5, 6 defects — capture 4m00s on the two dry runs, 4m20s on the live run
-`20260929-160247`.
+**All three runs:** 5 ok of 5, 6 defects — baseline capture 4m08s / 4m07s on the two dry runs, 4m20s on
+the live run `20260929-160247`.
 **Live iteration** (new — the two dry runs never reached it, their agent turn was an empty error): four
 `claude -p working… Nm elapsed` lines, then `verdict: agent returned DONE` at 4m05s — 49 turns, $1.72,
 0 permission denials. A graded iteration then re-captures: `capture START · after-1`, another 4m14s.
@@ -91,25 +105,42 @@ excluded from grading, never counted as a pass. Keep talking over it; 4 of 5 is 
 **Should appear:** the summary block — elapsed time, `baseline: 5 ok, 0 failed`, the defect line, the
 gate verdict, the iteration commit hash, the branch, and the dashboard URL.
 **Say:** "Every run is a branch with an UNDO file. Nothing is merged automatically. The commit message
-carries the verdict — this one says NO_VERDICT, meaning the agent's answer wasn't trustworthy, so the
-harness reverted it and left the item open."
-**Expected:** exit 0, total 5m17s–5m21s.
-**If the iteration is empty** (today's OAuth caveat): show a real one instead —
-`git show ce746de --stat` (a REGRESSION that was reverted) or `247e4b9` (UNVERIFIED, committed and left
-open). Say: "the agent's credentials expired this morning; here's what a graded iteration looks like."
+carries the verdict — this one says DONE_TESTED: the defect count did not move, 6 to 6, but the test the
+agent declared before it started went red-to-green, so the gate closed the item on the test, not the
+count."
+**Expected:** exit 0, total 14m16s, and these two lines —
+`GATE: density 1.20->1.20 (unchanged), §2(b) holds, declared test RED->GREEN → DONE_TESTED`
+`COMMITTED (item closed, test-graded) iter 1`
+then commit `78389d2` on branch `sweep/auto-20260929-160247`.
+**If asked why a test it wrote is trusted:** the runner proves the test discriminates before believing
+it — `test RED->GREEN CONFIRMED: exits 1 at <base> and 0 on the agent's tree`. The five red failures are
+in `agent/runs/20260929-160247/test-iter1-red.log`, e.g. `companyBDebt=null -> targetDebtRepaid="0", want
+null`.
+**If the iteration comes back NO_VERDICT:** the agent's envelope was `is_error: true` and the harness left
+the item open — show a graded one instead, `git show 78389d2 --stat`.
 
 ---
 
-## Measured timings — the two dry runs, 2026-09-24
+## Measured timings
 
-| phase | `20260924-163754` | `20260924-164351` |
-|---|---|---|
-| pre-flight → RUN line | 60s | 60s |
-| `npm run build` | 9s | 8s |
-| capture, 5 decks | 4m08s (5 ok) | 4m07s (5 ok) |
-| analyzer | ~1s, 6 defects | ~1s, 6 defects |
-| iteration + gate | 3s (`NO_VERDICT`) | 1s (`NO_VERDICT`) |
-| **total** | **5m21s, exit 0** | **5m17s, exit 0** |
+The two 2026-09-24 runs never reached the iteration — the agent's turn came back as an auth error with
+zero tokens — so their totals understate a real run by about nine minutes. Use the live column.
 
-Budget the demo at **6 minutes** of run time and 6 minutes of talking. `--pairs 3` cuts roughly 100
-seconds off the capture.
+| phase | `20260924-163754` (agent dead) | `20260924-164351` (agent dead) | `20260929-160247` (live) |
+|---|---|---|---|
+| pre-flight → RUN line | 60s | 60s | 60s |
+| `npm run build` | 9s | 8s | 8s |
+| capture, 5 decks — baseline | 4m08s (5 ok) | 4m07s (5 ok) | 4m20s (5 ok) |
+| analyzer | ~1s, 6 defects | ~1s, 6 defects | ~1s, 6 defects |
+| agent turn | — (empty, auth error) | — (empty, auth error) | 4m05s · 49 turns · $1.72 · 0 denials |
+| test RED→GREEN + 3 rebuilds | — | — | 28s |
+| capture, 5 decks — after-1 | — | — | 4m14s (5 ok) |
+| gate | 3s (`NO_VERDICT`) | 1s (`NO_VERDICT`) | <1s (`DONE_TESTED`) |
+| **total** | **5m21s, exit 0** | **5m17s, exit 0** | **14m16s, exit 0** |
+
+The iteration step alone (agent turn through gate, `16:08:16`→`16:17:03`) is 8m47s — the `wall_sec` on the
+`20260929-160247` row of `agent/calibration.csv`.
+
+Budget **15 minutes** of run time against ~6 minutes of talking, which is why Steps 1–3 go over the
+capture rather than after it. `--pairs 3` cuts roughly 100 seconds off *each* capture and there are now
+two of them (estimate — the `--pairs 3` path has not been timed end to end).
