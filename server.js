@@ -209,6 +209,41 @@ const SECTOR_PEERS = {
 };
 const BROAD_DEFAULT = ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'JPM', 'JNJ', 'WMT']; // last resort (e.g. foreign, no CIK)
 
+// Foreign-issuer SIC stand-in. A foreign private issuer / OTC ADR (e.g. NSRGY, Nestlé S.A.) has no entry in
+// SEC company_tickers.json → no CIK → no EDGAR SIC, so peer resolution used to fall straight to BROAD_DEFAULT
+// (then suppressed as untrusted). For those tickers ONLY, the FMP profile `industry` is mapped to the SIC
+// whose SECTOR_PEERS pool is the same industry, and that SIC goes through the SAME sectorPoolForSic tier.
+// Only unambiguous, exact-pool industries are listed — an unmapped industry stays null (→ broad default,
+// suppressed), never a guessed neighbour. Never consulted when a CIK exists (EDGAR SIC stays authoritative).
+const FMP_INDUSTRY_TO_SIC = {
+  'Beverages - Non-Alcoholic': '2080',
+  'Beverages - Brewers': '2080',
+  'Beverages - Wineries & Distilleries': '2080',
+  'Packaged Foods': '2000',
+  'Confectioners': '2000',
+  'Drug Manufacturers - General': '2834',
+  'Oil & Gas Integrated': '2911',
+  'Oil & Gas Refining & Marketing': '2911',
+  'Semiconductors': '3674',
+  'Auto - Manufacturers': '3711',
+  'Discount Stores': '5331',
+  'Software - Application': '7372',
+  'Software - Infrastructure': '7372',
+  'Restaurants': '5812',
+};
+const fmpIndustryCache = new Map(); // ticker → raw FMP industry string | null
+async function fmpIndustryFor(ticker) {
+  if (fmpIndustryCache.has(ticker)) return fmpIndustryCache.get(ticker);
+  let industry = null;
+  try {
+    const r = await get(`https://financialmodelingprep.com/stable/profile?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`);
+    const j = Array.isArray(r) ? r[0] : r;
+    industry = (j && j.symbol && j.industry) ? String(j.industry) : null;
+    fmpIndustryCache.set(ticker, industry); // cache only a completed lookup; a failed fetch retries next time
+  } catch (_) { industry = null; }
+  return industry;
+}
+
 // Map a target SIC → a curated sector pool. Returns { pool, exact } (or null if no match):
 //   • exact:true  — an exact SIC hit in SECTOR_PEERS (a hand-curated pool for THIS industry → trustworthy).
 //   • exact:false — the 2-digit major-group fallback, which can be cross-industry (e.g. 3760 space → group
@@ -1473,14 +1508,24 @@ async function resolvePeers(targetTicker) {
     }
   }
 
+  // 2b. Foreign issuer (no CIK → no EDGAR SIC): stand in the SIC mapped from the FMP profile industry, so
+  //     peer resolution is not gated solely on a domestic SIC. Exact-pool industries only (FMP_INDUSTRY_TO_SIC).
+  let sicBasis = 'edgar';
+  if (!cik) {
+    const industry = await fmpIndustryFor(upper);
+    const mapped = industry ? FMP_INDUSTRY_TO_SIC[industry] || null : null;
+    if (mapped) { targetSic = mapped; sicBasis = 'fmp-industry'; }
+    console.log(`[resolvePeers] ${upper} → no CIK (foreign issuer); FMP industry=${industry || 'none'} → sic=${mapped || 'unmapped'}`);
+  }
+
   // 3. Curated sector default keyed by the target's SIC. exact:true → a real same-industry pool (trusted);
   //    exact:false → the 2-digit-group fallback (cross-industry, e.g. space→autos) → untrusted.
   const sp = sectorPoolForSic(targetSic);
   if (sp && sp.pool) {
     const peers = sp.pool.filter((t) => t !== upper).slice(0, 7);
     if (peers.length) {
-      console.log(`[resolvePeers] ${upper} → sector default (sic=${targetSic}, exact=${sp.exact}):`, peers);
-      return { peers, source: 'sector-default', trust: sp.exact ? 'trusted' : 'untrusted' };
+      console.log(`[resolvePeers] ${upper} → sector default (sic=${targetSic}, basis=${sicBasis}, exact=${sp.exact}):`, peers);
+      return { peers, source: 'sector-default', trust: sp.exact ? 'trusted' : 'untrusted', sicBasis };
     }
   }
 
@@ -1496,9 +1541,9 @@ app.get('/api/peers/:ticker', async (req, res) => {
   console.log(`[/api/peers] request for ${ticker}`);
   try {
     await loadTickers();
-    const { peers, source, trust } = await resolvePeers(ticker);
+    const { peers, source, trust, sicBasis } = await resolvePeers(ticker);
     console.log(`[/api/peers] ${ticker} → ${peers.length} peers via ${source} (${trust}):`, peers);
-    res.json({ peers, source, trust });
+    res.json({ peers, source, trust, ...(sicBasis ? { sicBasis } : {}) });
   } catch (err) {
     console.error(`Peers [${ticker}]:`, err.message);
     // Even on error, never blank — hand back the broad default so the slide always renders. It's a

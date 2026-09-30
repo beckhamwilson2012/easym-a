@@ -204,7 +204,7 @@
     `§8 combined GM 36.2% skips target GP (null) but keeps target revenue → understated; correct ≈ 46.6%`;
     Pattern-B null-in-sum. If item 1 populates target GP on the §7/LTM path, this numerator stops being null.
 
-- [ ] **5. KO/NSRGY comparables degrade to CNBC-only (foreign-issuer gap)** — 1 pair (surfaced during 429 re-capture).
+- [x] **5. KO/NSRGY comparables degrade to CNBC-only (foreign-issuer gap)** — 1 pair (surfaced during 429 re-capture).  <!-- DONE run 20260929-193005 -->
   - pair: KO/NSRGY · observed: comparables source = **CNBC** (EDGAR absent); peer screen reports
     "No comparable public peers identified"; oracle NSRGY **sic=undefined** (Nestlé S.A., foreign issuer, no
     SEC 10-K) · expected: EDGAR-sourced comps, OR explicit foreign-issuer handling (peer resolution not
