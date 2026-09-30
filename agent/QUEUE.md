@@ -168,7 +168,7 @@
     cut-off case. The bad-verdict case has no equivalent. A fix that scores badly must stay recoverable,
     because **the score can itself be wrong** — 153300 is the proof that it can.
 
-- [ ] **2c. Three hand-maintained debt-concept lists have drifted apart** — (root: debt-dropped, same
+- [~] **2c. Three hand-maintained debt-concept lists have drifted apart** — (root: debt-dropped, same  <!-- REGRESSION run 20260929-193005 -->
       family as 2a). Filed after 2a/2b but NOT downstream of them: this is the vocabulary 2a's fix widened
       in only one of the three places that keep a copy of it.
   - pair: RKLB/IRDM · observed: `server.js`, `edgarClient.js` and `ltmCalc.js` EACH carry their own

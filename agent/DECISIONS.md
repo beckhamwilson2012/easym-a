@@ -41,3 +41,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [22:48:31 · run 20260929-193005 · iter 2] iter 2 PARTIAL returned edits, which its contract forbids; reverted unmeasured rather than committing work no capture scored.
 
 - [22:48:31 · run 20260929-193005 · iter 2] iter 2 PARTIAL: server.js and edgarClient.js already share resolveTotalDebt via a5511a9, so the core LongTermDebt-family vocabulary is one list, and RKLB/IRDM are non-null on both /quote and §16 / remaining: move server.js:698-700 and :726-727 fallback concepts (ConvertibleDebtNoncurrent, ConvertibleLongTermNotesPayable, ConvertibleDebtCurrent, ConvertibleNotesPayableCurrent, DebtLongtermAndShorttermCombinedAmount, LongTermLineOfCredit, LongTermNotesPayable; item left OPEN with the remaining half recorded, breaker untouched.
+
+- [11:27:49 · run 20260929-193005 · iter 3] iter 3 REGRESSION: defect density rose 1.18 -> 1.24 per analyzable pair after the change (test-graded: 0); reverted, item parked. §2(b) held and no pair rendered less, so the rise is attributed to the change itself.
