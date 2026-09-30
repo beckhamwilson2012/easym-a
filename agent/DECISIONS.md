@@ -47,3 +47,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [11:58:33 · run 20260929-193005 · iter 4] iter 4 PARTIAL returned edits, which its contract forbids; reverted unmeasured rather than committing work no capture scored.
 
 - [11:58:33 · run 20260929-193005 · iter 4] iter 4 PARTIAL: NET/DDOG resolved upstream: Debt/EBITDA now 74.7x, no message / SectionDashboard.js:260 note still fires "Combined EBITDA is non-positive" on 17 pairs where combined EBITDA is positive or N/A. 9 positive: ARM/SNPS, CART/DASH, CMCSA/PARA, F/RIVN, PLTR/SNOW, RDDT/PINS, SAP/NOW $8,692M, TM/GM, WBD/PARA. 8 N/A: BRK.B/PGR, BX/APO, GSK/NUVL, LLY/SRPT, MRNA/BNTX, SHEL/OXY, SONY/EA, UL/CL. Fix: branch the note on results.combinedEBITDA (null → not available; ≤0 → non-positive; >0 with combinedDebt null → combined debt not available; item left OPEN with the remaining half recorded, breaker untouched.
+
+- [16:18:20 · run 20260929-193005 · iter 6] iter 6 UNVERIFIED: agent edited files but the defect count did not move (54->54) and no revert_signal; committed as UNVERIFIED, queue item left OPEN (not checked off).

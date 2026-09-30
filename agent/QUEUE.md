@@ -249,6 +249,15 @@
 
 ## Discovered
 
+- **`SectionProFormaPL.js:126` — §6a combined revenue growth % builds its base with `?? 0` on each prior-year
+  leg.** `growth(cRev, (aPrev?.revenue ?? 0) + (bPrev?.revenue ?? 0))` — when one company's prior-year
+  revenue is absent but both current-year legs are present, the base is the other company's revenue alone,
+  so combined growth is overstated (Pattern B, the ternary/`??` shape a `|| 0` grep misses). Found while
+  fixing item 4; not reproduced on a live pair (AAPL/VZ has all revenue legs).
+  (pair: — (needs a pair with a null prior-year revenue leg) · observed: combined growth base = one leg
+  when the other prior-year revenue is null · expected: base null → combined growth "—" unless both prior
+  legs present · source: `src/components/deck/sections/SectionProFormaPL.js:126`)
+
 - **`dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null, in the same function 2b fixes.**
   `const excessCashAvail = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0;` — when the
   combined cash bucket does not resolve, "how much cash is available to fund the deal" is UNKNOWN, and this

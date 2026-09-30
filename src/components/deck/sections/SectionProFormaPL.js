@@ -89,7 +89,10 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const aAct = aPnl ? [...aPnl.columns].reverse().find(c => c.actual) : null;
   const bAct = bPnl ? [...bPnl.columns].reverse().find(c => c.actual) : null;
   const synRamp = [parseFloat(deal?.synergiesY1) || 0, parseFloat(deal?.synergiesY2) || 0, parseFloat(deal?.synergiesY3) || 0];
-  const sum = (x, y) => (x != null && y != null) ? x + y : (x ?? y ?? null);
+  // Combined = BOTH legs, or null ("—"). Returning the one live leg (the old `x ?? y` fallback) labelled a
+  // single company's figure "Combined" and — worse — fed it into margin(cGross, cRev) against a two-leg
+  // revenue: AAPL/VZ FY2026E rendered GM 223,949 / (477,451 + 140,906) = 36.2% with VZ GP null (Pattern B).
+  const sum = (x, y) => (x != null && y != null) ? x + y : null;
 
   // Transaction adjustment (surfaced from dealCalc — NOT recomputed): the deal-level after-tax acquisition-
   // financing interest, constant across forward years. §6a previously OMITTED this from PF Net Income

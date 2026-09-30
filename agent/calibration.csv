@@ -14,3 +14,4 @@ run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,cap
 20260929-193005,3,"2c. Three hand-maintained debt-concept lists have drifted apart — (root: debt-dropped; same",REGRESSION,25800,10,0.5634754,20,61,N+1,true,false,success,BLOCKED,49,1
 20260929-193005,4,"3. False 'Combined EBITDA is non-positive' — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.",PARTIAL,87,22,0.7098856,62,20,N+1,true,false,success,PARTIAL,49,1
 20260929-193005,5,"3. False 'Combined EBITDA is non-positive' — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.",DONE,1761,13,0.47600600000000004,20,54,N+1,true,false,success,DONE,49,1
+20260929-193005,6,"4. Combined gross margin understated via null target GP — 6 pairs (GATE-2A root: B-nullInSum). Downstream of item 1.",UNVERIFIED,1792,24,0.6704036,54,54,N+1,false,false,success,DONE,49,1
