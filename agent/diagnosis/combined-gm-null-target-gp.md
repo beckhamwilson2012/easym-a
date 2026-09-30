@@ -35,3 +35,18 @@ Pairs where both legs are present for a row compute identically (`x + y` branch 
 
 ## Not measured
 Did not restart :3001 or re-capture (runner's job). `build/` must be rebuilt for the change to show.
+
+## Iter 7 (run 20260929-193005) — STEP 0: Repro FAILED → RESOLVED_UPSTREAM(iter 6, 5f5d9b8)
+- Served bundle carries the fix: `build/static/js/main.6802a687.js.map` contains "Combined = BOTH legs"
+  (build 15:50, src edit 15:49); the old `x ?? y ?? null` shape is absent from every map.
+- Runner capture `cap/before-5/AAPL_VZ.json` §8 Gross margin % row: `46.9% · — · 36.2% · — · 36.2%`
+  (FY2026E; 36.8% / 37.3% FY2027E/28E) — the item's observation.
+- Runner capture `cap/after-6/AAPL_VZ.json` (captured 16:18 on the fixed build) §8: Gross Profit
+  `$223,949 · — · — · — · —`, Gross margin % `46.9% · — · — · — · —` for all three forward years.
+  Combined GM is now an honest dash, not 36.2% — the Pattern-B defect condition no longer holds.
+- Live `/api/pnl/VZ` (2026-09-30): grossProfit null in all six columns (FY2023–FY2028E), revenue live.
+  So the item's numeric expectation (≈46.6%) is not reachable without a substituted LTM-margin proxy;
+  it only becomes reachable if item 1 populates VZ GP at source, in which case the both-legs `sum` computes it.
+- Defect count 54→54 in iter 6 is not explained here: the capture shows the AAPL/VZ cell moved from
+  36.2% to "—". The flag-level check (which cm18 flags cleared, what was added) was not done in this iteration.
+- No code change in iter 7.
