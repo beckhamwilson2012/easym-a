@@ -12,3 +12,4 @@ run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,cap
 20260929-193005,1,"6. A bad verdict destroys the agent's code before anything records it — HARNESS defect; not an",REGRESSION,5635,4,0.298407,59,61,N+1,false,false,success,BLOCKED,48,2
 20260929-193005,2,"2c. Three hand-maintained debt-concept lists have drifted apart — (root: debt-dropped; same",PARTIAL,85,20,0.6457154,62,59,N+1,true,false,success,PARTIAL,48,2
 20260929-193005,3,"2c. Three hand-maintained debt-concept lists have drifted apart — (root: debt-dropped; same",REGRESSION,25800,10,0.5634754,20,61,N+1,true,false,success,BLOCKED,49,1
+20260929-193005,4,"3. False 'Combined EBITDA is non-positive' — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.",PARTIAL,87,22,0.7098856,62,20,N+1,true,false,success,PARTIAL,49,1

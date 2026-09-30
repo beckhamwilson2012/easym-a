@@ -194,6 +194,7 @@
     whenever `combinedDebt` is null; `dealCalc.js:183` combinedDebt null if EITHER debt null. RUN-findings.md
     NET/DDOG #23; GATE-2B.2. NOTE: shares the null-combinedDebt trigger with 2a/2b, but the message logic is
     independently wrong (fires on ANY null combinedDebt, incl. acquirer-null) — fix the message, not just the data.
+    <!-- PARTIAL run 20260929-193005 iter 4: NET/DDOG resolved upstream: Debt/EBITDA now 74.7x, no message / SectionDashboard.js:260 note still fires "Combined EBITDA is non-positive" on 17 pairs where combined EBITDA is positive or N/A. 9 positive: ARM/SNPS, CART/DASH, CMCSA/PARA, F/RIVN, PLTR/SNOW, RDDT/PINS, SAP/NOW $8,692M, TM/GM, WBD/PARA. 8 N/A: BRK.B/PGR, BX/APO, GSK/NUVL, LLY/SRPT, MRNA/BNTX, SHEL/OXY, SONY/EA, UL/CL. Fix: branch the note on results.combinedEBITDA (null → not available; ≤0 → non-positive; >0 with combinedDebt null → combined debt not available -->
 
 - [ ] **4. Combined gross margin understated via null target GP** — 6 pairs (GATE-2A root: B-nullInSum). Downstream of item 1.
   - pair: AAPL/VZ · observed: §8 combined gross margin renders **36.2%** — it skips the target (VZ) gross
