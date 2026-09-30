@@ -35,3 +35,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [17:06:57 · run 20260924-170138 · iter 1] iter 1 NO_VERDICT: agent envelope error/absent or no {DONE,RESOLVED_UPSTREAM,BLOCKED,FAILED} token (error-envelope:success); reverted, item left OPEN.
 
 - [16:17:03 · run 20260929-160247 · iter 1] iter 1 DONE_TESTED: the count could not move (6->6) but agent/tests/2b-null-not-zero.js fails at the checkpoint and passes on this tree, so the fix is measured rather than merely unmeasurable; item closed.
+
+- [21:50:19 · run 20260929-193005 · iter 1] iter 1 REGRESSION per GATE_SPEC §2(b): DAL/ALK was analyzable in the before-capture and is not in the after-capture; a lost sample is breakage, not an improvement.

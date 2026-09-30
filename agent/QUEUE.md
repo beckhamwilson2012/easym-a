@@ -148,7 +148,7 @@
     null, so those rendered numbers come from a different code path that the run artifacts do not
     identify. Establishing which surface renders them is part of this item, not a premise for it.
 
-- [ ] **6. A bad verdict destroys the agent's code before anything records it** — HARNESS defect, not an
+- [~] **6. A bad verdict destroys the agent's code before anything records it** — HARNESS defect, not an  <!-- REGRESSION run 20260929-193005 -->
       app defect. **OUT OF AGENT SCOPE — MINE to fix, supervised**: the fix is in `run-sweep.sh`, so an
       agent handed this item would be editing the harness that grades it, exactly the conflict the 429
       item in Discovered is held back for. Filed here for visibility, not for the loop to pick up.
