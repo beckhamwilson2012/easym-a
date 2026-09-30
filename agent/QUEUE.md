@@ -182,6 +182,7 @@
     drop-in:** its list OMITS `LongTermNotesPayable` and `DebtLongtermAndShorttermCombinedAmount`, both
     of which 67574d7 added to `server.js`. Importing the module as written would silently NARROW
     `server.js` and regress 2a. Reconcile to the UNION first, then switch all three call sites.
+    <!-- PARTIAL run 20260929-193005 iter 2: server.js and edgarClient.js already share resolveTotalDebt via a5511a9, so the core LongTermDebt-family vocabulary is one list, and RKLB/IRDM are non-null on both /quote and §16 / remaining: move server.js:698-700 and :726-727 fallback concepts (ConvertibleDebtNoncurrent, ConvertibleLongTermNotesPayable, ConvertibleDebtCurrent, ConvertibleNotesPayableCurrent, DebtLongtermAndShorttermCombinedAmount, LongTermLineOfCredit, LongTermNotesPayable -->
 
 - [ ] **3. False "Combined EBITDA is non-positive"** — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.
   - pair: NET/DDOG · observed: deck renders "Combined EBITDA is non-positive" while combined EBITDA is

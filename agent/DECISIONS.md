@@ -37,3 +37,7 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [16:17:03 · run 20260929-160247 · iter 1] iter 1 DONE_TESTED: the count could not move (6->6) but agent/tests/2b-null-not-zero.js fails at the checkpoint and passes on this tree, so the fix is measured rather than merely unmeasurable; item closed.
 
 - [21:50:19 · run 20260929-193005 · iter 1] iter 1 REGRESSION per GATE_SPEC §2(b): DAL/ALK was analyzable in the before-capture and is not in the after-capture; a lost sample is breakage, not an improvement.
+
+- [22:48:31 · run 20260929-193005 · iter 2] iter 2 PARTIAL returned edits, which its contract forbids; reverted unmeasured rather than committing work no capture scored.
+
+- [22:48:31 · run 20260929-193005 · iter 2] iter 2 PARTIAL: server.js and edgarClient.js already share resolveTotalDebt via a5511a9, so the core LongTermDebt-family vocabulary is one list, and RKLB/IRDM are non-null on both /quote and §16 / remaining: move server.js:698-700 and :726-727 fallback concepts (ConvertibleDebtNoncurrent, ConvertibleLongTermNotesPayable, ConvertibleDebtCurrent, ConvertibleNotesPayableCurrent, DebtLongtermAndShorttermCombinedAmount, LongTermLineOfCredit, LongTermNotesPayable; item left OPEN with the remaining half recorded, breaker untouched.
