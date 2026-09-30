@@ -257,7 +257,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             {
               label: 'Debt / EBITDA',
               value: results.debtEBITDA === 'N/A' ? 'n/m' : `${results.debtEBITDA}x`,
-              note:  results.debtEBITDA === 'N/A' ? 'Combined EBITDA is non-positive' : null,
+              // Branch on WHY the ratio is N/A (dealCalc: combinedEBITDA > 0 && combinedDebt != null) — a null
+              // combined debt with positive EBITDA is "debt not available", never "EBITDA is non-positive".
+              note:  results.debtEBITDA === 'N/A'
+                ? (results.combinedEBITDA == null ? 'Combined EBITDA not available'
+                  : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
+                  : 'Combined debt not available')
+                : null,
               explain: () => explainDebtEbitda({ combinedDebt: combinedDebtForExplain, combinedEbitda: results.combinedEBITDA, multiple: results.debtEBITDA }),
             },
           ]).map(m => (

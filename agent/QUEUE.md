@@ -184,7 +184,7 @@
     `server.js` and regress 2a. Reconcile to the UNION first, then switch all three call sites.
     <!-- PARTIAL run 20260929-193005 iter 2: server.js and edgarClient.js already share resolveTotalDebt via a5511a9, so the core LongTermDebt-family vocabulary is one list, and RKLB/IRDM are non-null on both /quote and §16 / remaining: move server.js:698-700 and :726-727 fallback concepts (ConvertibleDebtNoncurrent, ConvertibleLongTermNotesPayable, ConvertibleDebtCurrent, ConvertibleNotesPayableCurrent, DebtLongtermAndShorttermCombinedAmount, LongTermLineOfCredit, LongTermNotesPayable -->
 
-- [ ] **3. False "Combined EBITDA is non-positive"** — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.
+- [x] **3. False "Combined EBITDA is non-positive"** — 12 pairs (GATE-2A root: D-ebitdaMsg). Downstream of 2a/2b.  <!-- DONE run 20260929-193005 -->
   - pair: NET/DDOG · observed: deck renders "Combined EBITDA is non-positive" while combined EBITDA is
     actually **POSITIVE $57M** (§10: A $-17M + B $5M + synY1 $70M = $58M mine, $57M rendered); the message
     fires on a null `combinedDebt`, NOT on EBITDA sign · expected: no non-positive message when combined

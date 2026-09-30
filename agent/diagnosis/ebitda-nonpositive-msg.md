@@ -1,50 +1,49 @@
 # Item 3 — False "Combined EBITDA is non-positive" (D-ebitdaMsg)
 
-Run `20260929-193005`, iteration 4. Verdict: **PARTIAL — the class split; no code change made** (STEP 0 split rule).
+## Repro (run 20260929-193005, iter 5)
+Named pair NET/DDOG resolved upstream in iter 4 (Debt/EBITDA 74.7x, no message). The defect class persists
+on other pairs. Live value from `agent/runs/20260929-193005/cap/before-5/CART_DASH.json` bodyText:
 
-## STEP 0 — repro against the runner's latest capture (`cap/before-4`, the current tree)
+- `Combined EBITDA (incl. Y1 synergies)  $2,333M`   ← positive
+- `DEBT / EBITDA  n/m  Combined EBITDA is non-positive`   ← false
+- `Total Debt  N/A` on one side  ← acquirer debt null
 
-Named pair **NET/DDOG does NOT reproduce**: the message is absent. §4 Debt / EBITDA renders `74.7x | 1222.5x`
-and Combined EBITDA (incl. Y1 synergies) is `$57M`. So `combinedDebt` is non-null now, which points to the
-upstream debt items (2a/2b/2c, iters 1–3 of this run).
+Repro confirmed: CART/DASH renders "Combined EBITDA is non-positive" while combined EBITDA is +$2,333M.
 
-The **class still reproduces on other pairs**. SAP/NOW, dashboard card:
-`DEBT / EBITDA ⓘ n/m  Combined EBITDA is non-positive`, while the same deck renders Combined EBITDA
-(incl. Y1 synergies) = **$8,692M**.
+## Trace
+1. `src/utils/dealCalc.js:193` — `combinedDebt = (companyADebt != null && companyBDebt != null) ? … : null`
+   → null because one side's debt is null.
+2. `src/utils/dealCalc.js:194` — `debtEBITDA = (combinedEBITDA > 0 && combinedDebt != null) ? … : null`
+   → null, even though combinedEBITDA = 2,333 > 0.
+3. `src/utils/dealCalc.js:218` — `debtEBITDA: 'N/A'`; `:225` `combinedEBITDA: '2333'`.
+4. `src/components/deck/sections/SectionDashboard.js:260` — `note = debtEBITDA === 'N/A' ? 'Combined EBITDA
+   is non-positive' : null`. The note checks only for N/A. It never looks at which of the two
+   conditions from step 2 failed.
 
-Full tally for `cap/before-4` (scratch `tally_ebitdamsg.js`: message present · Combined EBITDA cell · §4 Debt/EBITDA cells):
+## Root cause
+The Debt/EBITDA note maps all three N/A causes (EBITDA null, EBITDA ≤ 0, combined debt null) to the
+single "EBITDA is non-positive" message. That makes a confident false claim about the EBITDA sign.
+Classification: **New**. It is a mislabelled absence (the message names the wrong cause), not a null
+coerced to zero.
 
-| Group | Pairs (Combined EBITDA) |
-|---|---|
-| **False: message fires, EBITDA positive (9)** | ARM/SNPS $2,865M · CART/DASH $2,333M · CMCSA/PARA $36.9B · F/RIVN $4,112M · PLTR/SNOW $319M · RDDT/PINS $887M · SAP/NOW $8,692M · TM/GM $44.0B · WBD/PARA $6,405M |
-| **Wrong reason: message fires, EBITDA N/A so sign unknown (8)** | BRK.B/PGR · BX/APO · GSK/NUVL · LLY/SRPT · MRNA/BNTX · SHEL/OXY · SONY/EA · UL/CL |
-| Correct: message fires, EBITDA negative (2) | CRWD/S ($539M) · RBLX/U ($988M) |
-| Resolved upstream | NET/DDOG $57M → 74.7x |
+## Fix
+`SectionDashboard.js:260` now branches on `results.combinedEBITDA`, the same value the ratio guard uses:
+- `null` → "Combined EBITDA not available"
+- `≤ 0` → "Combined EBITDA is non-positive" (the only case where the old text was true)
+- `> 0` (so the ratio is N/A only because combinedDebt is null) → "Combined debt not available"
 
-## Root cause (from source; not changed)
+The rendered value ('n/m') is unchanged; only the note text changes. Pairs whose ratio is not N/A are
+untouched.
 
-- `src/components/deck/sections/SectionDashboard.js:260`:
-  `note: results.debtEBITDA === 'N/A' ? 'Combined EBITDA is non-positive' : null`. It keys the note on the
-  *output* being N/A and never reads the EBITDA sign.
-- `src/utils/dealCalc.js:194`: `debtEBITDA = (combinedEBITDA > 0 && combinedDebt != null) ? … : null`. N/A has
-  three causes: EBITDA ≤ 0, EBITDA null (`dealCalc.js:152`, either side null), or combinedDebt null
-  (`dealCalc.js:193`, either debt null).
-- One sentence: the dashboard note names one of three N/A causes as though it were the only one, so a
-  null-debt or null-EBITDA N/A is labelled "non-positive". **Pattern New**: a message keyed to a sentinel
-  that merges distinct absence states. It is close to Pattern C: the text is only true by accident, when
-  EBITDA happens to be negative.
+Expected per-pair effect (from the iter-4 PARTIAL census):
+- 9 positive-EBITDA pairs → "Combined debt not available": ARM/SNPS, CART/DASH, CMCSA/PARA, F/RIVN,
+  PLTR/SNOW, RDDT/PINS, SAP/NOW, TM/GM, WBD/PARA.
+- 8 N/A-EBITDA pairs → "Combined EBITDA not available": BRK.B/PGR, BX/APO, GSK/NUVL, LLY/SRPT,
+  MRNA/BNTX, SHEL/OXY, SONY/EA, UL/CL.
 
-Side observation, not investigated: several "false" pairs render a real §4 Debt/EBITDA (e.g. SAP/NOW
-`0.6x | 12.2x`, F/RIVN `1.1x | 0.0x`) while the §3 dashboard card says n/m. So the §4 table and
-`results.debtEBITDA` source combined debt from different places.
+Not verified by me: the runner rebuilds, restarts, and re-captures.
 
-## What remains (for the next iteration)
-
-Branch the SectionDashboard.js:260 note on the actual cause, reading `results.combinedEBITDA` (already
-returned as a string or null at `dealCalc.js:225`):
-- EBITDA null → "not available" (or name the missing input)
-- EBITDA ≤ 0 → "Combined EBITDA is non-positive"
-- EBITDA > 0 and debt null → "Combined debt not available"
-
-Acceptance: no pair in the first two groups shows "non-positive", and CRWD/S and RBLX/U still do.
-The EV/EBITDA card (`:248`) already uses this branching shape and can serve as the model.
+## Adjacent (already filed, not touched)
+`SectionDashboard.js:76` `combinedDebtForExplain` and `explanations.js:140-141` use `|| 0` in the
+Debt/EBITDA explain popup, so it shows a fabricated combined debt when one side is null. This is already
+in QUEUE.md ## Discovered (~line 283).
