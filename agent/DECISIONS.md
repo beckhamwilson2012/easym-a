@@ -53,3 +53,7 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [16:48:51 · run 20260929-193005 · iter 7] iter 7 REGRESSION: defect density rose 1.10 -> 1.16 per analyzable pair after the change (test-graded: 0); reverted, item parked. §2(b) held and no pair rendered less, so the rise is attributed to the change itself.
 
 - [20:18:54 · run 20260930-193438 · iter ?] Prices not frozen at startup; capture mode = 2N.
+
+- [11:38:35 · run 20261007-113735 · iter ?] Prices not frozen at startup; capture mode = 2N.
+
+- [12:07:00 · run 20261007-113735 · iter 1] iter 1 BLOCKED: queue item names no parseable repro pair, so no measurement is possible; parked without agent work.

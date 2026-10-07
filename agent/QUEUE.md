@@ -33,7 +33,7 @@
           of every debt consumer (/quote and SS16 alike) — but it is still FILED last of the 2-series.
           Do 2c before any further debt-concept work regardless of where it sits here, or move it up. -->
 
-- [ ] **0. `dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null** — same function as 2b, a
+- [~] **0. `dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null** — same function as 2b, a  <!-- BLOCKED run 20261007-113735 -->
       different input (GATE-2A root: B-nullInSum). Promoted from Discovered 2026-10-07 at the operator's
       request. The label is `0` so that 1 / 2a / 2d / 2b / 2c keep the exact labels and upstream-first order
       the comment above forbids tidying; `queue_next()` reads position, not the number, so 0 is worked first.
@@ -226,6 +226,44 @@
     SEC 10-K) · expected: EDGAR-sourced comps, OR explicit foreign-issuer handling (peer resolution not
     gated solely on a domestic SIC) · source: peer-screen SIC dependency; capture docs/sweep-v2/captures/
     KO_NSRGY.json comparables section; oracle NSRGY sic=undefined. Deterministic (reproduces every capture).
+- [ ] **`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES, currently latent.**
+  Both read `parseFloat(results.newInterestAfterTax) > 0 ? [row] : []`. Once 2b lands, `newInterestAfterTax`
+  is **null** whenever the target's debt is unavailable; `parseFloat(null)` is `NaN` and `NaN > 0` is false,
+  so the After-Tax Financing Cost row silently **disappears** instead of rendering "—". It does not
+  fabricate — which is why it is filed here and not ranked — but it is safe by ACCIDENT: the guard is a
+  magnitude test standing in for a presence test, and it holds only because a NaN comparison happens to be
+  false. That is the textbook Pattern C. **It is not reproducible today**: at HEAD the value is never null,
+  so this becomes live only when the 2b fix is applied. Fix it in the same commit as 2b, or it ships as a
+  vanishing row nobody ordered.
+  (pair: RKLB/IRDM, once 2b lands — not reproducible before that · observed: with
+  `newInterestAfterTax = null` the financing-cost row is omitted entirely, so a deck whose financing cost is
+  UNKNOWN reads identically to one with no financing cost · expected: an unknown drag renders "—" like every
+  other absent figure; absence and zero must look different · source: `src/components/deck/sections/
+  SectionDashboard.js:338` and `:347`, both `parseFloat(...) > 0` used as a presence check)
+  ADDRESSED in the 2b commit (run 20260929-160247): null → a "—" row; a genuine 0 stays hidden as before.
+      <!-- auto-promoted from Discovered 2026-10-07 by promote-discovered.mjs: carries pair/observed/expected/source. Added at the BOTTOM of Open so the upstream-first order above is untouched. -->
+- [ ] **`SectionDashboard.js:75-76` — the dashboard EV / Debt÷EBITDA explainers rebuild EV with the target debt
+  coerced to 0, then `explanations.js` coerces again.** `const ev = parseFloat(results.totalPurchasePrice) +
+  (inputs.companyBDebt || 0) - (inputs.companyBCash || 0)` and `combinedDebtForExplain = (inputs.companyADebt
+  || 0) + (inputs.companyBDebt || 0) + …` feed `explainEvEbitda` / `explainDebtEbitda` (`:249`, `:261`), which
+  themselves render `fmtMoney(parseFloat(ev) || 0)` (`src/lib/explanations.js:115-116`, `:140-141`). With
+  debt unavailable, the explainer shows EV = offer value − target cash while the multiple beside it is
+  `N/A` (dealCalc.js:190 correctly nulls it). Nulling `:75` alone would only move the fabrication to
+  `explanations.js`, so both files must change together — left out of 2b, which was scoped to §10/§6 and
+  dealCalc. A candidate (unconfirmed) for the item-2b "NOT SOURCED" EV figure.
+  (pair: RKLB/IRDM, when IRDM debt resolves null · observed: EV explainer input = totalPurchasePrice − cash,
+  i.e. target debt taken as $0 · expected: explainer shows "—" for EV / combined debt when either leg is
+  unavailable, matching the N/A multiple · source: `src/components/deck/sections/SectionDashboard.js:75-76`,
+  `src/lib/explanations.js:115-116,140-141`)
+      <!-- auto-promoted from Discovered 2026-10-07 by promote-discovered.mjs: carries pair/observed/expected/source. Added at the BOTTOM of Open so the upstream-first order above is untouched. -->
+- [ ] App-side: **no retry on 429 in the ticker fetch.** User-facing — a real user loading a ticker during a
+  rate limit gets a **silent indefinite hang with no error surfaced** (the app swallows the 429, no
+  pageError, and never renders " loaded"). Worked around in `capture.js` only. **MINE to fix, supervised.**
+  Explicitly OUT OF AGENT SCOPE: it feeds the render → captures → both graders, so an agent changing it
+  would move its own grading baseline. (pair: KO/NSRGY,V/PYPL,WBD/PARA · observed: 429 consoleError, no
+  app retry, no " loaded" · expected: app retries/backs off the load fetch on 429 and surfaces an error ·
+  source: client ticker-load fetch path)
+      <!-- auto-promoted from Discovered 2026-10-07 by promote-discovered.mjs: carries pair/observed/expected/source. Added at the BOTTOM of Open so the upstream-first order above is untouched. -->
 
 ## Closed
 
@@ -274,35 +312,7 @@
   when the other prior-year revenue is null · expected: base null → combined growth "—" unless both prior
   legs present · source: `src/components/deck/sections/SectionProFormaPL.js:126`)
 
-- **`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES, currently latent.**
-  Both read `parseFloat(results.newInterestAfterTax) > 0 ? [row] : []`. Once 2b lands, `newInterestAfterTax`
-  is **null** whenever the target's debt is unavailable; `parseFloat(null)` is `NaN` and `NaN > 0` is false,
-  so the After-Tax Financing Cost row silently **disappears** instead of rendering "—". It does not
-  fabricate — which is why it is filed here and not ranked — but it is safe by ACCIDENT: the guard is a
-  magnitude test standing in for a presence test, and it holds only because a NaN comparison happens to be
-  false. That is the textbook Pattern C. **It is not reproducible today**: at HEAD the value is never null,
-  so this becomes live only when the 2b fix is applied. Fix it in the same commit as 2b, or it ships as a
-  vanishing row nobody ordered.
-  (pair: RKLB/IRDM, once 2b lands — not reproducible before that · observed: with
-  `newInterestAfterTax = null` the financing-cost row is omitted entirely, so a deck whose financing cost is
-  UNKNOWN reads identically to one with no financing cost · expected: an unknown drag renders "—" like every
-  other absent figure; absence and zero must look different · source: `src/components/deck/sections/
-  SectionDashboard.js:338` and `:347`, both `parseFloat(...) > 0` used as a presence check)
-  ADDRESSED in the 2b commit (run 20260929-160247): null → a "—" row; a genuine 0 stays hidden as before.
 
-- **`SectionDashboard.js:75-76` — the dashboard EV / Debt÷EBITDA explainers rebuild EV with the target debt
-  coerced to 0, then `explanations.js` coerces again.** `const ev = parseFloat(results.totalPurchasePrice) +
-  (inputs.companyBDebt || 0) - (inputs.companyBCash || 0)` and `combinedDebtForExplain = (inputs.companyADebt
-  || 0) + (inputs.companyBDebt || 0) + …` feed `explainEvEbitda` / `explainDebtEbitda` (`:249`, `:261`), which
-  themselves render `fmtMoney(parseFloat(ev) || 0)` (`src/lib/explanations.js:115-116`, `:140-141`). With
-  debt unavailable, the explainer shows EV = offer value − target cash while the multiple beside it is
-  `N/A` (dealCalc.js:190 correctly nulls it). Nulling `:75` alone would only move the fabrication to
-  `explanations.js`, so both files must change together — left out of 2b, which was scoped to §10/§6 and
-  dealCalc. A candidate (unconfirmed) for the item-2b "NOT SOURCED" EV figure.
-  (pair: RKLB/IRDM, when IRDM debt resolves null · observed: EV explainer input = totalPurchasePrice − cash,
-  i.e. target debt taken as $0 · expected: explainer shows "—" for EV / combined debt when either leg is
-  unavailable, matching the N/A multiple · source: `src/components/deck/sections/SectionDashboard.js:75-76`,
-  `src/lib/explanations.js:115-116,140-141`)
 
 - **`capture.js:9` hardcodes `localhost:3001`, so a sweep can only ever run on that one port — and takes
   it by force.** `const BASE = 'http://localhost:3001'` is a module constant read by every deck fetch
@@ -384,13 +394,6 @@
   backoff (`reason=RATE_LIMITED`); GATE_SPEC §5 adds INDETERMINATE so an unattended 429 never reverts good
   code. loadA-429 CLOSED.
 
-- App-side: **no retry on 429 in the ticker fetch.** User-facing — a real user loading a ticker during a
-  rate limit gets a **silent indefinite hang with no error surfaced** (the app swallows the 429, no
-  pageError, and never renders " loaded"). Worked around in `capture.js` only. **MINE to fix, supervised.**
-  Explicitly OUT OF AGENT SCOPE: it feeds the render → captures → both graders, so an agent changing it
-  would move its own grading baseline. (pair: KO/NSRGY,V/PYPL,WBD/PARA · observed: 429 consoleError, no
-  app retry, no " loaded" · expected: app retries/backs off the load fetch on 429 and surfaces an error ·
-  source: client ticker-load fetch path)
 
 - **Rate-limit storm on a full 50-pair baseline.** Surfaced in calibration run 1 (20260815-135915): the
   50-pair sweep hammered the APIs hard enough that a chunk of pairs came back DIRTY, and capture.js's
