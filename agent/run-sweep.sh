@@ -198,8 +198,35 @@ cleanup_children() {
 # One handler for every way this process can end. ORDER MATTERS: write the ledger row while the run's state
 # is still readable, then kill the children, then release the lock — so the next runner cannot start until
 # this one's capture.js is actually dead.
+# ── ledger self-commit ───────────────────────────────────────────────────────────────────────────────
+# Every ledger row the runner writes has to end up in a commit, because an uncommitted row IS a dirty tree
+# and the DIRTY guard then refuses the NEXT run. Run 20260930-193438 halted on `queue empty` before any
+# iteration, so finalize() never ran, its start-of-run `decide` row sat unstaged, and the 10-03 and 10-04
+# runs both died at the guard having done nothing at all. finalize() still commits per iteration; this is
+# the catch-all for rows written when no iteration follows.
+#
+# SAFETY — it only ever commits on the run's OWN branch. If the run died before `checkout -b` (at the DIRTY
+# guard itself, or on a failed lock), HEAD is the operator's branch and the dirt is THEIRS; committing it
+# would sweep someone else's work into a sweep commit. Paths are named explicitly, never `add -A`.
+# agent/runs/ is gitignored, so its files are not committed here and never make the tree dirty.
+commit_ledger() {
+  [[ "$(gitr rev-parse --abbrev-ref HEAD 2>/dev/null)" == "sweep/auto-$RUN_ID" ]] || return 0
+  local p
+  for p in "$CALIB" "$DECISIONS" "$QUEUE"; do
+    [[ -e "$p" ]] && { gitr add -- "$p" >/dev/null 2>&1 || true; }
+  done
+  [[ -d "$AGENT_DIR/diagnosis" ]] && { gitr add -- "$AGENT_DIR/diagnosis" >/dev/null 2>&1 || true; }
+  gitr diff --cached --quiet && return 0          # nothing of ours is staged
+  if gitr commit -q -m "sweep($RUN_ID): ledger" >/dev/null 2>&1; then
+    log "ledger committed: $(gitr rev-parse --short HEAD) — the tree is clean for the next run"
+  else
+    log "WARNING: ledger commit FAILED — the tree stays dirty and the next run will die at the DIRTY guard"
+  fi
+}
+
 on_exit() {
   finalize_abnormal
+  commit_ledger                                # after finalize_abnormal: it writes the last ledger row
   cleanup_children
   release_lock
 }
@@ -410,9 +437,13 @@ build_frontend() {
   [[ -n "$idx_ref" ]] || { log "build FAILED: build/index.html references no main bundle (partial build?)"; return 1; }
   [[ -f "$ROOT/build/$idx_ref" ]] || { log "build FAILED: build/index.html points at $idx_ref which is not on disk (partial build)"; return 1; }
   after="${main_js##*/}"
+  # BUNDLE_IDENTICAL is read by the no-op short-circuit. CRA puts a content hash in the filename, so an
+  # unchanged name IS unchanged content for the main chunk.
   if [[ "$before" == "$after" ]]; then
+    BUNDLE_IDENTICAL=1
     log "build OK · ${el}s · bundle $after (byte-identical — no client-side change this iteration)"
   else
+    BUNDLE_IDENTICAL=0
     log "build OK · ${el}s · bundle ${before:-<none>} -> $after"
   fi
   return 0
@@ -1052,6 +1083,12 @@ mkdir -p "$RUN_DIR/cap"
 echo "$$" > "$RUN_DIR/run.pid"   # liveness marker — the dashboard checks kill -0 on this to tell RUNNING from DIED
 build_pairs_json
 NPAIRS="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$PAIRS_JSON")"
+# A Discovered entry with a full repro (pair/observed/expected/source, and a pair naming a real deck) is a
+# queue item nobody filed; promote-discovered.mjs moves it to the BOTTOM of Open so the hand-maintained
+# upstream-first order above is untouched. It is advisory: a failure here must never stop a run, and it
+# leaves anything with a missing field or a placeholder pair exactly where it is, with the reason logged.
+while IFS= read -r _pl; do [[ -n "$_pl" ]] && log "$_pl"; done < <(node "$AGENT_DIR/promote-discovered.mjs" "$QUEUE" 2>&1 || echo "promote: FAILED (non-fatal) — QUEUE.md left as it was")
+
 QCOUNT="$(node -e 'const fs=require("fs"),t=fs.readFileSync(process.argv[1],"utf8");const o=(t.split(/^## Open/m)[1]||"").split(/^## /m)[0];process.stdout.write(String((o.match(/^- \[ \] /mg)||[]).length));' "$QUEUE")"
 
 gitr tag "restore/pre-sweep-$RUN_ID" >/dev/null 2>&1 || die "restore tag already exists"
@@ -1400,6 +1437,32 @@ while :; do
     fi
   fi
 
+  # ── no-op short-circuit ────────────────────────────────────────────────────────────────────────────
+  # Nothing about the app changed, so there is nothing to measure and an after-capture would compare the
+  # tree with itself. Run 20260929-193005 iter 1 is the case this exists for: the item was a HARNESS defect,
+  # the agent correctly returned BLOCKED and touched no app code, and the harness still spent 84 minutes on
+  # a 50-deck after-capture — then scored REGRESSION because DAL/ALK failed to capture that hour, burning a
+  # breaker slot on a flaky deck. The agent's own token is recorded as the reason.
+  #
+  # The test is APP-CODE paths, not `git status`: that iteration's agent left a diagnosis note under agent/,
+  # so the tree was dirty while the app was untouched. It is also NOT "the bundle is byte-identical" alone —
+  # a server-side fix (server.js, ltmCalc.js) legitimately produces an identical bundle, and skipping its
+  # measurement is exactly how run 20260815-150838 read an unmeasured no-op as "8->8 clear".
+  APP_CHANGED_N="$(app_paths_of | grep -c '' || true)"
+  if [[ "${SNAP_N:-0}" -eq 0 && "${APP_CHANGED_N:-0}" -eq 0 && "${BUNDLE_IDENTICAL:-0}" -eq 1 ]]; then
+    log "gate: no-op short-circuit — no app-code change and a byte-identical bundle; after-capture skipped (agent token: ${STATUS_TOKEN:-ABSENT})"
+    case "$STATUS_TOKEN" in
+      DONE*|RESOLVED_UPSTREAM*) log "  the token claims '$STATUS_TOKEN' on a tree whose app code it never touched — recorded, NOT credited as a fix" ;;
+    esac
+    decide "iter $CUR_ITER NO_CHANGE by no-op short-circuit: agent returned '${STATUS_TOKEN:-ABSENT}' having changed no app code, and the rebuild was byte-identical; no after-capture spent, item left OPEN."
+    DEF_AFTER="$DEF_BEFORE"; ANA_AFTER="$ANA_BEFORE"; OK_LIST_AFTER="$OK_LIST_BEFORE"
+    WALL=$(( $(date +%s) - ITER_T0 ))
+    finalize NO_CHANGE "o" "$FORCED" "No-op short-circuit: no app-code change, byte-identical bundle, after-capture skipped. Agent token: ${STATUS_TOKEN:-ABSENT}."
+    CONSEC_FAIL=$(( CONSEC_FAIL + 1 ))
+    log "NO_CHANGE (no-op short-circuit) · consecutive fail = $CONSEC_FAIL"
+    continue
+  fi
+
   # after-capture (capture failure ≠ code failure → INDETERMINATE)
   AFTER_DIR="$RUN_DIR/cap/after-$CUR_ITER"
   if ! do_capture "$AFTER_DIR" "after-$CUR_ITER"; then
@@ -1595,6 +1658,7 @@ done
 
 RUN_COMPLETED=1                                # the run ended on its own terms — finalize_abnormal stands down
 log "RUN $RUN_ID COMPLETE · branch sweep/auto-$RUN_ID · undo: $RUN_DIR/UNDO.txt"
+commit_ledger                                  # explicit at COMPLETE; the EXIT trap repeats it for every other path
 
 # ── exit contract (added 2026-09-17) ─────────────────────────────────────────────────────────────────
 # A run whose FINAL capture summary reads "(0 ok)" produced nothing analyzable: every deck failed, both

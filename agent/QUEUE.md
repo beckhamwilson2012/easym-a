@@ -33,6 +33,22 @@
           of every debt consumer (/quote and SS16 alike) — but it is still FILED last of the 2-series.
           Do 2c before any further debt-concept work regardless of where it sits here, or move it up. -->
 
+- [ ] **0. `dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null** — same function as 2b, a
+      different input (GATE-2A root: B-nullInSum). Promoted from Discovered 2026-10-07 at the operator's
+      request. The label is `0` so that 1 / 2a / 2d / 2b / 2c keep the exact labels and upstream-first order
+      the comment above forbids tidying; `queue_next()` reads position, not the number, so 0 is worked first.
+  - pair: — (none on hand: needs a filer whose cash bucket fails to resolve) · observed: `combinedCash ==
+    null` yields `excessCashAvail = 0`, so the model publishes "no cash available to fund the deal" rather
+    than unknown, and `newDebt` absorbs the whole consideration · expected: absent → null, propagated
+    through `newDebt`/`excessCashUsed` exactly as the 2b fix propagates an absent debt; a genuine $0 stays
+    0 · source: `src/utils/dealCalc.js:107`
+    <!-- `const excessCashAvail = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0;` — the
+         identical Pattern B as :104 three lines above, on a different input. The ternary `: 0` shape is the
+         one a `|| 0` grep does not find (docs/03-PATTERNS.md P3). Left untouched by the 2b work, which was
+         scoped to the debt leg.
+         NOTE: `pair:` carries no deck repro, so repro_pair() will find none and the agent has no deck to
+         reproduce on — expect BLOCKED unless a pair is supplied. With the no-op short-circuit that costs one
+         agent turn instead of an 84-minute after-capture. -->
 - [x] **1. Leg-availability / LTM gross-profit blanking** — 32 pairs (GATE-2A root: GP/COGS-crossSurface).  <!-- REOPENED: run 20260815-150838 committed UNVERIFIED work. No agent verdict (envelope is_error:true / error_max_turns, no status token); the :3001 server was never restarted so the after-capture graded stale code; and the repro pair GOOGL/AMZN was never captured (the baseline took the alphabetically-first 5 pairs), so the 8->8 "clear" was measured on decks that cannot contain this defect. bcda19a is NOT reverted — the work may be right, it was simply never measured. -->
   - pair: GOOGL/AMZN · observed: §7 LTM rendered **—** for both Cost of Revenue and Gross Profit while
     `/api/pnl` served both values (`ltm.costOfRevenue = 381870`) · expected: §7 LTM renders the sourced
@@ -257,19 +273,6 @@
   (pair: — (needs a pair with a null prior-year revenue leg) · observed: combined growth base = one leg
   when the other prior-year revenue is null · expected: base null → combined growth "—" unless both prior
   legs present · source: `src/components/deck/sections/SectionProFormaPL.js:126`)
-
-- **`dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null, in the same function 2b fixes.**
-  `const excessCashAvail = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0;` — when the
-  combined cash bucket does not resolve, "how much cash is available to fund the deal" is UNKNOWN, and this
-  publishes it as **$0 available**, which then flows into `newDebt` (the deal is funded entirely with new
-  borrowing) and `excessCashUsed`. It is the identical Pattern B as `:104`, three lines below it, on a
-  different input — and the ternary `: 0` shape is precisely the one a `|| 0` grep does not find
-  (docs/03-PATTERNS.md P3). Left untouched by the 2b work, which was scoped to the debt leg.
-  (pair: — (no deck repro on hand; needs a filer whose cash bucket fails to resolve) · observed:
-  `combinedCash == null` yields `excessCashAvail = 0`, so the model reports no cash available rather than
-  unknown, and `newDebt` absorbs the whole consideration · expected: absent → null, propagated through
-  `newDebt`/`excessCashUsed` exactly as the 2b fix propagates an absent debt; a genuine $0 stays 0 ·
-  source: `src/utils/dealCalc.js:107`)
 
 - **`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES, currently latent.**
   Both read `parseFloat(results.newInterestAfterTax) > 0 ? [row] : []`. Once 2b lands, `newInterestAfterTax`
