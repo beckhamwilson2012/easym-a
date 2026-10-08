@@ -226,7 +226,7 @@
     SEC 10-K) · expected: EDGAR-sourced comps, OR explicit foreign-issuer handling (peer resolution not
     gated solely on a domestic SIC) · source: peer-screen SIC dependency; capture docs/sweep-v2/captures/
     KO_NSRGY.json comparables section; oracle NSRGY sic=undefined. Deterministic (reproduces every capture).
-- [ ] **`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES, currently latent.**
+- [~] **`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES, currently latent.**  <!-- BLOCKED run 20261007-113735 -->
   Both read `parseFloat(results.newInterestAfterTax) > 0 ? [row] : []`. Once 2b lands, `newInterestAfterTax`
   is **null** whenever the target's debt is unavailable; `parseFloat(null)` is `NaN` and `NaN > 0` is false,
   so the After-Tax Financing Cost row silently **disappears** instead of rendering "—". It does not

@@ -18,3 +18,4 @@ run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,cap
 20260929-193005,7,"4. Combined gross margin understated via null target GP — 6 pairs (GATE-2A root: B-nullInSum). Downstream of item 1.",REGRESSION,1770,20,0.6079454000000001,54,57,N+1,false,false,success,RESOLVED_UPSTREAM,49,1
 20260929-193005,8,"5. KO/NSRGY comparables degrade to CNBC-only (foreign-issuer gap) — 1 pair (surfaced during 429 re-capture).",DONE,1793,27,0.8127450000000002,68,54,N+1,true,false,success,DONE,49,1
 20261007-113735,1,"0. `dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null — same function as 2b; a",BLOCKED,0,0,0,43,43,2N,false,ABSENT,ABSENT,ABSENT,49,1
+20261007-113735,2,"`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES; currently latent.",BLOCKED,0,0,0,4,43,2N,false,ABSENT,ABSENT,ABSENT,7,43
