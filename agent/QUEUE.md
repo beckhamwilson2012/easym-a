@@ -242,7 +242,7 @@
   SectionDashboard.js:338` and `:347`, both `parseFloat(...) > 0` used as a presence check)
   ADDRESSED in the 2b commit (run 20260929-160247): null → a "—" row; a genuine 0 stays hidden as before.
       <!-- auto-promoted from Discovered 2026-10-07 by promote-discovered.mjs: carries pair/observed/expected/source. Added at the BOTTOM of Open so the upstream-first order above is untouched. -->
-- [ ] **`SectionDashboard.js:75-76` — the dashboard EV / Debt÷EBITDA explainers rebuild EV with the target debt
+- [~] **`SectionDashboard.js:75-76` — the dashboard EV / Debt÷EBITDA explainers rebuild EV with the target debt  <!-- BLOCKED run 20261007-113735 -->
   coerced to 0, then `explanations.js` coerces again.** `const ev = parseFloat(results.totalPurchasePrice) +
   (inputs.companyBDebt || 0) - (inputs.companyBCash || 0)` and `combinedDebtForExplain = (inputs.companyADebt
   || 0) + (inputs.companyBDebt || 0) + …` feed `explainEvEbitda` / `explainDebtEbitda` (`:249`, `:261`), which

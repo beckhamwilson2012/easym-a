@@ -20,3 +20,4 @@ run_id,iter,item,status,wall_sec,turns,cost_usd,defects_before,defects_after,cap
 20261007-113735,1,"0. `dealCalc.js:107` — `excessCashAvail` fabricates a zero from a null — same function as 2b; a",BLOCKED,0,0,0,43,43,2N,false,ABSENT,ABSENT,ABSENT,49,1
 20261007-113735,2,"`SectionDashboard.js:338` and `:347` — a Pattern C the 2b fix CREATES; currently latent.",BLOCKED,0,0,0,4,43,2N,false,ABSENT,ABSENT,ABSENT,7,43
 20261007-113735,3,"`SectionDashboard.js:75-76` — the dashboard EV / Debt÷EBITDA explainers rebuild EV with the target debt",UNVERIFIED,1850,33,1.0933108,46,46,2N,false,false,success,DONE,49,1
+20261007-113735,4,"`SectionDashboard.js:75-76` — the dashboard EV / Debt÷EBITDA explainers rebuild EV with the target debt",BLOCKED,0,0,0,2,46,2N,false,ABSENT,ABSENT,ABSENT,49,1
