@@ -71,9 +71,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   }
   const allFlags = [...flags, ...stockFlags];
 
-  // Enterprise value (for explainers)
-  const ev = parseFloat(results.totalPurchasePrice) + (inputs.companyBDebt || 0) - (inputs.companyBCash || 0);
-  const combinedDebtForExplain = (inputs.companyADebt || 0) + (inputs.companyBDebt || 0) + parseFloat(results.cashPortion || 0);
+  // Enterprise value / combined debt (for explainers) — dealCalc's own numerators, null when a leg is unavailable.
+  const ev = results.enterpriseValue;
+  const combinedDebtForExplain = results.combinedDebt;
 
   // Cash sensitivity strip: pro forma EPS at 100/80/60/40/20% cash
   const cashSensitivity = [100, 80, 60, 40, 20].map(cp => ({

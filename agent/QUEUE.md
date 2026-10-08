@@ -312,6 +312,15 @@
   when the other prior-year revenue is null · expected: base null → combined growth "—" unless both prior
   legs present · source: `src/components/deck/sections/SectionProFormaPL.js:126`)
 
+- **`explanations.js:116,141` — the EV/EBITDA and Debt/EBITDA explainers still coerce the EBITDA leg with
+  `parseFloat(x) || 0`.** Found while fixing the dashboard EV/debt explainer item (which nulled only the
+  EV / combined-debt legs). With target or combined EBITDA unavailable, the explainer shows "EBITDA $0"
+  beside an `N/A` multiple (Pattern B; `fmtMoney` already renders null as `N/A`). Not reproduced on a live
+  pair. Same file's `explainPeRatio` (`:128-129`) has the identical shape for offer price / EPS.
+  (pair: — (needs a pair with null target or combined EBITDA) · observed: explainer EBITDA input "$0" when
+  EBITDA is null · expected: "N/A" for an absent EBITDA, "$0" only for a genuine zero · source:
+  `src/lib/explanations.js:116,141`, called from `src/components/deck/sections/SectionDashboard.js:249,267`)
+
 
 
 - **`capture.js:9` hardcodes `localhost:3001`, so a sweep can only ever run on that one port — and takes

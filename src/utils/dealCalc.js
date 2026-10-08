@@ -216,6 +216,10 @@ export function calculate(inputs) {
     evEBITDA:          evEBITDA   === null ? 'N/A' : evEBITDA.toFixed(1),
     peRatio:           peRatio    === null ? 'N/A' : peRatio.toFixed(1),
     debtEBITDA:        debtEBITDA === null ? 'N/A' : debtEBITDA.toFixed(1),
+    // The numerators of the two multiples above, exposed so explainers show the SAME figure the multiple
+    // was built from — null (never a $0-debt rebuild) whenever a leg is unavailable.
+    enterpriseValue:   enterpriseValue === null ? null : enterpriseValue.toFixed(0),
+    combinedDebt:      combinedDebt    === null ? null : combinedDebt.toFixed(0),
     totalPurchasePrice: totalPurchasePrice.toFixed(0),
     cashPortion:        cashPortion.toFixed(0),
     stockPortion:       stockPortion.toFixed(0),

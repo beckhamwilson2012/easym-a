@@ -112,7 +112,7 @@ export function explainEvEbitda({ ev, ebitda, multiple }) {
   return {
     formula: 'EV/EBITDA = Enterprise Value ÷ EBITDA',
     inputs: [
-      { label: 'Enterprise value', value: fmtMoney(parseFloat(ev) || 0) },
+      { label: 'Enterprise value', value: fmtMoney(ev) },
       { label: 'EBITDA', value: fmtMoney(parseFloat(ebitda) || 0) },
     ],
     result: multiple != null && multiple !== 'N/A' ? `${parseFloat(multiple).toFixed(1)}x` : 'N/A',
@@ -137,7 +137,7 @@ export function explainDebtEbitda({ combinedDebt, combinedEbitda, multiple }) {
   return {
     formula: 'Debt/EBITDA = Combined Net Debt ÷ Combined EBITDA (post-synergies)',
     inputs: [
-      { label: 'Combined debt (incl. cash used)', value: fmtMoney(parseFloat(combinedDebt) || 0) },
+      { label: 'Combined debt (incl. cash used)', value: fmtMoney(combinedDebt) },
       { label: 'Combined EBITDA', value: fmtMoney(parseFloat(combinedEbitda) || 0) },
     ],
     result: multiple != null && multiple !== 'N/A' ? `${parseFloat(multiple).toFixed(1)}x` : 'N/A',

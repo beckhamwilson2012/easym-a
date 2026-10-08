@@ -59,3 +59,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [12:07:00 · run 20261007-113735 · iter 1] iter 1 BLOCKED: queue item names no parseable repro pair, so no measurement is possible; parked without agent work.
 
 - [19:47:11 · run 20261007-113735 · iter 2] iter 2 BLOCKED: repro pair RKLB/IRDM failed to capture (FAILED:fatal); the defect's own deck is absent from the measurement window, so no verdict is possible — parked without agent work.
+
+- [20:46:13 · run 20261007-113735 · iter 3] iter 3 UNVERIFIED: agent edited files but the defect count did not move (46->46) and no revert_signal; committed as UNVERIFIED, queue item left OPEN (not checked off).
