@@ -256,7 +256,7 @@
   unavailable, matching the N/A multiple · source: `src/components/deck/sections/SectionDashboard.js:75-76`,
   `src/lib/explanations.js:115-116,140-141`)
       <!-- auto-promoted from Discovered 2026-10-07 by promote-discovered.mjs: carries pair/observed/expected/source. Added at the BOTTOM of Open so the upstream-first order above is untouched. -->
-- [ ] App-side: **no retry on 429 in the ticker fetch.** User-facing — a real user loading a ticker during a
+- [~] App-side: **no retry on 429 in the ticker fetch.** User-facing — a real user loading a ticker during a  <!-- BLOCKED run 20261008-193000 -->
   rate limit gets a **silent indefinite hang with no error surfaced** (the app swallows the 429, no
   pageError, and never renders " loaded"). Worked around in `capture.js` only. **MINE to fix, supervised.**
   Explicitly OUT OF AGENT SCOPE: it feeds the render → captures → both graders, so an agent changing it
