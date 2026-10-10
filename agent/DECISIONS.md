@@ -65,3 +65,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [23:56:47 · run 20261007-113735 · iter 4] iter 4 BLOCKED: repro pair RKLB/IRDM failed to capture (FAILED:fatal); the defect's own deck is absent from the measurement window, so no verdict is possible — parked without agent work.
 
 - [00:26:56 · run 20261008-193000 · iter 1] iter 1 BLOCKED: repro pair KO/NSRGY failed to capture (FAILED:fatal); the defect's own deck is absent from the measurement window, so no verdict is possible — parked without agent work.
+
+- [18:31:06 · run 20261009-183005 · iter ?] Prices not frozen at startup; capture mode = 2N.
