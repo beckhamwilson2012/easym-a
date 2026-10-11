@@ -67,3 +67,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [00:26:56 · run 20261008-193000 · iter 1] iter 1 BLOCKED: repro pair KO/NSRGY failed to capture (FAILED:fatal); the defect's own deck is absent from the measurement window, so no verdict is possible — parked without agent work.
 
 - [18:31:06 · run 20261009-183005 · iter ?] Prices not frozen at startup; capture mode = 2N.
+
+- [18:59:46 · run 20261010-183021 · iter ?] Prices not frozen at startup; capture mode = 2N.
