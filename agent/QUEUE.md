@@ -404,6 +404,15 @@
   code. loadA-429 CLOSED.
 
 
+- **Dashboard "Add a bug" writes free prose into `## Open` as structured items.** `POST /api/queue`
+  (agent/dashboard/server.js:751) runs `parsePlan()` over whatever is pasted and
+  `appendQueuedToQueueMd()` (:283) writes any item it judges complete straight into QUEUE.md `## Open`,
+  bypassing plan.json. A plan pasted into that box on 2026-10-12 became three items whose
+  observed/expected/source were sentence fragments (`observed: by **one helper**. There are no`).
+  Discarded with `git restore`; nothing persistent held them. Related and UNPROVEN: whether
+  promote-discovered.mjs's field regex has the same looseness on Discovered prose — it did not cause
+  this incident and has not been shown to misfire.
+
 - **Rate-limit storm on a full 50-pair baseline.** Surfaced in calibration run 1 (20260815-135915): the
   50-pair sweep hammered the APIs hard enough that a chunk of pairs came back DIRTY, and capture.js's
   dirty-pair **retry pass itself got 429'd and gave up** — `loadTicker … rate-limited, gave up after 3
