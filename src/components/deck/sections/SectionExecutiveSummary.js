@@ -22,20 +22,29 @@ import {
 
 const DASH = '—';
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+
 // Quantities for which ZERO is not a meaningful value, only an un-entered input: a per-share price
 // and a shares-outstanding count. defaultInputs seeds these at 0, so without this guard a private
 // deal (no per-share offer, no share count) renders "$0.00" and "0" — fabricated numbers of exactly
 // the kind deckModel.js:79 refuses ("a null acquirer share count is unknown, not 0"). NOT applied to
 // newShares, where 0 is a real answer (an all-cash deal issues no shares).
+const pos = (v) => { const n = num(v); return (n == null || n <= 0) ? null : n; };
+
 // Reuse the deck's formatters (one scaling convention everywhere) but return the null-honest dash
 // instead of their 'N/A', which the surrounding slides use for a different, computable-but-n/m case.
-const pos = (v) => { const n = num(v); return (n == null || n <= 0) ? null : n; };
 const money = (v) => (num(v) == null ? DASH : fmtMoney(num(v)));
 const pc    = (v, d = 1) => (num(v) == null ? DASH : fmtPct(num(v), d));
 const pcS   = (v) => (num(v) == null ? DASH : fmtPctSigned(num(v)));
 const pcF   = (v) => (num(v) == null ? DASH : fmtPctFloor(num(v)));
 const sh    = (v) => (num(v) == null ? DASH : fmtShares(num(v)));
 const ps    = (v) => (num(v) == null ? DASH : `$${num(v).toFixed(2)}`);
+
+// Exported for unit tests only — nothing else imports this. The slide is registered
+// showInPdf:false, so it never enters the hidden PDF tree the no-op A/B harness captures: the
+// byte-diff gate cannot see it at all. Both zero-coercion defects the guard above fixes (a
+// "$0.00" offer price, a "0" share count) were found by rendering the slide by hand, and this
+// export is how that class of bug gets a regression test instead of a second lucky look.
+export const __fmt = { DASH, num, pos, money, pc, pcS, pcF, sh, ps };
 
 const STORAGE_PREFIX = 'execsum_';
 
