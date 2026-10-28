@@ -6,6 +6,7 @@ import { buildDeckModel } from '../../lib/deckModel';
 
 import { DeckToolbar } from './DeckToolbar';
 import { SF_BLUE } from './shared/deckTokens';
+import { SectionExecutiveSummary } from './sections/SectionExecutiveSummary';
 import { SectionDashboard }        from './sections/SectionDashboard';
 import { SectionTitlePage }        from './sections/SectionTitlePage';
 import { SectionComparables }      from './sections/SectionComparables';
@@ -37,6 +38,7 @@ import { DECK_ORDER, exhibitLabelOf, setActiveSections } from './deckRegistry';
 // deckRegistry (single source; it holds NO Component refs so section files can import exhibitLabelOf/
 // pageNumOf without a cycle). Here we only attach each id's Component to the registry order.
 const COMPONENTS = {
+  execsummary: SectionExecutiveSummary,
   dashboard: SectionDashboard, title: SectionTitlePage, comparables: SectionComparables,
   profiles: SectionCompanyProfiles, targetprofile: SectionTargetOverview, shareholders: SectionShareholderAnalysis,
   plAcquirer: SectionStandalonePLAcquirer, plTarget: SectionStandalonePLTarget, proforma: SectionProFormaPLA,
@@ -87,14 +89,15 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
   const activePageNumMap = Object.fromEntries(activePdfSections.map((s, i) => [s.id, i + 1]));
   setActiveSections(activePdfSections.map(s => s.id));   // renumber labels over the visible set (synchronous, before children render)
 
-  // Keyboard navigation — arrow right from Dashboard goes directly to Title (index 1)
+  // Keyboard navigation — plain one-step advance/retreat, clamped to the active set.
+  // (The old `if (i === 0) return 1; // Dashboard → Title` special case was removed: at i=0 it
+  // returned exactly what Math.min(i + 1, len - 1) returns for any len >= 2, so it was already
+  // redundant, and its "Dashboard → Title" comment went stale once a slide was inserted ahead of
+  // the Dashboard. Dropping it also removes the single-section out-of-bounds edge it carried.)
   useEffect(() => {
     const handler = (e) => {
       if (e.key === 'ArrowRight') {
-        setActiveIndex(i => {
-          if (i === 0) return 1; // Dashboard → Title
-          return Math.min(i + 1, activeSections.length - 1);
-        });
+        setActiveIndex(i => Math.min(i + 1, activeSections.length - 1));
       }
       if (e.key === 'ArrowLeft') {
         setActiveIndex(i => Math.max(i - 1, 0));
@@ -185,6 +188,11 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
         <nav style={{ width: 232, flexShrink: 0, background: '#fff', borderRight: '1px solid #E5E7EB', overflowY: 'auto', paddingTop: 4 }}>
           {activeSections.map((section, i) => {
             const isActive = i === activeIndex;
+            // Rail badge = the PDF PAGE NUMBER, not the array index. The two coincided only while
+            // `dashboard` was the single non-PDF section at index 0 (title i=1 = page 1 ... i=17 =
+            // page 17); inserting another non-PDF slide ahead of it breaks that, so read the page
+            // map directly. Non-PDF sections have no page and render the bullet.
+            const badge = activePageNumMap[section.id];
             return (
               <button
                 key={section.id}
@@ -202,10 +210,10 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
                   flexShrink: 0, width: 18, height: 18, borderRadius: '50%',
                   background: isActive ? SF_BLUE : '#E5E7EB',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
-                  fontSize: section.id === 'dashboard' ? 13 : 9, fontWeight: 700,
+                  fontSize: badge == null ? 13 : 9, fontWeight: 700,
                   color: isActive ? '#fff' : '#6B7280', lineHeight: 1,
                 }}>
-                  {section.id === 'dashboard' ? '•' : i}
+                  {badge ?? '•'}
                 </span>
                 <span style={{ fontSize: 12, fontWeight: isActive ? 600 : 400, color: isActive ? SF_BLUE : '#374151', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   {section.label}

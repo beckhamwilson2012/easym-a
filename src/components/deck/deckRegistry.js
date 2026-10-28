@@ -9,6 +9,9 @@
 // Components). kind: 'exhibit' → lettered; 'appendix' → romaned; 'title' → no label (cover + Deal Summary).
 
 export const DECK_ORDER = [
+  // Screen-only lead slide (showInPdf:false, like the Dashboard) — the PDF still starts at `title`
+  // and stays 17 pages, so adding this changed no exported page and no rendered figure.
+  { id: 'execsummary',   kind: 'title',    showInPdf: false, label: 'Executive Summary' },
   { id: 'dashboard',     kind: 'title',    showInPdf: false, label: 'Deal Summary' },
   { id: 'title',         kind: 'title',    showInPdf: true,  label: 'Title' },
   { id: 'comparables',   kind: 'exhibit',  showInPdf: true,  label: 'Comparables' },
