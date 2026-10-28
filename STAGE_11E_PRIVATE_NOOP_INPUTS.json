@@ -1,0 +1,33 @@
+{
+  "_description": "Deterministic manual-entry input set for the no-op A/B, recorded against the deal-type-first entry flow introduced by d1bfd2d (2026-08-20). It REPLACES STAGE_11C_NOOP_INPUTS.json as the harness's live fixture: that set was recorded 2026-08-14 against a 'Manual Entry' button the 08-20 commit removed, and 10 of its 20 fields (companyAShares/EPS/currentSharePriceA, the B-side equivalents, offerPricePerShare) no longer exist as form inputs on any entry path. STAGE_11C is retained as the historical record of the 11-C gate, not as a runnable fixture.",
+  "_why_private": "The gate's whole premise is that identical inputs produce an identical deck, so a byte diff isolates CODE from DATA. Only the private paths ('Neither is listed' / 'Listed acquirer, private target') still accept typed fundamentals; 'Public → Public' is ticker-only, and a ticker fetch is live market data — exactly the drift that made the frozen live baseline (STAGE_11A_BASELINE.json) useless. So the deterministic flow is privpriv, and the captured deck is the PRIVATE shape.",
+  "_coverage": "privpriv yields hasMarketData:false, so DeckShell suppresses equity / analyst / exchangeratio and promotes privatevaluation + contribution: 16 PDF sections, not the public 17. The three suppressed sections are NOT covered by this gate, and privatevaluation + creditstats are covered only here. Closing that gap needs a stubbed /api/quote (deterministic public fetch) — see README.",
+  "_values": "A-side/B-side fundamentals carry over from STAGE_11C where the field still exists, so the deck is populated to a comparable degree. offerValueTotal replaces offerPricePerShare (a private target has no per-share price). Figures are arbitrary but FIXED — realism is irrelevant to a byte diff; identity across runs is the only requirement.",
+  "flow": {
+    "dealType": "privpriv",
+    "dealTypeButton": "Neither is listed",
+    "runButton": "Run Analysis",
+    "firstInput": "companyARevenue",
+    "finalSection": "verification2",
+    "expectedSections": 16
+  },
+  "formInputs": {
+    "companyARevenue": 50000,
+    "companyAEBITDA": 15000,
+    "companyANetIncome": 10000,
+    "companyACash": 5000,
+    "companyADebt": 2000,
+    "companyAValuationMultiple": 12.5,
+    "companyBRevenue": 10000,
+    "companyBEBITDA": 3000,
+    "companyBNetIncome": 2000,
+    "companyBCash": 1000,
+    "companyBDebt": 500,
+    "companyBValuationMultiple": 10,
+    "offerValueTotal": 90000,
+    "transactionFees": 300,
+    "synergiesY1": 600,
+    "synergiesY2": 960,
+    "synergiesY3": 1320
+  }
+}

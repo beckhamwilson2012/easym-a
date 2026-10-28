@@ -1,0 +1,25 @@
+{
+  "_description": "Deterministic PUBLIC-deck input set for the no-op A/B. Restores the 17-section coverage the private fixture (STAGE_11E) cannot reach: privpriv sets hasMarketData:false, so DeckShell suppresses equity / analyst / exchangeratio. 'Public → Public' is ticker-only, so determinism comes from a RECORDED network fixture replayed by tools/noop-ab/stub.js — not from a live fetch.",
+  "_determinism": "Every same-origin data route (/api/*, /quote, /search) is answered from flow.stubFile. Replay HARD-FAILS on any request the fixture does not contain, so the fixture can never silently fall through to the live network and reintroduce the price drift that made STAGE_11A_BASELINE.json worthless. Re-record with: node tools/noop-ab/record.js",
+  "_offer": "offerPricePerShare is set EXPLICITLY rather than left to the app's suggested offer, so the premium and the whole issuance chain are pinned by the fixture and not by whatever price was live at record time.",
+  "flow": {
+    "dealType": "pubpub",
+    "dealTypeButton": "Both are listed",
+    "tickerSelects": [
+      { "index": 0, "symbol": "NET" },
+      { "index": 1, "symbol": "DDOG" }
+    ],
+    "runButton": "Run Analysis",
+    "firstInput": "offerPricePerShare",
+    "finalSection": "verification2",
+    "expectedSections": 17,
+    "stubFile": "tools/noop-ab/fixtures/public-NET-DDOG-responses.json"
+  },
+  "formInputs": {
+    "offerPricePerShare": 304.11,
+    "transactionFees": 317,
+    "synergiesY1": 69,
+    "synergiesY2": 120,
+    "synergiesY3": 171
+  }
+}
