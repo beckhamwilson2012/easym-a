@@ -75,3 +75,5 @@ Plain-English statements of tripwire-worthy changes. Logged, not gated.
 - [18:31:05 · run 20261028-183005 · iter ?] Prices not frozen at startup; capture mode = 2N.
 
 - [18:31:05 · run 20261029-183005 · iter ?] Prices not frozen at startup; capture mode = 2N.
+
+- [18:31:00 · run 20261030-183000 · iter ?] Prices not frozen at startup; capture mode = 2N.
