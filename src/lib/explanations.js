@@ -23,22 +23,6 @@ export function explainSharePrice({ name, price, source }) {
 
 // ── Deal terms ────────────────────────────────────────────────────────────────
 
-export function explainPremium({ offerPrice, marketPrice }) {
-  const offer = parseFloat(offerPrice) || 0;
-  const market = parseFloat(marketPrice) || 0;
-  const premium = market !== 0 ? ((offer - market) / market * 100) : null;
-  return {
-    formula: 'Acquisition Premium = (Offer Price − Market Price) ÷ Market Price',
-    inputs: [
-      { label: 'Offer price / share', value: fmtPerShare(offer) },
-      { label: 'Market price / share', value: fmtPerShare(market) },
-    ],
-    result: premium !== null ? `${premium.toFixed(1)}% premium` : 'N/A',
-    notes: 'Precedent M&A premiums in public deals typically range 20–40%. Below 15% often signals underpaying; above 50% compresses post-deal returns unless synergies are exceptional.',
-    sources: ['Dealogic', 'Bloomberg M&A data'],
-  };
-}
-
 export function explainDealSize({ offerPrice, shares, targetName }) {
   const offer = parseFloat(offerPrice) || 0;
   const sharesN = parseFloat(shares) || 0;

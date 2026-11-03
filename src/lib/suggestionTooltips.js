@@ -2,23 +2,6 @@ import { isBankDeal, isFinancial, fmtMoney, fmtMoneyDual, fmtPerShare } from '..
 
 // ── Calculators ───────────────────────────────────────────────────────────────
 
-export function calcSuggestedOfferPrice(target) {
-  const { sharePrice, eps, ebitda, shares, revenue } = target || {};
-
-  // Primary: 30% control premium over live market price
-  if (sharePrice > 0) return parseFloat((sharePrice * 1.30).toFixed(2));
-
-  // Blend of fundamental methods when no live price
-  const methods = [];
-  if (shares > 0 && ebitda > 0) methods.push((ebitda * 12) / shares);
-  if (eps > 0) { methods.push(eps * 18); methods.push(eps * 15 * 1.30); }
-  if (!methods.length && shares > 0 && revenue > 0) methods.push((revenue * 2) / shares);
-  if (!methods.length) return null;
-
-  const avg = methods.reduce((a, b) => a + b, 0) / methods.length;
-  return avg > 0 ? parseFloat(avg.toFixed(2)) : null;
-}
-
 // Returns base advisory fee only. Legal / regulatory / financing are reference estimates
 // shown in the "All-in estimate" tooltip — the model uses only this base fee.
 export function calcAdvisoryFee(dealSizeM) {
@@ -78,40 +61,6 @@ export function calcSuggestedSynergy(target, acquirer, year) {
 }
 
 // ── Tooltip builders ──────────────────────────────────────────────────────────
-
-export function buildOfferPriceTooltip(target) {
-  const { sharePrice, eps, ebitda, shares } = target || {};
-  const suggested = calcSuggestedOfferPrice(target);
-  const resultStr = suggested ? `${fmtPerShare(suggested)}/share` : 'Insufficient data';
-
-  const peerPEPrice = eps > 0 ? parseFloat((eps * 15).toFixed(2)) : null;
-  const evEBITDAPrice = (shares > 0 && ebitda > 0) ? parseFloat(((ebitda * 12) / shares).toFixed(2)) : null;
-  const isFinancialCo = isFinancial(target); // OBJECT → SIC fallback fires for banks /quote tags 'standard'
-
-  const inputs = [];
-  if (sharePrice > 0) {
-    inputs.push({ label: 'Current share price', value: fmtPerShare(sharePrice) });
-    inputs.push({ label: 'Control premium applied', value: '30% (industry median)' });
-  }
-  if (peerPEPrice) {
-    inputs.push({ label: 'Cross-check: EPS × peer P/E (15×)', value: fmtPerShare(peerPEPrice) });
-  }
-  if (isFinancialCo) {
-    inputs.push({ label: 'EV/EBITDA cross-check', value: 'N/A (financial company — see P/TBV instead)' });
-  } else if (evEBITDAPrice) {
-    inputs.push({ label: 'Cross-check: EBITDA × 12 / shares', value: fmtPerShare(evEBITDAPrice) });
-  }
-
-  return {
-    formula: sharePrice > 0
-      ? 'Current share price × (1 + control premium)'
-      : 'Blend of methods — premium-to-market is typically the binding constraint',
-    inputs,
-    result: resultStr,
-    notes: 'A 30% premium reflects the empirical median for completed US public-company M&A from 2010 to 2024. Premiums above 50% are unusual outside competitive bidding situations.',
-    sources: ['Damodaran NYU acquisition premium dataset', 'McKinsey Global M&A practice'],
-  };
-}
 
 export function buildCashPercentTooltip(isBank = false) {
   const defaultCash = isBank ? 80 : 60;

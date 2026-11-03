@@ -8,21 +8,19 @@ import { useWindowWidth } from './hooks/useWindowWidth';
 import { getBankFacts } from './services/edgarBankFacts';
 import { fetchLivePrice } from './services/priceService';
 import { SuggestionBadge } from './components/shared/SuggestionBadge';
-import { ExplainButton } from './components/shared/ExplainButton';
+import { PremiumSlider } from './components/shared/PremiumSlider';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
 import {
-  calcSuggestedOfferPrice,
   calcSuggestedTransactionFees,
   calcAllInFeeEstimate,
   calcSuggestedSynergy,
-  buildOfferPriceTooltip,
   buildCashPercentTooltip,
   buildTransactionFeesTooltip,
   buildSynergyTooltip,
 } from './lib/suggestionTooltips';
-import { explainPremium } from './lib/explanations';
+import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput } from './lib/offerPremium';
 import './App.css';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -53,15 +51,6 @@ function fetchNonGaap(symbol) {
 // Wait-then-build timeout (#5): a hung non-GAAP fetch must never block the deck forever. After this,
 // build on whatever has settled (resolveAccretionBasis maps a missing side → GAAP, honestly).
 const BASIS_WAIT_TIMEOUT_MS = 22000;
-
-// Human "as of" stamp for the live market price the suggested offer/premium is based on, e.g.
-// "Jun 25, 2026, 2:31 PM". Explains why the suggested price drifts run-to-run (live price moves intraday).
-function fmtPriceAsOf(d) {
-  if (!d) return null;
-  const dt = d instanceof Date ? d : new Date(d);
-  if (isNaN(dt.getTime())) return null;
-  return dt.toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
-}
 
 // ── Accretion BASIS resolver (Step 3 flip — applied at input assembly, dealCalc helpers unchanged) ──
 // When BOTH companies have a fully-reconciled non-GAAP payload (incl. the filing-sourced dilutedShares),
@@ -95,17 +84,19 @@ const inputBaseStyle = (disabled) => ({
   boxSizing: 'border-box', background: disabled ? '#F9FAFB' : '#fff', color: disabled ? '#9CA3AF' : 'inherit',
 });
 
-function InputField({ label, name, value, onChange, disabled, note, placeholder }) {
+function InputField({ label, name, value, onChange, disabled, note, placeholder, format }) {
   const inputRef = useRef(null);
+  const show = (v) => format ? format(v) : (v === 0 ? '' : String(v));
   useEffect(() => {
     if (inputRef.current && document.activeElement !== inputRef.current) {
-      inputRef.current.value = value === 0 ? '' : String(value);
+      inputRef.current.value = show(value);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
   return (
     <div style={{ marginBottom: 12 }}>
       <label style={{ display: 'block', fontSize: 12, color: disabled ? '#9CA3AF' : '#6B7280', marginBottom: 4 }}>{label}</label>
-      <input ref={inputRef} type="number" name={name} defaultValue={value === 0 ? '' : value}
+      <input ref={inputRef} type="number" step="any" name={name} defaultValue={show(value)}
         placeholder={placeholder || ''} onChange={onChange} disabled={disabled}
         style={inputBaseStyle(disabled)} />
       {note && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3, fontStyle: 'italic' }}>{note}</div>}
@@ -464,50 +455,6 @@ function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSour
   );
 }
 
-function PremiumCaption({ offerPrice, sharePrice, showUnavailable, asOf }) {
-  const price = parseFloat(offerPrice) || 0;
-  if (!price) return null;
-  if (!sharePrice) {
-    if (!showUnavailable) return null;
-    return (
-      <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 4, fontStyle: 'italic' }}>
-        Current price unavailable — premium cannot be computed
-      </div>
-    );
-  }
-  const premium = ((price - sharePrice) / sharePrice) * 100;
-  const isNeg = premium < 0;
-  const color = (isNeg || premium > 75) ? '#D62B2B'
-    : (premium < 20 || premium > 50) ? '#F59E0B'
-    : '#10B981';
-  // Premium is computed against the LIVE market price (moves intraday) — stamp the as-of so the
-  // premium's run-to-run drift is explained.
-  const asOfStr = fmtPriceAsOf(asOf);
-  return (
-    <div style={{ fontSize: 11, color, marginTop: 4, marginBottom: 8, display: 'flex', alignItems: 'center', gap: 5 }}>
-      Implied premium: {premium >= 0 ? '+' : ''}{premium.toFixed(1)}%{' '}
-      {isNeg ? 'below' : 'above'} live price (${parseFloat(sharePrice).toFixed(2)}){asOfStr ? ` as of ${asOfStr}` : ''}
-      <ExplainButton explain={() => explainPremium({ offerPrice: price, marketPrice: sharePrice })} />
-    </div>
-  );
-}
-
-
-function PriceDiagnostic({ attempts }) {
-  const SOURCE_NAMES = { fmp: 'FMP', finnhub: 'Finnhub', alphavantage: 'Alpha Vantage' };
-  return (
-    <div style={{ fontSize: 11, marginTop: -4, marginBottom: 8, color: '#9CA3AF' }}>
-      Live price unavailable — suggestion based on EPS × P/E blend.
-      {attempts.length > 0 && (
-        <span style={{ marginLeft: 4 }}>
-          ({attempts.map(a => `${SOURCE_NAMES[a.source] || a.source}: ${a.ok ? '✓' : '✗'}`).join(', ')})
-        </span>
-      )}
-    </div>
-  );
-}
-
-
 // Reference-only all-in fee breakdown shown inside the collapsible note. The MODEL uses only the
 // base advisory fee; legal & financing here are rough, clearly-labeled estimates (Phase 2.4).
 function AllInFeeBreakdown({ allIn }) {
@@ -754,6 +701,26 @@ function App() {
 
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
 
+  // One source of truth: inputs.offerPricePerShare. The slider writes it; the premium is derived from it.
+  const spotB = liveSpot(inputs.currentSharePriceB);
+  // The offer box may still hold focus (Safari keeps it on a slider or button click), and a focused box does
+  // not resync. Release it so the box always shows the stored offer.
+  const setOfferFromPremium = (pct) => {
+    const offer = offerFromPremium(spotB, pct);
+    if (offer == null) return;
+    if (document.activeElement && document.activeElement.name === 'offerPricePerShare') document.activeElement.blur();
+    setOfferPriceTouched(true);
+    setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
+  };
+  // Default premium. Applies only while the user has not set an offer, and only with a live price: without one
+  // the offer stays empty and manual. A price is never defaulted from anything else.
+  useEffect(() => {
+    if (dealType !== 'pubpub' || offerPriceTouched) return;
+    const offer = offerFromPremium(spotB, DEFAULT_PREMIUM_PCT);
+    if (offer != null) setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dealType, spotB, offerPriceTouched]);
+
   // Auto-set cash% default when bank mode activates/deactivates
   useEffect(() => {
     if (fetchedA && fetchedB) {
@@ -808,7 +775,8 @@ function App() {
   const handleSelectB = (symbol) => {
     setLoadingB(true); setErrorB(''); setBankFactsB(null); setNonGaapB(null); setNonGaapLoadingB(true);
     setPriceStatusB({ loading: true, price: null, source: null, attempts: [] });
-    setInputs(prev => ({ ...prev, currentSharePriceB: 0 })); // clear stale price; live fetch resets it
+    setOfferPriceTouched(false);   // a new target starts over: its offer must not carry the last target's price
+    setInputs(prev => ({ ...prev, currentSharePriceB: 0, offerPricePerShare: 0 })); // clear stale price; live fetch resets it
     fetchCompanyData(symbol).then(data => {
       setNameB(data.name); setTickerB(symbol.toUpperCase());
       setCompanyTypeB(data.companyType || 'standard'); setDataSrcB(data.dataSource || '');
@@ -912,8 +880,6 @@ function App() {
 
   const handleSubmit = () => {
     const updates = {};
-    if (inputs.offerPricePerShare === 0 && suggestedPrice != null && suggestedPrice > 0)
-      updates.offerPricePerShare = suggestedPrice;
     if (inputs.synergiesY1 === 0 && synAuto1 != null && synAuto1 > 0) updates.synergiesY1 = synAuto1;
     if (inputs.synergiesY2 === 0 && synAuto2 != null && synAuto2 > 0) updates.synergiesY2 = synAuto2;
     if (inputs.synergiesY3 === 0 && synAuto3 != null && synAuto3 > 0) updates.synergiesY3 = synAuto3;
@@ -985,6 +951,7 @@ function App() {
   };
 
   const handleLoadAnalysis = (saved) => {
+    setOfferPriceTouched(true);   // a saved deal keeps its own offer
     setInputs(saved.inputs); setResults(saved.results);
     setNameA(saved.nameA); setNameB(saved.nameB);
     setTickerA(saved.tickerA || ''); setTickerB(saved.tickerB || '');
@@ -1186,17 +1153,9 @@ function App() {
     nonInterestExpense: bankFactsA?.nonInterestExpense || 0,
   };
 
-  const suggestedPrice = fetchedB ? calcSuggestedOfferPrice(partialTarget) : null;
-
   const bankDeal = companyTypeA === 'financial' && companyTypeB === 'financial';
 
   const acquirerSharePriceForSlider = inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null;
-
-  const dealSizeForSlider = (() => {
-    const price = inputs.offerPricePerShare > 0 ? inputs.offerPricePerShare
-      : (suggestedPrice > 0 ? suggestedPrice : 0);
-    return price > 0 && inputs.companyBShares > 0 ? price * inputs.companyBShares : 0;
-  })();
 
   // ── Synergy pre-computations (used in handleSubmit auto-fill)
   const synAuto1 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 1) : null;
@@ -1318,17 +1277,9 @@ function App() {
       <h2 style={sectionTitle}>Deal Terms</h2>
       {bPub ? (
         <>
-          {suggestedPrice != null && suggestedPrice > 0 && (() => {
-            const sp = inputs.currentSharePriceB;
-            const prem = sp > 0 ? Math.round(((suggestedPrice - sp) / sp) * 100) : null;
-            const asOf = fmtPriceAsOf(priceStatusB.asOf);
-            return <SuggestionBadge primary={prem != null ? `${fmtPerShare(suggestedPrice)}/share (${prem}% premium)` : `${fmtPerShare(suggestedPrice)}/share`}
-              caption={sp > 0 ? `30% control premium over ${fmtPerShare(sp)} live market price${asOf ? ` · as of ${asOf}` : ''}` : null}
-              tooltip={buildOfferPriceTooltip(partialTarget)} onUse={() => setInputs(prev => ({ ...prev, offerPricePerShare: suggestedPrice }))} />;
-          })()}
+          <PremiumSlider spot={spotB} offer={inputs.offerPricePerShare} loadingPrice={priceStatusB.loading} onPremiumChange={setOfferFromPremium} />
           <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
-            placeholder={suggestedPrice > 0 ? `e.g., ${fmtPerShare(suggestedPrice)}` : 'e.g., 128.08'} />
-          {inputs.offerPricePerShare > 0 && <PremiumCaption offerPrice={inputs.offerPricePerShare} sharePrice={inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null} showUnavailable={offerPriceTouched} asOf={priceStatusB.asOf} />}
+            format={formatOfferInput} placeholder="$ per share" />
         </>
       ) : (
         <>
