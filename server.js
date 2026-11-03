@@ -13,7 +13,8 @@ const { PEER_OVERRIDES } = require('./peerOverrides');
 const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deckTokens.isFinancial — one SIC source
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
-const { computeLTM, scaleShares, COGS_CONCEPTS } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
+const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
+const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts'); // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
@@ -480,9 +481,9 @@ function annualSeries(concept, unit, n = 4) {
 
 // ── Data sources ──────────────────────────────────────────────────────────────
 
-// Targeted FMP gross-profit fetch — used ONLY as the fallback when EDGAR has no CURRENT tagged gross
-// profit (period-guard rejected a stale tag, e.g. ORCL froze GrossProfit at FY2018; INTU's only cost tag
-// is a stale FY2017 partial). FMP computes the segment-cost total a filer reports without an XBRL total.
+// Targeted FMP gross-profit fetch — used ONLY as the fallback when neither the filed GrossProfit, a cost of
+// revenue from companyfacts, nor the filing's XBRL instance gives a gross profit (incomeConcepts). IRDM showed
+// why it must not lead: FMP's 674 vs the filing's 623.7.
 // Returns raw $ gross profit, or null (→ honest "—"). Never overrides a current EDGAR gross.
 async function fetchFmpGrossProfit(symbol) {
   if (!FMP_KEY) return null;
@@ -507,7 +508,7 @@ async function fetchFromEDGAR(symbol, cik) {
     fetchSubmissions(cik),
   ]);
   if (factsResult.status === 'rejected') throw factsResult.reason;
-  const facts = factsResult.value;
+  const facts = await prepareIncomeFacts(factsResult.value, cik);
   const sicData = sicResult.status === 'fulfilled' ? sicResult.value : { sic: null, sicDescription: null };
 
   const gaap = facts.facts?.['us-gaap']   || {};
@@ -571,20 +572,12 @@ async function fetchFromEDGAR(symbol, cik) {
   const capex = pick(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment']);
   const freeCashFlow = (ocf !== 0 && capex !== 0) ? inM(ocf + capex) : null;
 
-  // Gross profit — REAL from the filing, PERIOD-MATCHED (Fix-A discipline). A GrossProfit/cost tag whose
-  // period-end is materially older than revenue is REJECTED (pickMatched, 270-day window): e.g. Oracle
-  // froze GrossProfit at FY2018 → pairing it with FY2026 revenue gave a nonsense 36.1%; Intuit's only cost
-  // tag is a stale FY2017 partial → a fake 98%. When EDGAR has no CURRENT gross, fall back to FMP's
-  // computed gross profit (targeted fetch, this path only). Current-gross filers (CRM/TEAM/ADBE) tag a
-  // matched GrossProfit → kept → FMP never fires → byte-identical no-op.
-  let grossProfit = (() => {
-    const tagged = useIfrs ? pickMatched(ifrs, ['GrossProfit'], revenueEntry?.end) : pickMatched(gaap, ['GrossProfit'], revenueEntry?.end);
-    if (tagged != null && tagged !== 0) return tagged;
-    const cor = useIfrs
-      ? pickMatched(ifrs, COGS_CONCEPTS.ifrs, revenueEntry?.end)
-      : pickMatched(gaap, COGS_CONCEPTS.gaap, revenueEntry?.end);
-    return (cor != null && cor !== 0 && revenue !== 0) ? revenue - cor : null;
-  })();
+  // Gross profit — from the filing, at revenue's exact period (incomeConcepts). A tag from any other period
+  // cannot match: Oracle froze GrossProfit at FY2018 → paired with FY2026 revenue it gave a nonsense 36.1%;
+  // Intuit's only cost tag is a stale FY2017 partial → a fake 98%. FMP's computed gross profit is the last
+  // resort when the filing gives nothing (targeted fetch, this path only).
+  const incomeLines = annualIncomeLines(useIfrs ? ifrs : gaap, revenueEntry?.end, revenueEntry ? revenue : null, useIfrs);
+  let grossProfit = incomeLines.grossProfit.value;
   let grossProfitSource = grossProfit != null ? 'sec_edgar' : null;
   if (grossProfit == null) {
     const fmpGp = await fetchFmpGrossProfit(symbol);
@@ -808,7 +801,11 @@ async function fetchFromEDGAR(symbol, cik) {
     ebitda:         ebitda != null ? inM(ebitda) : null,
     operatingIncome: operatingIncome != null ? inM(operatingIncome) : null, // screening table (matches verified edgarClient); null when the concept is absent (Fix-A discipline)
     grossProfit:    grossProfit != null ? inM(grossProfit) : null, // real GP; null when filer doesn't tag it
-    grossProfitSource: grossProfitSource,  // 'sec_edgar' (period-matched tag) | 'fmp' (stale/missing fallback) | null
+    grossProfitSource: grossProfitSource,  // 'sec_edgar' (the filing) | 'fmp' (filing gave nothing) | null
+    grossProfitBasis:  grossProfitSource === 'sec_edgar' ? incomeLines.grossProfit.basis : null, // 'filed' | 'calculated' | null
+    grossProfitLabel:  grossProfitSource === 'sec_edgar' ? incomeLines.grossProfit.label : null,
+    costOfRevenue:     incomeLines.costOfRevenue.value != null ? inM(incomeLines.costOfRevenue.value) : null,
+    costOfRevenueSource: incomeLines.costOfRevenue.label,
     freeCashFlow,                          // null for IFRS filers with no us-gaap cash-flow tags
     // Last 4 annual revenues (oldest→newest) for the §6 multi-year revenue-trajectory line chart.
     revenueHistory: annualSeries((useIfrs ? ifrs : gaap)[revenueConcept], 'USD', 4),
@@ -1682,8 +1679,6 @@ const pnlCache = new Map();
 const PNL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PNL_GAAP = {
   revenue: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense', 'InterestAndFeeIncomeLoansAndLeases'],
-  cogs:    COGS_CONCEPTS.gaap,
-  gross:   ['GrossProfit'],
   opInc:   ['OperatingIncomeLoss'],
   netInc:  ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
   da:      ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'],
@@ -1692,8 +1687,6 @@ const PNL_GAAP = {
 };
 const PNL_IFRS = {
   revenue: ['Revenue', 'RevenueFromContractsWithCustomers'],
-  cogs:    COGS_CONCEPTS.ifrs,
-  gross:   ['GrossProfit'],
   opInc:   ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'],
   netInc:  ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'],
   da:      ['DepreciationAndAmortisationExpense', 'DepreciationAmortisationAndImpairmentLoss'],
@@ -1717,8 +1710,9 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     const cik = cikBySymbol[ticker];
     if (!cik) return res.json({ ok: false, ticker, note: 'No CIK — multi-year EDGAR P&L unavailable for this ticker.' });
 
-    let facts = getEdgarFactsCache(cik);
-    if (!facts) { facts = await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`); setEdgarFactsCache(cik, facts); }
+    let rawFacts = getEdgarFactsCache(cik);
+    if (!rawFacts) { rawFacts = await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`); setEdgarFactsCache(cik, rawFacts); }
+    const facts = await prepareIncomeFacts(rawFacts, cik);
     const gaap = facts.facts?.['us-gaap'] || {};
     const ifrs = facts.facts?.['ifrs-full'] || {};
     const useIfrs = Object.keys(ifrs).length > 0 && Object.keys(gaap).length === 0;
@@ -1727,8 +1721,6 @@ app.get('/api/pnl/:ticker', async (req, res) => {
 
     // Build each line's annual series (raw $ / shares / per-share), keyed by period-end.
     const sRev = pnlLineSeries(ns, C.revenue);
-    const sCogs = pnlLineSeries(ns, C.cogs);
-    const sGross = pnlLineSeries(ns, C.gross);
     const sOpInc = pnlLineSeries(ns, C.opInc);
     const sNet = pnlLineSeries(ns, C.netInc);
     const sDa = pnlLineSeries(ns, C.da);
@@ -1744,17 +1736,25 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     const orNull = (m, end) => (m[end] != null ? inM(m[end]) : null);
     const cols = actualEnds.map((end) => {
       const revenue = orNull(sRev, end);
-      const cogs    = sCogs[end] != null ? inM(sCogs[end]) : null;
-      let gross     = sGross[end] != null ? inM(sGross[end]) : (revenue != null && cogs != null ? revenue - cogs : null);
+      const lines   = annualIncomeLines(ns, end, sRev[end] ?? null, useIfrs);
+      // $M for display, so a calculated gross profit foots to the rounded revenue and cost shown beside it.
+      const cogs    = (lines.costOfRevenue.value != null && lines.costOfRevenue.kind !== 'calculated') ? inM(lines.costOfRevenue.value) : null;
+      const filedGross = lines.grossProfit.basis === 'filed' ? inM(lines.grossProfit.value) : null;
+      const grossRes = resolveGrossProfit(filedGross, revenue, cogs);
+      const gross   = grossRes.value;
       const opInc   = orNull(sOpInc, end);
       const netInc  = orNull(sNet, end);
       const da      = sDa[end] != null ? inM(sDa[end]) : 0;            // matches /quote (D&A defaults 0 if untagged)
       const ebitda  = opInc != null ? opInc + da : null;
       const opEx    = (gross != null && opInc != null) ? gross - opInc : null; // derived (Gross − OpInc), always foots
-      const cor     = cogs != null ? cogs : (revenue != null && gross != null ? revenue - gross : null);
+      const cor     = cogs != null ? cogs : calculateGrossProfit(revenue, gross);
       return {
         fy: parseInt(end.slice(0, 4), 10), end, label: `FY${end.slice(0, 4)}`, actual: true,
         revenue, costOfRevenue: cor, grossProfit: gross,
+        // Provenance, in raw dollars: what the deck rounds and where it came from.
+        costOfRevenueSource: lines.costOfRevenue.label, costOfRevenueKind: lines.costOfRevenue.kind,
+        grossProfitBasis: grossRes.basis, grossProfitLabel: lines.grossProfit.label,
+        incomeTrace: { revenueUsd: sRev[end] ?? null, costOfRevenueUsd: lines.costOfRevenue.value, grossProfitUsd: lines.grossProfit.value, costComponents: lines.costOfRevenue.components },
         operatingExpense: opEx, operatingExpenseEst: false,
         operatingIncome: opInc, nonOperatingIncome: sNoi[end] != null ? inM(sNoi[end]) : null, netIncome: netInc, ebitda,
         dilutedShares: sSh[end] != null ? inM(scaleShares(sSh[end])) : null, // scaleShares: MCD-class filers tag shares in millions (val 716.4) → normalize so the row isn't "0"
@@ -1776,7 +1776,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         return {
           fy: parseInt(e.date.slice(0, 4), 10), end: e.date, label: `FY${e.date.slice(0, 4)}E`, actual: false,
           revenue,
-          costOfRevenue: gross != null ? revenue - gross : null,
+          costOfRevenue: calculateGrossProfit(revenue, gross),
           grossProfit: gross,
           // Forward OpEx is NULL by decision (7B-2c). When this was written forward gross was a held GAAP margin
           // × revenue, while forward OpInc is street CONSENSUS (its non-GAAP convention), so the residual was not
@@ -1816,7 +1816,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         revenue: lr.flows.revenue.ltmM,
         // COGS is a real three-leg LTM at the same window, so the LTM column FOOTS (rev − COGS = GP) exactly
         // as the annual columns do; grossProfitDerived says WHICH of the two GP sources the row came from.
-        costOfRevenue: lr.flows.costOfRevenue.ltmM,
+        costOfRevenue: lr.flows.costOfRevenue.ltmM, costOfRevenueSource: lr.flows.costOfRevenue.sourceLabel,
         grossProfit: lr.flows.grossProfit.ltmM, grossProfitDerived: lr.flows.grossProfit.derived,
         operatingIncome: lr.flows.operatingIncome.ltmM, nonOperatingIncome: lr.flows.nonOperatingIncome, netIncome: lr.flows.netIncome.ltmM,
         ebitda: lr.flows.ebitda.ltmM, ebitdaDaFound: lr.flows.ebitda.daFound,

@@ -1,6 +1,7 @@
 'use strict';
 const { get } = require('../utils/httpGet');
 const { resolveTotalDebt } = require('./debtConcepts'); // shared total-debt resolution (deal EV / comps / §16 identical)
+const { annualIncomeLines, prepareIncomeFacts } = require('./incomeConcepts'); // shared cost of revenue / gross profit (/quote, /api/pnl, LTM, §16 identical)
 
 const factsCache = new Map();
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours — fundamentals change quarterly
@@ -73,11 +74,12 @@ function makeField(entry, valueInM = true) {
 }
 
 async function fetchFields(cik) {
-  let facts = getCached(cik);
-  if (!facts) {
-    facts = await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`);
-    setCached(cik, facts);
+  let rawFacts = getCached(cik);
+  if (!rawFacts) {
+    rawFacts = await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`);
+    setCached(cik, rawFacts);
   }
+  const facts = await prepareIncomeFacts(rawFacts, cik);
 
   const gaap = facts.facts?.['us-gaap']   || {};
   const ifrs = facts.facts?.['ifrs-full'] || {};
@@ -128,7 +130,10 @@ async function fetchFields(cik) {
   // discontinued tag can't strand a stale value. EPS is per-share (USD/shares, NOT inM); GrossProfit /
   // Assets / Equity are $ → inM like Revenue. Foreign/degraded (no concept at refEnd) → null → single/FMP.
   const epsEntry    = pickAtEnd(ns, useIfrs ? ['DilutedEarningsLossPerShare', 'BasicEarningsLossPerShare'] : ['EarningsPerShareDiluted', 'EarningsPerShareBasic'], refEnd, 'USD/shares');
-  const grossEntry  = pickAtEnd(ns, ['GrossProfit'], refEnd);
+  const incomeLines = annualIncomeLines(ns, refEnd, revenueEntry ? revenueEntry.val : null, useIfrs);
+  const grossEntry  = incomeLines.grossProfit.value != null
+    ? { val: incomeLines.grossProfit.value, end: refEnd, fy: revenueEntry.fy, fp: revenueEntry.fp, form: revenueEntry.form }
+    : null;
   const assetsEntry = pickAtEnd(ns, ['Assets'], refEnd);
   const equityEntry = pickAtEnd(ns, useIfrs ? ['Equity', 'EquityAttributableToOwnersOfParent'] : ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'], refEnd);
 
@@ -168,7 +173,7 @@ async function fetchFields(cik) {
     netIncome:         makeField(netIncomeEntry),
     cash:              makeField(cashEntry),
     totalDebt:         debtRes.value != null ? { value: inM(debtRes.value), asOf: refEnd, period: debtRepEntry ? { fy: debtRepEntry.fy, fp: debtRepEntry.fp, form: debtRepEntry.form, end: refEnd } : { end: refEnd }, source: 'edgar', ...(debtRes.review ? { review: true, reviewReason: debtRes.basis } : {}) } : null,
-    grossProfit:             makeField(grossEntry),
+    grossProfit:             grossEntry ? { ...makeField(grossEntry), basis: incomeLines.grossProfit.basis, sourceLabel: incomeLines.grossProfit.label } : null,
     epsDiluted:              makeField(epsEntry, false),  // per-share — NOT inM
     totalAssets:             makeField(assetsEntry),
     totalStockholdersEquity: makeField(equityEntry),

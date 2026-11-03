@@ -17,6 +17,7 @@
 // EDGAR is the sole source for LTM v1 (no FMP).
 
 const { get } = require('../utils/httpGet');
+const { COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, grossFromCostOfRevenue, describeLtmCostSource, prepareIncomeFacts } = require('./incomeConcepts');
 
 const DAY = 86400000;
 const days = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / DAY);
@@ -30,22 +31,12 @@ function scaleShares(v) {
   return (v != null && v > 0 && v < 1e6) ? v * 1e6 : v;
 }
 
-// Cost-of-revenue concept lists — the SINGLE source for every "gross profit = revenue − COGS" derivation
-// in the app. Three surfaces derive gross profit this way for filers that never tag GrossProfit (AMZN,
-// GOOGL and 30 more): /quote's annual gross profit (server.js), /api/pnl's annual columns (PNL_GAAP/IFRS
-// .cogs), and the LTM legs below. They were three identical literals; a drift in any one of them would
-// have made the LTM column disagree with the annual column beside it on the same table. One list now.
-const COGS_CONCEPTS = {
-  gaap: ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold'],
-  ifrs: ['CostOfSales', 'CostOfGoodsAndServicesSold'],
-};
-
 const NAMES = {
   gaap: {
     revenue: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet',
               'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense'],
-    grossProfit: ['GrossProfit'],
-    costOfRevenue: COGS_CONCEPTS.gaap,
+    grossProfit: GROSS_PROFIT_CONCEPTS,
+    costOfRevenue: COST_OF_REVENUE_CONCEPTS.gaap,
     operatingIncome: ['OperatingIncomeLoss'],
     netIncome: ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
     nonOperating: ['NonoperatingIncomeExpense'],   // net non-operating income/(expense): interest, FX, securities gains — the OI→NI reconciling line
@@ -61,8 +52,8 @@ const NAMES = {
   },
   ifrs: {
     revenue: ['Revenue', 'RevenueFromContractsWithCustomers', 'RevenueAndOtherIncome'],
-    grossProfit: ['GrossProfit'],
-    costOfRevenue: COGS_CONCEPTS.ifrs,
+    grossProfit: GROSS_PROFIT_CONCEPTS,
+    costOfRevenue: COST_OF_REVENUE_CONCEPTS.ifrs,
     operatingIncome: ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities'],
     netIncome: ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'],
     nonOperating: [],   // no clean IFRS non-operating total — renders "—" (no test ticker is IFRS)
@@ -235,32 +226,6 @@ function ltmFlow(space, names, P) {
   if (sel && sel.fellThrough) console.error(`[ltmCalc] FLOW FALLTHROUGH @P: first-match could not supply all three legs at the revenue window — rescued via later alias "${sel.conceptName}".`);
   return { annual: a, latestYTD: l, priorYTD: p, ltm, conceptName: sel ? sel.conceptName : null, fellThrough: sel ? !!sel.fellThrough : false };
 }
-// ── Gross profit for filers that never tag GrossProfit — LEG-LEVEL, not a period-mixing shortcut ──────
-// Most filers tag `GrossProfit` directly; a large minority (AMZN, GOOGL, …) present the income statement
-// as Revenue − Cost of sales and tag NO GrossProfit at all (AMZN's is dead residue frozen at 2009-12-31;
-// GOOGL's is absent outright), so ltmFlow(GrossProfit) returns null on all three legs and the LTM Gross
-// Profit row blanks — while the annual FY columns beside it on the SAME table render a gross profit,
-// because BOTH annual paths already carry this exact fallback (server.js /quote + /api/pnl columns).
-// This gives the LTM legs the same fallback, computed PER LEG at the already-validated revenue window P:
-//   annual GP = annual rev − annual COGS, latestYTD GP = latestYTD rev − latestYTD COGS, likewise prior.
-// So it is a real three-leg LTM (annual + latest YTD − prior YTD), tying out to the same window as every
-// other flow — never annual GP relabeled as LTM, and never a margin held constant across periods.
-// Fires ONLY when the tagged concept could not supply an LTM: a filer that tags GrossProfit keeps it,
-// including a genuine ZERO (`!= null`, never a falsy test — a zero gross profit is a fact, not a gap).
-// Returns null (→ honest "—") when COGS cannot supply all three legs; it never substitutes a proxy.
-function grossFromCostOfRevenue(rev, cogs) {
-  if (cogs.annual == null || cogs.latestYTD == null || cogs.priorYTD == null) return null;
-  return {
-    annual:    rev.annual    - cogs.annual,
-    latestYTD: rev.latestYTD - cogs.latestYTD,
-    priorYTD:  rev.priorYTD  - cogs.priorYTD,
-    ltm:       rev.ltm       - cogs.ltm,
-    conceptName: `${rev.conceptName} − ${cogs.conceptName}`,
-    fellThrough: false,
-    derived: true,
-  };
-}
-
 // latest point-in-time (instant) value — balance sheet, not summed
 function instantLatest(entries) {
   const pool = entries.filter(e => !e.start);
@@ -402,7 +367,7 @@ function computeLTM(facts) {
     tieOut,
     flows: {
       revenue:         flow(rev),
-      costOfRevenue:   flow(cogs),   // the subtracted leg — exposed so the LTM column can FOOT (rev − COGS = GP)
+      costOfRevenue:   { ...flow(cogs), sourceLabel: describeLtmCostSource(ns, cogs.conceptName, [P.annualEnd, P.iEnd, P.pEnd]) },   // the subtracted leg — exposed so the LTM column can FOOT (rev − COGS = GP)
       grossProfit:     flow(gp),
       operatingIncome: flow(oi),
       nonOperatingIncome: flow(noi),   // disclosure line (§6/§7 LTM column) — reconciles operating income → net income; NEVER an adjustment to NI
@@ -435,7 +400,7 @@ async function computeLTMForCik(cik) {
     return { ltm: false, fallback: 'annual', reason: `no EDGAR companyfacts (${e.message || 'fetch failed'})` };
   }
   if (!facts || !facts.facts) return { ltm: false, fallback: 'annual', reason: 'empty companyfacts (foreign/ADR — no XBRL financials)' };
-  return computeLTM(facts);
+  return computeLTM(await prepareIncomeFacts(facts, cik));
 }
 
-module.exports = { computeLTM, computeLTMForCik, scaleShares, COGS_CONCEPTS };
+module.exports = { computeLTM, computeLTMForCik, scaleShares };

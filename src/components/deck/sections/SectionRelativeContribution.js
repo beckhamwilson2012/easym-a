@@ -29,11 +29,9 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   // ── Standalone inputs (all $M) ──────────────────────────────────────────────
   const aRev = parseFloat(acquirer.revenue) || 0;
   const bRev = parseFloat(target.revenue) || 0;
-  // Real gross profit from the filing; 65% fallback only when a filer doesn't tag it.
-  const aRealGP = parseFloat(acquirer.grossProfit), bRealGP = parseFloat(target.grossProfit);
-  const gpIsEst = !Number.isFinite(aRealGP) || !Number.isFinite(bRealGP);
-  const aGP = Number.isFinite(aRealGP) ? aRealGP : aRev * 0.65;
-  const bGP = Number.isFinite(bRealGP) ? bRealGP : bRev * 0.65;
+  // Gross profit from the filing. If either side has none, the row is omitted: a split needs both sides.
+  const aGP = parseFloat(acquirer.grossProfit), bGP = parseFloat(target.grossProfit);
+  const gpAvailable = Number.isFinite(aGP) && Number.isFinite(bGP);
   // Operating income on the DECK'S basis (so §I agrees with §4/§5/§6): reported NON-GAAP operating
   // income when the deal is non-GAAP (same /api/nongaap figures §5 shows — e.g. TEAM +$1,287M), else
   // GAAP operating income. NOT EBITDA (which is negative for loss-making filers → false "n/m").
@@ -98,7 +96,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   ] : [
     { label: 'Revenue', isMoney: true, ...splitContribution(aRev, bRev) },
     // Restaurant deals: omit gross profit (false ~74%/65% margin) — never feed it into the split.
-    restaurantDeal ? null : { label: gpIsEst ? 'Gross Profit (est.)' : 'Gross Profit', isMoney: true, ...splitContribution(aGP, bGP) },
+    (restaurantDeal || !gpAvailable) ? null : { label: 'Gross Profit', isMoney: true, ...splitContribution(aGP, bGP) },
     { label: `Operating Income (${oiNonGaap ? 'Non-GAAP' : 'GAAP'})`, isMoney: true, ...splitContribution(aOI, bOI) },
     { label: fcfLabel, isMoney: true, ...splitContribution(aFCF, bFCF) },
   ].filter(Boolean);
@@ -117,9 +115,9 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
     ? `${aName} acquires 100% of ${bName}, which contributes ${Math.round(Math.min(...moneyPcts))}–${Math.round(Math.max(...moneyPcts))}% of pro forma financials, for ${fmtPctFloor(tgtOwnPct, 0)} of combined equity.`
     : null;
 
-  const gpPhrase = gpIsEst
-    ? 'gross profit estimated at 65% of revenue where a filer does not break it out'
-    : 'gross profit from SEC filings';
+  const gpPhrase = gpAvailable
+    ? 'gross profit from SEC filings'
+    : 'gross profit omitted (not available from the filings of both companies)';
   const fcfClause = fcfFromProxy ? 'free cash flow estimated (≈ net income)' : 'free cash flow from SEC EDGAR cash-flow statements';
   const oiClause = oiNonGaap
     ? 'operating income is reported Non-GAAP (per the fiscal year-end earnings 8-K, matching the standalone P&L)'

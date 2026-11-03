@@ -158,6 +158,18 @@ function MultiYearPL({ pnl, restaurantMode }) {
     : withGrowth;
   const ltmDaMissing = showLtm && ltmCol.ebitdaDaFound === false && ltmCol.ebitda != null;
 
+  // Source note: named only when cost of revenue came from somewhere other than a plain companyfacts tag, or
+  // gross profit is calculated. The filing's accession is the trace-back.
+  const incomeNote = (() => {
+    const latest = actualsSrc[actualsSrc.length - 1];
+    if (!latest) return null;
+    const parts = [];
+    if (latest.costOfRevenueKind && latest.costOfRevenueKind !== 'companyfacts') parts.push(`${latest.label} cost of revenue: ${latest.costOfRevenueSource}.`);
+    if (showLtm && L.costOfRevenueSource && /XBRL instance/.test(L.costOfRevenueSource)) parts.push(`LTM cost of revenue: ${L.costOfRevenueSource}.`);
+    if (latest.grossProfitBasis === 'calculated') parts.push('Gross profit is calculated: revenue − cost of revenue for the same period, because the filer tags no gross profit.');
+    return parts.length ? parts.join(' ') : null;
+  })();
+
   const labelW = 158;
   const cellBg  = (c, ri) => c.isLtm
     ? (ri % 2 ? '#FCF3D9' : '#FEFBF0')                                   // amber pivot band — clearly not a blue forward
@@ -299,6 +311,7 @@ function MultiYearPL({ pnl, restaurantMode }) {
         <strong style={{ color: NAVY }}>Basis: </strong>
         Actual years (GAAP) from SEC EDGAR filings; forward years are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>. The step in Operating Income / Net Income / EPS at the actual→estimate boundary reflects the actual→consensus transition, not organic growth. Margins are computed on each column's own basis.
         {showLtm ? <> The <strong>LTM</strong> column is the trailing twelve months (latest annual + interim YTD − prior-year YTD), a GAAP actual as of {asOfShort(L.asOf)}.{ltmDaMissing ? <> <sup>d</sup> LTM EBITDA is shown on an operating-income basis — interim D&amp;A on the same basis as the annual EBITDA is not tagged for this filer (a differently-scoped cash-flow D&amp;A is not mixed in).</> : null}</> : null}
+        {incomeNote ? <> <strong style={{ color: NAVY }}>Cost of revenue / gross profit: </strong>{incomeNote}</> : null}
         {noiText ? <> <strong style={{ color: NAVY }}>Non-operating income/(expense)</strong> reconciles operating income to net income. {noiText}</> : null}
         {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}
         {restaurantMode
@@ -360,18 +373,13 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
   const ebitdaMargin = rev > 0 && ebitda > 0 ? (ebitda / rev * 100) : 0;
   const niMargin     = rev > 0 && ni     > 0 ? (ni     / rev * 100) : 0;
 
-  // Gross profit — REAL from the filing; fall back to a clearly-labeled 65% estimate ONLY when the
-  // filer doesn't tag it (never present the estimate as real).
+  // Gross profit — from the filing, or null ("N/A"). Operating expenses = gross profit − operating income,
+  // so they are null with it.
   const realGP      = parseFloat(target.grossProfit);
-  const gpIsEst     = !Number.isFinite(realGP);
-  const grossProfit = gpIsEst ? rev * 0.65 : realGP;
-  const grossMarginPct = rev > 0 ? (grossProfit / rev * 100) : 0;
-  // Operating expenses = gross profit − operating income (TRUE opex, real operating income). Fall
-  // back to the old plug only when gross profit itself is an estimate.
+  const grossProfit = Number.isFinite(realGP) ? realGP : null;
+  const grossMarginPct = (grossProfit != null && rev > 0) ? (grossProfit / rev * 100) : null;
   const realOI    = parseFloat(target.operatingIncome);
-  const opexReal  = (!gpIsEst && Number.isFinite(realOI)) ? (grossProfit - realOI) : null;
-  const estOpex   = opexReal != null ? opexReal : (ebitda > 0 ? (grossProfit - ebitda) : rev * 0.40);
-  const opexIsEst = opexReal == null;
+  const opex      = (grossProfit != null && Number.isFinite(realOI)) ? (grossProfit - realOI) : null;
   // D&A is a POSITIVE expense (subtracted in the P&L). The prior estimate (ebitda × 0.15) went
   // negative for loss-making firms with EBITDA ≤ 0, so -estDA rendered as a positive addition rather
   // than a subtraction (Fix 10d). Fall back to a revenue-based proxy when EBITDA ≤ 0 so it stays ≥ 0.
@@ -480,9 +488,9 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
                 <PLRow label="Revenue"                    value={fmtUSDm(rev)}            />
                 {/* Restaurant SICs: omit gross profit/margin (food-only COGS) AND the gross-relative opex
                     line — go straight Revenue → Operating Income (Fix B). Non-restaurants unchanged. */}
-                {!restaurantMode && <PLRow label={gpIsEst ? "Gross Profit (est.)" : "Gross Profit (GAAP)"}     value={fmtUSDm(grossProfit)} alt indent />}
-                {!restaurantMode && <PLRow label={gpIsEst ? "Gross Margin (est.)" : "Gross Margin (GAAP)"}     value={fmtPct(grossMarginPct)}     indent />}
-                {!restaurantMode && <PLRow label={opexIsEst ? "Operating Expenses (est.)" : "Operating Expenses (GAAP)"} value={fmtUSDmAcct(-estOpex)} alt indent />}
+                {!restaurantMode && <PLRow label="Gross Profit (GAAP)"     value={fmtUSDm(grossProfit)} alt indent />}
+                {!restaurantMode && <PLRow label="Gross Margin (GAAP)"     value={fmtPct(grossMarginPct)}     indent />}
+                {!restaurantMode && <PLRow label="Operating Expenses (GAAP)" value={opex != null ? fmtUSDmAcct(-opex) : 'N/A'} alt indent />}
                 <PLRow label={`Operating Income (${basisTag(opIncNonGaap)})`}  value={opIncVal != null ? fmtUSDmAcct(opIncVal) : 'N/A'} bold />
                 <PLRow label={`Operating Margin (${basisTag(opIncNonGaap)})`}  value={opMarginPct != null ? fmtPct(opMarginPct) : 'N/A'} indent alt />
                 <PLRow label="EBITDA (computed)"          value={fmtUSDmAcct(ebitda)}    bold />
@@ -587,7 +595,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
                   Margin Profile
                 </div>
                 {[
-                  !restaurantMode && { label: gpIsEst ? 'Gross Margin (est.)' : 'Gross Margin (GAAP)', pct: grossMarginPct },
+                  !restaurantMode && grossMarginPct != null && { label: 'Gross Margin (GAAP)', pct: grossMarginPct },
                   opMarginPct != null && { label: `Operating Margin (${basisTag(opIncNonGaap)})`, pct: opMarginPct },
                   { label: 'EBITDA Margin (computed)', pct: ebitdaMargin },
                   niMarginVal != null && { label: `Net Margin (${basisTag(niNonGaap)})`, pct: niMarginVal },

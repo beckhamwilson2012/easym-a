@@ -428,6 +428,16 @@ function DataVerificationCore({ target, acquirer, pageNum, part, exhibitLabel })
           ))}
         </div>
 
+        {/* Gross profit trace-back: the filing is the Value Used; FMP's figure stays visible beside it. */}
+        {part === 'a' && fields.grossProfit?.sourceMeta?.edgar?.sourceLabel && fields.grossProfit.sourceMeta.edgar.basis === 'calculated' && (
+          <p style={{ fontSize: 9, color: '#6B7280', marginTop: 10, lineHeight: 1.45 }}>
+            <strong>Gross Profit:</strong> Value Used is from the filing, {fields.grossProfit.sourceMeta.edgar.sourceLabel}.
+            {fields.grossProfit.sourceMeta.fmp?.value != null && fields.grossProfit.sourceMeta.fmp.value !== fields.grossProfit.value
+              ? ` FMP reports ${fmtVal(fields.grossProfit.sourceMeta.fmp.value, fields.grossProfit.unit)} for the same period; the filing wins where they disagree.`
+              : ''}
+          </p>
+        )}
+
         {/* Footnote — §16b only (the verification close). */}
         {!isA && (
           <p style={{ fontSize: 9, color: '#9CA3AF', marginTop: 10, lineHeight: 1.45 }}>
