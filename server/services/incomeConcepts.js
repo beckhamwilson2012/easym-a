@@ -296,6 +296,11 @@ async function submissions(cik) {
   return sub;
 }
 
+// The filer's SIC as a string, or null when submissions cannot be read.
+async function filerSic(cik) {
+  try { return (await submissions(cik))?.sic ?? null; } catch { return null; }
+}
+
 // Filings to read: only the latest 10-K / 10-Q whose period companyfacts cannot supply. A filer that tags cost
 // in companyfacts gets no extra request. Banks have no cost of revenue, so their (very large) filings are skipped.
 async function filingsWithCostGap(gaap, cik) {
@@ -335,5 +340,5 @@ async function prepareIncomeFacts(facts, cik) {
 module.exports = {
   COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, FILING_INSTANCE_CONCEPT, COMPONENT_SUM_CONCEPT,
   sumComponents, calculateGrossProfit, resolveGrossProfit, grossFromCostOfRevenue,
-  pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts,
+  pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts, filerSic,
 };

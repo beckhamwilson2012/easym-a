@@ -53,7 +53,7 @@ const COLS = [
   { key: 'cash',          label: 'Cash & Equiv.',          unit: '$M',    get: r => r.co && r.co.cash,        fmt: fmtInt,   num: true },
   { key: 'revenue',       label: 'Revenue',                unit: 'LTM',   get: r => r.co && r.co.revenue,     fmt: fmtInt,   num: true },
   { key: 'evRevLtm',      label: 'EV / Revenue',           unit: 'LTM',   get: r => r.co && r.co.evRevLtm,    fmt: fmtEvRev, num: true },
-  { key: 'grossMargin',   label: 'Gross Margin',           unit: 'LTM',   get: r => r.co && r.co.grossMargin, fmt: fmtPct1,  num: true },
+  { key: 'grossMargin',   label: 'Gross Margin',           unit: 'LTM',   get: r => r.co && r.co.grossMargin, fmt: fmtPct1,  num: true, nm: r => r.co && r.co.grossNm },
   { key: 'acc',           label: 'EPS Impact if Acquired', unit: `@ ${Math.round(SCREEN_PREMIUM * 100)}% prem.`, get: r => r.acc, fmt: fmtPctSg, num: true, impact: true },
   // Secondary — blank-prone (loss-makers → P/E n/m; D&A tagging → EV/EBITDA n/mᵇ; thin coverage → NTM "—").
   { key: 'peCell',        label: 'P / E',                  unit: 'LTM',   get: r => r.co && r.co.peCell,      fmt: passthru, num: false, secondary: true },
@@ -207,7 +207,7 @@ export function SectionScreening({ onBack }) {
                       </td>
                       {COLS.map(c => {
                         const v = c.get(r);
-                        const cell = c.fmt(v);
+                        const cell = c.nm?.(r) ? 'n/m' : c.fmt(v);
                         const impactColor = c.impact && typeof v === 'number' && Number.isFinite(v) ? (v >= 0 ? '#047857' : '#DC2626') : null;
                         return (
                           <td key={c.key} style={{ ...td, fontWeight: c.impact ? 700 : 500, color: impactColor || (c.secondary ? '#6B7280' : '#1F2937') }}>

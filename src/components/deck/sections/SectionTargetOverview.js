@@ -2,7 +2,7 @@ import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, DONUT_COLORS, fmtMoney, fmtAsOf } from '../shared/deckTokens';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, DONUT_COLORS, fmtMoney, fmtAsOf, isUtility, UTILITY_GROSS_NOTE } from '../shared/deckTokens';
 import { getCompanyProfile } from '../../../lib/companyProfiles';
 import { getCustomerMetrics } from '../../../lib/customerMetrics';
 import { pageNumOf } from '../deckRegistry';
@@ -139,7 +139,7 @@ export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
     { k: 'Return on invested capital (LTM)', v: pct(km?.returnOnInvestedCapital) },
     { k: 'Return on assets (LTM)',           v: pct(km?.returnOnAssets) },
     { k: 'Free cash flow yield (LTM)',       v: pct(km?.freeCashFlowYield) },
-    { k: 'Gross margin (FY)',          v: pct(grossMargin) },
+    { k: 'Gross margin (FY)',          v: isUtility(target) ? 'n/m' : pct(grossMargin) },
     { k: 'Operating margin (FY)',      v: pct(opMargin) },
     { k: `Revenue CAGR (${actuals.length}yr)`, v: pct(revCAGR) },
     { k: 'EV / EBITDA (LTM)',          v: evEbitda },
@@ -212,6 +212,7 @@ export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
       </div>
 
       <div style={{ padding: '8px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
+        {isUtility(target) ? <>{UTILITY_GROSS_NOTE} </> : null}
         Segment &amp; geographic revenue are the target's <strong>latest reported fiscal year</strong> (Financial Modeling Prep); foreign filers reporting in another currency are converted to USD at the fiscal-year average rate. Geographic tiers are shown as reported and may include overlapping regions/countries — figures are magnitudes, not a normalized 100% split. Operating metrics are <strong>trailing-twelve-month</strong> ratios (return / yield){bsAsOf ? <> — return metrics use trailing-twelve-month earnings over balance-sheet figures <strong>as of {bsAsOf}</strong></> : null}; margins &amp; revenue CAGR are from reported annual filings. Where a filer does not report a segmentation, the block reads "not reported" — never an estimate.
       </div>
     </PageFrame>

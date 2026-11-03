@@ -143,3 +143,22 @@ describe('annualIncomeLines', () => {
     expect(lines.grossProfit.value).toBeNull();
   });
 });
+
+describe('utility SIC list', () => {
+  const { UTILITY_SIC, UTILITY_GROSS_REASON } = require('../utilitySic');
+  const { isUtility, UTILITY_GROSS_NOTE } = require('../../components/deck/shared/deckTokens');
+  test('electric, gas, combination and water are utilities', () => {
+    ['4911', '4922', '4923', '4924', '4931', '4932', '4939', '4941'].forEach((sic) => {
+      expect(UTILITY_SIC).toContain(sic);
+      expect(isUtility({ sic })).toBe(true);
+    });
+  });
+  test('satellite, software and an absent SIC are not', () => {
+    ['4899', '7372', '3760', null, undefined].forEach((sic) => expect(isUtility({ sic })).toBe(false));
+    expect(isUtility(null)).toBe(false);
+  });
+  test('the note carries the reason', () => {
+    expect(UTILITY_GROSS_REASON).toBe('not meaningful for utilities');
+    expect(UTILITY_GROSS_NOTE).toContain('n/m, not meaningful for utilities');
+  });
+});

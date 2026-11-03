@@ -1,7 +1,8 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, nonGaapFigures, isBankDeal, isRestaurant } from '../shared/deckTokens';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, nonGaapFigures, isBankDeal, isRestaurant, isUtility } from '../shared/deckTokens';
+import { UTILITY_GROSS_REASON } from '../../../lib/utilitySic';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 
 // Lighter shade of SF_BLUE used for the target segment of each stacked bar.
@@ -32,6 +33,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   // Gross profit from the filing. If either side has none, the row is omitted: a split needs both sides.
   const aGP = parseFloat(acquirer.grossProfit), bGP = parseFloat(target.grossProfit);
   const gpAvailable = Number.isFinite(aGP) && Number.isFinite(bGP);
+  const utilityDeal = isUtility(acquirer) || isUtility(target);
   // Operating income on the DECK'S basis (so §I agrees with §4/§5/§6): reported NON-GAAP operating
   // income when the deal is non-GAAP (same /api/nongaap figures §5 shows — e.g. TEAM +$1,287M), else
   // GAAP operating income. NOT EBITDA (which is negative for loss-making filers → false "n/m").
@@ -96,7 +98,9 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   ] : [
     { label: 'Revenue', isMoney: true, ...splitContribution(aRev, bRev) },
     // Restaurant deals: omit gross profit (false ~74%/65% margin) — never feed it into the split.
-    (restaurantDeal || !gpAvailable) ? null : { label: 'Gross Profit', isMoney: true, ...splitContribution(aGP, bGP) },
+    utilityDeal ? { label: 'Gross Profit', isMoney: true, aVal: Number.isFinite(aGP) ? aGP : null, bVal: Number.isFinite(bGP) ? bGP : null, aPct: null, bPct: null,
+      nm: true, nmReason: `n/m — ${UTILITY_GROSS_REASON}`, aNm: isUtility(acquirer), bNm: isUtility(target) }
+    : (restaurantDeal || !gpAvailable) ? null : { label: 'Gross Profit', isMoney: true, ...splitContribution(aGP, bGP) },
     { label: `Operating Income (${oiNonGaap ? 'Non-GAAP' : 'GAAP'})`, isMoney: true, ...splitContribution(aOI, bOI) },
     { label: fcfLabel, isMoney: true, ...splitContribution(aFCF, bFCF) },
   ].filter(Boolean);
@@ -115,7 +119,8 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
     ? `${aName} acquires 100% of ${bName}, which contributes ${Math.round(Math.min(...moneyPcts))}–${Math.round(Math.max(...moneyPcts))}% of pro forma financials, for ${fmtPctFloor(tgtOwnPct, 0)} of combined equity.`
     : null;
 
-  const gpPhrase = gpAvailable
+  const gpPhrase = utilityDeal ? `gross profit n/m (${UTILITY_GROSS_REASON})`
+    : gpAvailable
     ? 'gross profit from SEC filings'
     : 'gross profit omitted (not available from the filings of both companies)';
   const fcfClause = fcfFromProxy ? 'free cash flow estimated (≈ net income)' : 'free cash flow from SEC EDGAR cash-flow statements';
@@ -158,7 +163,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
                 </span>
                 {m.nm && (
                   <span style={{ fontSize: 9, fontStyle: 'italic', color: '#DC2626' }}>
-                    n/m — split not meaningful (zero or negative base)
+                    {m.nmReason || 'n/m — split not meaningful (zero or negative base)'}
                   </span>
                 )}
               </div>
@@ -270,8 +275,8 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
           </div>
 
           {metrics.map((m, i) => {
-            const aDisp = m.isMoney ? fmtScaled(m.aVal, moneyScale) : `${(parseFloat(m.aVal) || 0).toFixed(1)}M sh`;
-            const bDisp = m.isMoney ? fmtScaled(m.bVal, moneyScale) : `${(parseFloat(m.bVal) || 0).toFixed(1)}M sh`;
+            const aDisp = m.aNm ? 'n/m' : m.isMoney ? fmtScaled(m.aVal, moneyScale) : `${(parseFloat(m.aVal) || 0).toFixed(1)}M sh`;
+            const bDisp = m.bNm ? 'n/m' : m.isMoney ? fmtScaled(m.bVal, moneyScale) : `${(parseFloat(m.bVal) || 0).toFixed(1)}M sh`;
             const aPctDisp = m.nm ? 'n/m' : fmtPct(m.aPct, 1);
             const bPctDisp = m.nm ? 'n/m' : fmtPct(m.bPct, 1);
             return (

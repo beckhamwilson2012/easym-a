@@ -318,7 +318,7 @@ function DataVerificationCore({ target, acquirer, pageNum, part, exhibitLabel })
                       : <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, textAlign: 'center', color: '#9CA3AF' }}>—</td>
                     }
                     <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, textAlign: 'right', fontWeight: 600, color: NAVY }}>
-                      {fd ? fmtVal(fd.value, fd.unit) : '—'}
+                      {fd?.notMeaningful ? 'n/m' : fd ? fmtVal(fd.value, fd.unit) : '—'}
                     </td>
                     {presentSources.map(src => {
                       if (src === 'fmp' && fd?.chosenSource === 'fmp') {
@@ -428,6 +428,11 @@ function DataVerificationCore({ target, acquirer, pageNum, part, exhibitLabel })
           ))}
         </div>
 
+        {part === 'a' && fields.grossProfit?.notMeaningful && (
+          <div style={{ marginTop: 6, fontSize: 9.5, color: '#6B7280', fontStyle: 'italic' }}>
+            <strong>Gross Profit:</strong> n/m, {fields.grossProfit.notMeaningful}.
+          </div>
+        )}
         {/* Gross profit trace-back: the filing is the Value Used; FMP's figure stays visible beside it. */}
         {part === 'a' && fields.grossProfit?.sourceMeta?.edgar?.sourceLabel && fields.grossProfit.sourceMeta.edgar.basis === 'calculated' && (
           <p style={{ fontSize: 9, color: '#6B7280', marginTop: 10, lineHeight: 1.45 }}>

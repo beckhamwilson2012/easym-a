@@ -1,4 +1,5 @@
 import { FINANCIAL_SIC } from '../../../lib/financialSic'; // shared with server.js — one SIC source of truth
+import { UTILITY_SIC, UTILITY_GROSS_REASON } from '../../../lib/utilitySic'; // same pattern
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 export const NAVY      = '#0F2244';
@@ -215,6 +216,12 @@ export function isFinancial(companyTypeOrCompany) {
 export function isRestaurant(company) {
   return company?.sic === '5812' || company?.sic === '5813';
 }
+
+// Utility SIC detection (sibling to isFinancial). Gross profit and gross margin render "n/m" for these filers.
+export function isUtility(company) {
+  return UTILITY_SIC.includes(company?.sic);
+}
+export const UTILITY_GROSS_NOTE = `Gross profit and gross margin: n/m, ${UTILITY_GROSS_REASON}.`;
 
 // Accretion verdict with a NEUTRAL band (Fix #4). A % that DISPLAYS as ±0.0% — i.e. |pct| rounds to 0.0
 // at one decimal, the same rounding §8/§9 show — is breakeven (rounding noise), NOT a direction: return

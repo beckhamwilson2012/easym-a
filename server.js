@@ -11,6 +11,7 @@ const path = require('path');
 const os   = require('os');
 const { PEER_OVERRIDES } = require('./peerOverrides');
 const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deckTokens.isFinancial — one SIC source
+const { UTILITY_SIC, UTILITY_GROSS_REASON } = require('./src/lib/utilitySic'); // shared with deckTokens.isUtility
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
@@ -577,9 +578,11 @@ async function fetchFromEDGAR(symbol, cik) {
   // Intuit's only cost tag is a stale FY2017 partial → a fake 98%. FMP's computed gross profit is the last
   // resort when the filing gives nothing (targeted fetch, this path only).
   const incomeLines = annualIncomeLines(useIfrs ? ifrs : gaap, revenueEntry?.end, revenueEntry ? revenue : null, useIfrs);
-  let grossProfit = incomeLines.grossProfit.value;
+  // Utilities: not meaningful, so absent on purpose. No filing value and no FMP fallback (utilitySic).
+  const grossNotMeaningful = UTILITY_SIC.includes(sicData.sic) ? UTILITY_GROSS_REASON : null;
+  let grossProfit = grossNotMeaningful ? null : incomeLines.grossProfit.value;
   let grossProfitSource = grossProfit != null ? 'sec_edgar' : null;
-  if (grossProfit == null) {
+  if (grossProfit == null && !grossNotMeaningful) {
     const fmpGp = await fetchFmpGrossProfit(symbol);
     if (fmpGp != null) { grossProfit = fmpGp; grossProfitSource = 'fmp'; }
   }
@@ -782,7 +785,7 @@ async function fetchFromEDGAR(symbol, cik) {
     ltm = raw.ltm ? {
       trusted: true, asOf: raw.asOf, fallback: null,
       revenue:         raw.flows.revenue.ltmM,
-      grossProfit:     raw.flows.grossProfit.ltmM,
+      grossProfit:     grossNotMeaningful ? null : raw.flows.grossProfit.ltmM,
       operatingIncome: raw.flows.operatingIncome.ltmM,
       ebitda:          raw.flows.ebitda.ltmM,
       netIncome:       raw.flows.netIncome.ltmM,
@@ -811,6 +814,7 @@ async function fetchFromEDGAR(symbol, cik) {
     grossProfitSource: grossProfitSource,  // 'sec_edgar' (the filing) | 'fmp' (filing gave nothing) | null
     grossProfitBasis:  grossProfitSource === 'sec_edgar' ? incomeLines.grossProfit.basis : null, // 'filed' | 'calculated' | null
     grossProfitLabel:  grossProfitSource === 'sec_edgar' ? incomeLines.grossProfit.label : null,
+    grossProfitNotMeaningful: grossNotMeaningful,
     costOfRevenue:     incomeLines.costOfRevenue.value != null ? inM(incomeLines.costOfRevenue.value) : null,
     costOfRevenueSource: incomeLines.costOfRevenue.label,
     freeCashFlow,                          // null for IFRS filers with no us-gaap cash-flow tags
@@ -1743,13 +1747,14 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     const latestEnd = actualEnds[actualEnds.length - 1];
 
     const orNull = (m, end) => (m[end] != null ? inM(m[end]) : null);
+    const grossNotMeaningful = UTILITY_SIC.includes((await fetchSubmissions(cik).catch(() => null))?.sic ?? null) ? UTILITY_GROSS_REASON : null;
     const cols = actualEnds.map((end) => {
       const revenue = orNull(sRev, end);
       const lines   = annualIncomeLines(ns, end, sRev[end] ?? null, useIfrs);
       // $M for display, so a calculated gross profit foots to the rounded revenue and cost shown beside it.
       const cogs    = (lines.costOfRevenue.value != null && lines.costOfRevenue.kind !== 'calculated') ? inM(lines.costOfRevenue.value) : null;
       const filedGross = lines.grossProfit.basis === 'filed' ? inM(lines.grossProfit.value) : null;
-      const grossRes = resolveGrossProfit(filedGross, revenue, cogs);
+      const grossRes = grossNotMeaningful ? { value: null, basis: null } : resolveGrossProfit(filedGross, revenue, cogs);
       const gross   = grossRes.value;
       const opInc   = orNull(sOpInc, end);
       const netInc  = orNull(sNet, end);
@@ -1826,7 +1831,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         // COGS is a real three-leg LTM at the same window, so the LTM column FOOTS (rev − COGS = GP) exactly
         // as the annual columns do; grossProfitDerived says WHICH of the two GP sources the row came from.
         costOfRevenue: lr.flows.costOfRevenue.ltmM, costOfRevenueSource: lr.flows.costOfRevenue.sourceLabel,
-        grossProfit: lr.flows.grossProfit.ltmM, grossProfitDerived: lr.flows.grossProfit.derived,
+        grossProfit: grossNotMeaningful ? null : lr.flows.grossProfit.ltmM, grossProfitDerived: lr.flows.grossProfit.derived,
         operatingIncome: lr.flows.operatingIncome.ltmM, nonOperatingIncome: lr.flows.nonOperatingIncome, netIncome: lr.flows.netIncome.ltmM,
         ebitda: lr.flows.ebitda.ltmM, ebitdaDaFound: lr.flows.ebitda.daFound,
         eps: lr.epsDiluted.ltm, dilutedShares: lr.epsDiluted.dilutedSharesM,
@@ -1836,7 +1841,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
 
     const payload = {
       ok: true, ticker, basis: useIfrs ? 'IFRS' : 'US-GAAP', fiscalYearEnd: latestEnd,
-      columns: [...cols, ...fwd],
+      columns: [...cols, ...fwd], grossProfitNotMeaningful: grossNotMeaningful,
       ltm: ltmBlock,   // ADDITIVE — Stage 1; §4/§5 not consuming yet
       note: fwd.length ? null : 'No forward analyst estimates returned — forward columns omitted.',
       cached: false,
