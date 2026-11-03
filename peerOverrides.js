@@ -50,6 +50,10 @@ const PEER_OVERRIDES = {
   MRK:  ['PFE', 'JNJ', 'LLY', 'ABBV', 'BMY'],
   JNJ:  ['PFE', 'MRK', 'LLY', 'ABBV', 'ABT'],
   LLY:  ['PFE', 'MRK', 'JNJ', 'ABBV', 'BMY'],
+
+  // Satellite communications (SIC 4899). Without this entry IRDM's peers depended on whether the SIC
+  // cache had warmed: GSAT/VSAT when it had, the suppressed broad-default mega-caps when it had not.
+  IRDM: ['GSAT', 'VSAT'],
 };
 
 module.exports = { PEER_OVERRIDES };
