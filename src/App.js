@@ -1364,7 +1364,7 @@ function App() {
         return [1, 2, 3].map(yr => {
           const name = `synergiesY${yr}`;
           const sug = s[yr - 1];
-          const caption = `Year ${yr}: ${['2%', '3.5%', '5%'][yr - 1]} of combined revenue`;
+          const caption = `Year ${yr}: ${['2%', '3.5%', '5%'][yr - 1]} of target revenue (${['40%', '70%', '100%'][yr - 1]} of Year 3 run-rate)`;
           return (
             <div key={yr}>
               {hasSug && sug != null && (
