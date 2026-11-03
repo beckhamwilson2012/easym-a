@@ -4,7 +4,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict } from '../shared/deckTokens';
 import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares } from '../../../utils/dealCalc';
-import { formatDeckDate } from '../../../lib/composeSourceLine';
+import { formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
 
 // ── §6 — Pro Forma & Accretion (one logical exhibit, split across two pages) ─────────────────────────────
 // §6a "Pro Forma Combined" (Exhibit E): the detailed per-forward-year tables (Revenue, growth %, Gross
@@ -318,6 +318,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                 </div>
                 <div style={{ marginTop: 3, fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.3 }}>
                   Ex-syn./w-syn. exclude/include the deal's synergy ramp (same split as Combined vs PF above); Year&nbsp;1 verified, Years&nbsp;2–4 consensus. Measured on the {deal?.basis === 'Non-GAAP' ? 'non-GAAP' : 'GAAP'} standalone EPS (deck headline).
+                  {forwardRows.length > 0 && <> {forwardNetIncomeLabel(inputs)}.</>}
                 </div>
               </div>
               )}

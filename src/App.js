@@ -82,6 +82,7 @@ function resolveAccretionBasis(baseInputs, ngA, ngB) {
       companyANetIncome:     ngA.nonGaap.netIncome,
       companyAEPS:           ngA.nonGaap.dilutedEPS,
       companyADilutedShares: ngA.nonGaap.dilutedShares,
+      companyADilutedSharesPeriod: { basis: 'non-GAAP diluted', end: ngA.fiscalYearEnd ?? null },
       companyBNetIncome:     ngB.nonGaap.netIncome,
     },
   };
@@ -775,7 +776,7 @@ function App() {
         companyANetIncome: data.netIncome, companyAShares: data.shares,
         companyAOperatingIncome: data.operatingIncome, companyAGrossProfit: data.grossProfit ?? null,
         companyAFreeCashFlow: data.freeCashFlow ?? null,
-        companyADilutedShares: data.dilutedShares, companyAEPS: data.eps,
+        companyADilutedShares: data.dilutedShares, companyADilutedSharesPeriod: data.dilutedSharesPeriod ?? null, companyAEPS: data.eps,
         companyACash: data.cash, companyASti: data.shortTermInvestments ?? null, companyADebt: data.debt,
         companyABsAsOf: data.balanceSheetAsOf ?? null, companyABsBasis: data.balanceSheetBasis ?? null,
         companyALtmRevenue: data.ltm?.trusted ? data.ltm.revenue : null,   // LTM (not FY) — min-cash basis

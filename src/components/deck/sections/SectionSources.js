@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
-import { HEADLINE_SOURCES, formatDeckDate } from '../../../lib/composeSourceLine';
+import { HEADLINE_SOURCES, formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
 
 // ── Sources & Methodology — the closing page (§14) ─────────────────────────────
 // Methodology bullets are static, but the named data providers (pricing, analyst targets) are
@@ -163,6 +163,7 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
         'Enterprise value (EV) = equity value (market capitalization) + total debt − cash & marketable securities, taken from the same filing; figures for companies with active share-repurchase programs are approximate.',
         'Profitability on the standalone P&L and comparative-profile slides — operating income, net income, diluted EPS, and operating/net margins — is shown on a Non-GAAP basis as reported in each company’s fiscal year-end earnings release (Form 8-K, Item 2.02), period-matched to the fiscal year shown and reconciled to GAAP; each line is labeled, and falls back to a GAAP-labeled figure where a reconciled non-GAAP value was unavailable. Gross profit, gross margin and operating expenses remain GAAP; EBITDA and its margins are computed (operating income + D&A); revenue and share counts are basis-neutral.',
         'The accretion, pro forma and relative-contribution views are built on each company’s reported GAAP figures and are labeled accordingly.',
+        ...(deal?.hasMarketData === false ? [] : [`Forward pro forma EPS: ${forwardNetIncomeLabel(deal?._inputs)}.`]),
         `Fiscal years follow each company’s own filing calendar: ${buyerRole} FY${acqFY}, ${targetRole} FY${tgtFY}.`,
         'Numbers are rounded for presentation; minor differences may arise from rounding.',
       ],

@@ -669,6 +669,13 @@ async function fetchFromEDGAR(symbol, cik) {
     latestAnnual(gaap['WeightedAverageNumberOfSharesOutstandingBasic'],   'shares') ??
     effectiveDiluted ??
     shares;
+  // Which period that count belongs to, for the label on forward pro forma EPS. Follows the same order as above.
+  const dilutedWa = latestAnnualEntry(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares');
+  const basicWa   = latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares');
+  const dilutedSharesPeriod = dilutedWa ? { basis: 'weighted average', end: dilutedWa.end }
+    : basicWa ? { basis: 'basic weighted average', end: basicWa.end }
+    : effectiveDiluted != null ? { basis: 'net income ÷ EPS', end: revenueEntry?.end ?? null }
+    : { basis: 'cover page', end: sharesInstant };
 
   // ── Balance-sheet anchor (2B-2) — ltmRaw / bsInterim / bsAnchor are computed ABOVE (before the share-count
   // staleness gate, which references the same anchor). The net-debt trio (cash / short-term marketable / debt)
@@ -814,6 +821,7 @@ async function fetchFromEDGAR(symbol, cik) {
     sharesConcept:  sharesConcept,       // provenance: which concept the point-in-time count resolved from (staleness-gated)
     sharesAsOf:     sharesInstant,        // provenance: its instant (may differ from balanceSheetAsOf by design — cover-page is as-of the filing date)
     dilutedShares:  inM(dilutedShares), // weighted-avg diluted — for EPS math only (not market cap)
+    dilutedSharesPeriod,                // provenance: { basis, end } of that count
     eps:            parseFloat(eps.toFixed(2)),
     cash:           cash != null ? inM(cash) : null, // null when the cash tag was stale-rejected (Fix A) → deck shows N/A
     shortTermInvestments: shortTermInvestments != null ? inM(shortTermInvestments) : null, // short-term marketable securities (net-debt convention b); null → cash-only for this filer
@@ -914,6 +922,7 @@ async function buildFmpCompany(income, balance, profile, symbol) {
     operatingIncome: field(cvA(operatingIncome), { source: 'fmp' }),
     shares:     field(sharesM, { source: 'fmp' }),            // share COUNT — currency-neutral, NOT converted
     dilutedShares: field(dilutedShares, { source: 'fmp' }),   // share COUNT — NOT converted
+    dilutedSharesPeriod: { basis: income?.weightedAverageShsOutDil != null ? 'weighted average' : 'basic weighted average', end: income?.date ?? null },
     eps:        field(Number.isFinite(rawEps) ? parseFloat((rawEps * fx.avgRate).toFixed(2)) : null, { source: 'fmp' }),
     cash:       field(cvS(toMillions(rawCash)), { source: 'fmp' }),
     debt:       field(cvS(toMillions(rawDebt)), { source: 'fmp' }),

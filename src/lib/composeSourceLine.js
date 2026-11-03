@@ -45,6 +45,17 @@ export function formatDeckDate(iso) {
 }
 const formatDate = formatDeckDate;
 
+// The one wording of how forward pro forma EPS gets the acquirer's net income (SectionProFormaPL's forward
+// loop), shown on the slide and on Sources. The share count is today's, so the label names its period.
+export function forwardNetIncomeLabel(inputs) {
+  const p = inputs?.companyADilutedSharesPeriod;
+  const date = formatDeckDate(p?.end);
+  const period = date
+    ? `${p.basis}, ${p.basis === 'cover page' ? 'as of' : 'fiscal year ended'} ${date}`
+    : 'period not available';
+  return `Acquirer net income = consensus EPS × current diluted shares (${period})`;
+}
+
 /**
  * Compose a slide source line from the list of fields that slide uses.
  *

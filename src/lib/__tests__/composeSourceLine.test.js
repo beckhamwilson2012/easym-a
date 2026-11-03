@@ -123,3 +123,19 @@ describe('composeSourceLine()', () => {
   });
 
 });
+
+describe('forwardNetIncomeLabel', () => {
+  const { forwardNetIncomeLabel } = require('../composeSourceLine');
+  test('names the basis and fiscal year end of the share count', () => {
+    expect(forwardNetIncomeLabel({ companyADilutedSharesPeriod: { basis: 'weighted average', end: '2025-12-31' } }))
+      .toBe('Acquirer net income = consensus EPS × current diluted shares (weighted average, fiscal year ended December 31, 2025)');
+  });
+  test('a cover-page count reads "as of"', () => {
+    expect(forwardNetIncomeLabel({ companyADilutedSharesPeriod: { basis: 'cover page', end: '2026-02-06' } }))
+      .toBe('Acquirer net income = consensus EPS × current diluted shares (cover page, as of February 6, 2026)');
+  });
+  test('an unknown period says so instead of guessing', () => {
+    expect(forwardNetIncomeLabel({})).toContain('(period not available)');
+    expect(forwardNetIncomeLabel(null)).toContain('(period not available)');
+  });
+});
