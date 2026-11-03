@@ -1674,10 +1674,10 @@ app.get('/api/profile/:ticker', async (req, res) => {
 // ── /api/pnl/:ticker — multi-year standalone P&L for slides 5/6 ───────────────────────────────────────
 // 3 historical actual fiscal years from EDGAR (per-year period-matched extraction via pnlLineSeries; same
 // concept lists + pick-order as /quote, so the latest-actual column matches §2/§8 exactly) + forward
-// years from FMP analyst-estimates (real revenue/OpInc/EBITDA/NetIncome/EPS). Forward gross profit is
-// margin-held (latest actual gross margin × forward revenue), COGS derived, diluted shares held flat —
-// all flagged `est`. Honest null ("—") where a line/year genuinely isn't tagged. Own endpoint (off the
-// hot /quote path), 24h cache. Reads FMP_KEY from env.
+// years from FMP analyst-estimates (real revenue/OpInc/EBITDA/NetIncome/EPS). Forward gross profit is FMP
+// consensus or null: nothing forward is built by holding a margin or a share count from an actual year.
+// Honest null ("—") where a line/year genuinely isn't tagged. Own endpoint (off the hot /quote path), 24h
+// cache. Reads FMP_KEY from env.
 const pnlCache = new Map();
 const PNL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PNL_GAAP = {
@@ -1754,19 +1754,16 @@ app.get('/api/pnl/:ticker', async (req, res) => {
       const cor     = cogs != null ? cogs : (revenue != null && gross != null ? revenue - gross : null);
       return {
         fy: parseInt(end.slice(0, 4), 10), end, label: `FY${end.slice(0, 4)}`, actual: true,
-        revenue, costOfRevenue: cor, grossProfit: gross, grossProfitEst: false,
+        revenue, costOfRevenue: cor, grossProfit: gross,
         operatingExpense: opEx, operatingExpenseEst: false,
         operatingIncome: opInc, nonOperatingIncome: sNoi[end] != null ? inM(sNoi[end]) : null, netIncome: netInc, ebitda,
-        dilutedShares: sSh[end] != null ? inM(scaleShares(sSh[end])) : null, dilutedSharesEst: false, // scaleShares: MCD-class filers tag shares in millions (val 716.4) → normalize so the row isn't "0"
+        dilutedShares: sSh[end] != null ? inM(scaleShares(sSh[end])) : null, // scaleShares: MCD-class filers tag shares in millions (val 716.4) → normalize so the row isn't "0"
         eps: sEps[end] != null ? sEps[end] : null,
       };
     });
 
-    // Forward years — real analyst estimates after the latest actual end; gross margin-held, shares flat.
-    const latestRev = orNull(sRev, latestEnd);
-    const latestGross = cols[cols.length - 1].grossProfit;
-    const heldMargin = (latestGross != null && latestRev) ? latestGross / latestRev : null;
-    const latestSh = cols[cols.length - 1].dilutedShares;
+    // Forward years — real analyst estimates after the latest actual end, and only those. FMP's estimates
+    // carry no gross-profit or share-count field today (checked 2026-11-03), so those rows are null ("—").
     const est = await fetchPnlEstimates(ticker);
     const fwd = est
       .filter((e) => e.date && e.date > latestEnd && e.revenueAvg != null)
@@ -1775,15 +1772,15 @@ app.get('/api/pnl/:ticker', async (req, res) => {
       .map((e) => {
         const revenue = inM(e.revenueAvg);
         const opInc   = e.ebitAvg != null ? inM(e.ebitAvg) : null;
-        const gross   = heldMargin != null ? Math.round(revenue * heldMargin) : null; // est. (margin held)
+        const gross   = e.grossProfitAvg != null ? inM(e.grossProfitAvg) : null; // consensus or null, never derived from an actual year
         return {
           fy: parseInt(e.date.slice(0, 4), 10), end: e.date, label: `FY${e.date.slice(0, 4)}E`, actual: false,
           revenue,
           costOfRevenue: gross != null ? revenue - gross : null,
-          grossProfit: gross, grossProfitEst: true,
-          // Forward OpEx is NULL by decision (7B-2c). A derived Gross − OpInc mixes bases: forward gross is the
-          // HELD GAAP gross margin × revenue, while forward OpInc is street CONSENSUS (its non-GAAP convention),
-          // so the residual is not a real quantity. It FOOTS by construction (it is DEFINED as the residual) —
+          grossProfit: gross,
+          // Forward OpEx is NULL by decision (7B-2c). When this was written forward gross was a held GAAP margin
+          // × revenue, while forward OpInc is street CONSENSUS (its non-GAAP convention), so the residual was not
+          // a real quantity. It FOOTS by construction (it is DEFINED as the residual) —
           // footing is NOT evidence of validity. The defect surfaced as forward OpEx falling BELOW the last actual
           // while revenue grows (CRM 0.70×, KO 0.73×, + WMT/NOW/TEAM), and the basis mismatch exists for ALL 12
           // companies with the row; GOOGL/AMZN only look sane because their street convention sits near GAAP —
@@ -1799,7 +1796,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
           nonOperatingIncome: null,   // no forward consensus for this line → "—"
           netIncome: e.netIncomeAvg != null ? inM(e.netIncomeAvg) : null,
           ebitda: e.ebitdaAvg != null ? inM(e.ebitdaAvg) : null,
-          dilutedShares: latestSh, dilutedSharesEst: true,
+          dilutedShares: null,   // no forward consensus for this line → "—"
           eps: e.epsAvg != null ? e.epsAvg : null,
           // Forward-estimate DEPTH (7B-3): raw analyst counts, passed through unchanged (or null). FMP discloses
           // a count ONLY for revenue and EPS — ebit/ebitda/netIncome/sga are consensus means with no count — so
@@ -1832,7 +1829,6 @@ app.get('/api/pnl/:ticker', async (req, res) => {
       ok: true, ticker, basis: useIfrs ? 'IFRS' : 'US-GAAP', fiscalYearEnd: latestEnd,
       columns: [...cols, ...fwd],
       ltm: ltmBlock,   // ADDITIVE — Stage 1; §4/§5 not consuming yet
-      heldMarginPct: heldMargin != null ? +(heldMargin * 100).toFixed(1) : null,
       note: fwd.length ? null : 'No forward analyst estimates returned — forward columns omitted.',
       cached: false,
     };

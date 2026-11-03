@@ -69,8 +69,8 @@ function PLRow({ label, value, alt, bold, indent }) {
 // ── Multi-year standalone P&L (slides 5/6) ──────────────────────────────────────────────────────────
 // Renders /api/pnl: 3 actual EDGAR fiscal years (GAAP) + forward analyst-consensus years (undesignated basis),
 // with a Margins & Growth block. Approach (A): basis labeled INLINE on each column header; estimate
-// columns italic + tinted; forward OpEx "—" (basis gap unallocable); forward gross/shares are held
-// "est." (ᵉ marker). Margins computed PER COLUMN on that column's own basis.
+// columns italic + tinted; forward OpEx "—" (basis gap unallocable); forward lines FMP publishes no
+// consensus for are "—" (ⁿ marker). Margins computed PER COLUMN on that column's own basis.
 function MultiYearPL({ pnl, restaurantMode }) {
   const cols = pnl.columns || [];
   // $M with accounting parens for negatives; expenses passed as their own sign for parens.
@@ -84,19 +84,19 @@ function MultiYearPL({ pnl, restaurantMode }) {
 
   const LINES = [
     { label: 'Total Revenue',      get: c => c.revenue,          fmt: fmtM,   bold: true },
-    { label: 'Cost of Revenue',    get: c => c.costOfRevenue,    fmt: fmtExp, indent: true },
-    { label: 'Gross Profit',       get: c => c.grossProfit,      fmt: fmtM,   bold: true, est: c => c.grossProfitEst },
+    { label: 'Cost of Revenue',    get: c => c.costOfRevenue,    fmt: fmtExp, indent: true, noConsensus: true },
+    { label: 'Gross Profit',       get: c => c.grossProfit,      fmt: fmtM,   bold: true, noConsensus: true },
     { label: 'Operating Expense',  get: c => c.operatingExpense, fmt: fmtExp, indent: true },
     { label: 'Operating Income',   get: c => c.operatingIncome,  fmt: fmtM,   bold: true },
     { label: 'Non-operating income/(expense)', get: c => c.nonOperatingIncome, fmt: fmtM, indent: true },
     { label: 'Net Income',         get: c => c.netIncome,        fmt: fmtM,   bold: true },
     { label: 'EBITDA',             get: c => c.ebitda,           fmt: fmtM },
-    { label: 'Wtd. Avg. Diluted Shares (M)', get: c => c.dilutedShares, fmt: fmtSh,  est: c => c.dilutedSharesEst },
+    { label: 'Wtd. Avg. Diluted Shares (M)', get: c => c.dilutedShares, fmt: fmtSh, noConsensus: true },
     { label: 'Diluted EPS',        get: c => c.eps,              fmt: fmtEpsV, bold: true },
   ];
   const MARGINS = [
     { label: 'Revenue Growth %',   val: (c) => c._growth },
-    { label: 'Gross Margin %',     val: (c) => marginOf(c.grossProfit, c) },
+    { label: 'Gross Margin %',     val: (c) => marginOf(c.grossProfit, c), noConsensus: true },
     { label: 'Operating Margin %', val: (c) => marginOf(c.operatingIncome, c) },
     { label: 'EBITDA Margin %',    val: (c) => marginOf(c.ebitda, c) },
     { label: 'Net Margin %',       val: (c) => marginOf(c.netIncome, c) },
@@ -124,11 +124,11 @@ function MultiYearPL({ pnl, restaurantMode }) {
     // costOfRevenue was hardcoded null while the payload had no LTM COGS leg; it now carries the real
     // three-leg figure, so the LTM column foots Revenue − Cost of Revenue = Gross Profit like the FY
     // columns. Still null (→ "—") for a filer whose COGS isn't tagged across all three legs — never 0.
-    revenue: L.revenue, costOfRevenue: L.costOfRevenue ?? null, grossProfit: L.grossProfit, grossProfitEst: false,
+    revenue: L.revenue, costOfRevenue: L.costOfRevenue ?? null, grossProfit: L.grossProfit,
     // LTM OpEx = LTM gross − LTM operating income (reported GAAP identity, same as the FY actuals) — unflagged.
     operatingExpense: (L.grossProfit != null && L.operatingIncome != null) ? L.grossProfit - L.operatingIncome : null, operatingExpenseEst: false,
     operatingIncome: L.operatingIncome, nonOperatingIncome: L.nonOperatingIncome?.ltmM ?? null, netIncome: L.netIncome,
-    ebitda: L.ebitda, ebitdaDaFound: L.ebitdaDaFound, dilutedShares: L.dilutedShares, dilutedSharesEst: false, eps: L.eps,
+    ebitda: L.ebitda, ebitdaDaFound: L.ebitdaDaFound, dilutedShares: L.dilutedShares, eps: L.eps,
     _growth: (lastActual && lastActual.revenue && L.revenue != null) ? ((L.revenue - lastActual.revenue) / lastActual.revenue * 100) : null,
   } : null;
 
@@ -217,7 +217,7 @@ function MultiYearPL({ pnl, restaurantMode }) {
                 </td>
                 {dcols.map((c, i) => {
                   const v = ln.get(c);
-                  const isEst = ln.est ? ln.est(c) : false;
+                  const noCons = ln.noConsensus && !c.actual && v == null;
                   const neg = typeof v === 'number' && v < 0;
                   const daMark = ln.label === 'EBITDA' && c.isLtm && c.ebitdaDaFound === false && v != null;
                   return (
@@ -230,7 +230,7 @@ function MultiYearPL({ pnl, restaurantMode }) {
                       color: neg ? '#DC2626' : (c.actual ? '#111827' : '#1E3A5F'),
                     }}>
                       {v == null ? '—' : ln.fmt(v)}
-                      {isEst && v != null ? <sup style={{ fontSize: 7, fontWeight: 400, color: '#6B7280' }}> e</sup> : null}
+                      {noCons ? <sup style={{ fontSize: 7, fontWeight: 400, color: '#6B7280' }}> n</sup> : null}
                       {daMark ? <sup style={{ fontSize: 7, fontWeight: 400, color: '#92400E' }}> d</sup> : null}
                     </td>
                   );
@@ -254,6 +254,7 @@ function MultiYearPL({ pnl, restaurantMode }) {
                       color: neg ? '#DC2626' : (c.actual ? '#374151' : '#1E3A5F'),
                     }}>
                       {fmtPctV(v)}
+                      {m.noConsensus && !c.actual && v == null ? <sup style={{ fontSize: 7, fontWeight: 400, color: '#6B7280' }}> n</sup> : null}
                     </td>
                   );
                 })}
@@ -301,8 +302,8 @@ function MultiYearPL({ pnl, restaurantMode }) {
         {noiText ? <> <strong style={{ color: NAVY }}>Non-operating income/(expense)</strong> reconciles operating income to net income. {noiText}</> : null}
         {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}
         {restaurantMode
-          ? <> <sup>e</sup> Gross profit / margin omitted — restaurant cost structure (food-only COGS excludes the dominant labor &amp; occupancy costs) makes the gross split not meaningful; shown Revenue → Operating Income. Forward fully diluted shares held flat (est.).</>
-          : <> <sup>e</sup> Forward gross profit = most-recent actual gross margin held constant × consensus revenue (est.); forward fully diluted shares held flat (est.). Operating expense is shown for reported periods; it is not shown for forward years — consensus supplies operating income but not gross profit, so a derived figure would mix a held gross-margin assumption with consensus operating income.</>}
+          ? <> Gross profit / margin omitted — restaurant cost structure (food-only COGS excludes the dominant labor &amp; occupancy costs) makes the gross split not meaningful; shown Revenue → Operating Income. <sup>n</sup> No consensus available for forward diluted shares.</>
+          : <> <sup>n</sup> No consensus available: FMP publishes no forward gross profit or diluted share count, so forward cost of revenue, gross profit, gross margin and diluted shares are not shown. Operating expense is shown for reported periods; it is not shown for forward years — consensus supplies operating income but not gross profit.</>}
       </div>
     </div>
   );
