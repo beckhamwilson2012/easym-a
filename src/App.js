@@ -3,12 +3,14 @@ import { useState, useRef, useEffect } from 'react';
 import Select from 'react-select';
 import { DeckShell } from './components/deck/DeckShell';
 import { SectionScreening } from './components/deck/sections/SectionScreening';
+import { pnlFetch } from './components/deck/sections/SectionProFormaPL';
 import { calculate, MIN_CASH_PCT_DEFAULT } from './utils/dealCalc';
 import { useWindowWidth } from './hooks/useWindowWidth';
 import { getBankFacts } from './services/edgarBankFacts';
 import { fetchLivePrice } from './services/priceService';
 import { SuggestionBadge } from './components/shared/SuggestionBadge';
 import { PremiumSlider } from './components/shared/PremiumSlider';
+import { SuggestedPremiumBox } from './components/shared/SuggestedPremiumBox';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
@@ -20,7 +22,7 @@ import {
   buildTransactionFeesTooltip,
   buildSynergyTooltip,
 } from './lib/suggestionTooltips';
-import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput } from './lib/offerPremium';
+import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium } from './lib/offerPremium';
 import './App.css';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -712,6 +714,15 @@ function App() {
     setOfferPriceTouched(true);
     setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
   };
+  // Forward consensus for the Year 2 premium solve, from the same cached /api/pnl fetch slide 8 reads.
+  const [fwdPnl, setFwdPnl] = useState({ a: null, b: null, loading: false });
+  useEffect(() => {
+    if (!tickerA || !tickerB) { setFwdPnl({ a: null, b: null, loading: false }); return undefined; }
+    let cancelled = false;
+    setFwdPnl({ a: null, b: null, loading: true });
+    Promise.all([pnlFetch(tickerA), pnlFetch(tickerB)]).then(([a, b]) => { if (!cancelled) setFwdPnl({ a, b, loading: false }); });
+    return () => { cancelled = true; };
+  }, [tickerA, tickerB]);
   // Default premium. Applies only while the user has not set an offer, and only with a live price: without one
   // the offer stays empty and manual. A price is never defaulted from anything else.
   useEffect(() => {
@@ -817,7 +828,8 @@ function App() {
 
   // Build the deck once on the basis-resolved inputs. resolveAccretionBasis is UNCHANGED — this only
   // controls WHEN it runs (after the non-GAAP fetches settle). Reads the freshest non-GAAP via the ref.
-  const runBuild = (effectiveInputs) => {
+  // The inputs the deal model runs on. The build and the input page's live figures both come through here.
+  const modelInputs = (effectiveInputs) => {
     const { calcInputs, basis } = resolveAccretionBasis(effectiveInputs, nonGaapRef.current.a, nonGaapRef.current.b);
     // Guard 1 (Stage 2E): tag the resolved inputs with the deck's isBankDeal (SIC-based, catches JPM/BAC) so
     // dealCalc's sources-of-funds construction — and every sensitivity cell that shares it — keeps bank deals
@@ -825,7 +837,11 @@ function App() {
     const bankDeal = isBankDeal({ companyType: companyTypeB, sic: sicB }, { companyType: companyTypeA, sic: sicA });
     // applySourcesOfFunds opts THIS deal into the sources-of-funds construction; §2's peer-impact column resets
     // it to false (no per-peer balance sheet), so only the main deal (§8/§9/§10/§11) nets combined cash.
-    const resolvedWithBank = { ...calcInputs, bankDeal, applySourcesOfFunds: true };
+    return { resolvedWithBank: { ...calcInputs, bankDeal, applySourcesOfFunds: true }, basis };
+  };
+
+  const runBuild = (effectiveInputs) => {
+    const { resolvedWithBank, basis } = modelInputs(effectiveInputs);
     const r = calculate(resolvedWithBank);
     r.basis = basis;
     // Phase 7 — carry the private-company flags so §8 suppresses market-data sections. A private company
@@ -1277,6 +1293,12 @@ function App() {
       <h2 style={sectionTitle}>Deal Terms</h2>
       {bPub ? (
         <>
+          <SuggestedPremiumBox spot={spotB} solve={highestAccretivePremium({
+              calcInputs: modelInputs(inputs).resolvedWithBank, spot: spotB,
+              synergyY1: inputs.synergiesY1 > 0 ? inputs.synergiesY1 : synAuto1,   // what the build will use
+              acquirerFwd: firstForwardColumn(fwdPnl.a), targetFwd: firstForwardColumn(fwdPnl.b), pnlLoading: fwdPnl.loading,
+              acquirerName: tickerA, targetName: tickerB,
+            })} onUse={setOfferFromPremium} />
           <PremiumSlider spot={spotB} offer={inputs.offerPricePerShare} loadingPrice={priceStatusB.loading} onPremiumChange={setOfferFromPremium} />
           <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
             format={formatOfferInput} placeholder="$ per share" />

@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isUtility, UTILITY_GROSS_NOTE } from '../shared/deckTokens';
-import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares } from '../../../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, forwardYearInputs } from '../../../utils/dealCalc';
 import { formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
 
 // ── §6 — Pro Forma & Accretion (one logical exhibit, split across two pages) ─────────────────────────────
@@ -38,7 +38,7 @@ const fyeMonth = (fye) => (typeof fye === 'string' && fye.length >= 7) ? (MONTHS
 
 // Module-level PROMISE caches — dedupe §6a/§6b (and concurrent mounts) to a single fetch per endpoint.
 const _pnlCache = {}, _estCache = {};
-function pnlFetch(ticker) {
+export function pnlFetch(ticker) {
   if (!_pnlCache[ticker]) {
     _pnlCache[ticker] = fetch(apiUrl(`/api/pnl/${encodeURIComponent(ticker)}`))
       .then(r => r.json()).then(j => (j && j.ok && Array.isArray(j.columns)) ? j : null).catch(() => null);
@@ -167,7 +167,6 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const inputs   = deal?._inputs || {};
   const offer    = parseFloat(deal?.offerPrice) || parseFloat(inputs.offerPricePerShare) || 0;
   const acqDilSh = acquirerDilutedShares(inputs).shares;
-  const tgtDilSh = parseFloat(inputs.companyBDilutedShares) || parseFloat(inputs.companyBShares) || 0;
   const synY = [deal?.synergiesY1, deal?.synergiesY2, deal?.synergiesY3];
 
   const forwardRows = [];
@@ -176,13 +175,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
     for (let k = 0; k < nFwd; k++) {
       const a = aFwd[k], b = bFwd[k];                       // forward EPS from /api/pnl (== /api/estimates epsAvg)
       if (a?.eps == null || b?.eps == null || !(acqDilSh > 0)) continue;
-      const fwdInputs = {
-        ...inputs,
-        companyANetIncome:     a.eps * acqDilSh,
-        companyAEPS:           a.eps,
-        companyADilutedShares: acqDilSh,
-        companyBNetIncome:     b.eps * tgtDilSh,
-      };
+      const fwdInputs = forwardYearInputs(inputs, a.eps, b.eps);
       // Synergy re-index (matches §6a's synRamp[k]): first forward year = synergiesY1. NO off-by-one.
       const synYr = k + 1;
       const syn   = parseFloat(synY[k]) || 0;

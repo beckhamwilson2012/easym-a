@@ -278,6 +278,20 @@ export function epsAccretionPct(offerPrice, synergiesY1, inputs) {
   return ((pf - base) / base) * 100;
 }
 
+// The inputs for one forward accretion year: net income = consensus EPS × today's diluted shares. Slide 8's
+// accretion table and the input page's premium solve both read this, so they cannot diverge.
+export function forwardYearInputs(inputs, acquirerEps, targetEps) {
+  const acqDilSh = acquirerDilutedShares(inputs).shares;
+  const tgtDilSh = parseFloat(inputs.companyBDilutedShares) || parseFloat(inputs.companyBShares) || 0;
+  return {
+    ...inputs,
+    companyANetIncome:     acquirerEps * acqDilSh,
+    companyAEPS:           acquirerEps,
+    companyADilutedShares: acqDilSh,
+    companyBNetIncome:     targetEps * tgtDilSh,
+  };
+}
+
 // ── Risk flags ────────────────────────────────────────────────────────────────
 
 export function computeFlags(results, inputs) {

@@ -1,3 +1,5 @@
+import { acquisitionNewDebt, acquirerSharePrice, acquirerDilutedShares, epsAccretionPct, forwardYearInputs } from '../utils/dealCalc';
+
 // Offer price and premium on the input page. The stored offer (inputs.offerPricePerShare) is the only source
 // of truth. The premium is always derived from it, so the slider and the offer field cannot disagree.
 
@@ -39,4 +41,41 @@ export function sliderThumb(premiumPct) {
 export function formatOfferInput(v) {
   const n = parseFloat(v);
   return Number.isFinite(n) && n !== 0 ? String(Number(n.toFixed(4))) : '';
+}
+
+// Year 2 on slide 8 is the first forward year: that year's consensus EPS with Year 1 synergies.
+export const firstForwardColumn = (pnl) => (pnl && Array.isArray(pnl.columns)) ? (pnl.columns.filter(c => !c.actual)[0] ?? null) : null;
+
+// The highest whole-percent premium on the slider that is still accretive in Year 2, solved by running the deal's
+// own accretion function at every step. Returns { premium, offer, accretionPct, atLimit } or { premium: null, reason }.
+// Never estimates: any missing input ends in a reason.
+export function highestAccretivePremium({ calcInputs, spot, synergyY1, acquirerFwd, targetFwd, pnlLoading, acquirerName, targetName }) {
+  const none = (reason) => ({ premium: null, reason });
+  const A = acquirerName || 'The acquirer';
+  const T = targetName || 'The target';
+  if (liveSpot(spot) == null) return none(`There is no live price for ${T}.`);
+  if (pnlLoading) return none('Forward estimates are still loading.');
+  const aEps = acquirerFwd?.eps ?? null;
+  const tEps = targetFwd?.eps ?? null;
+  if (aEps == null) return none(`There is no Year 2 consensus EPS for ${A}.`);
+  if (tEps == null) return none(`There is no Year 2 consensus EPS for ${T}.`);
+  if (!(aEps > 0)) return none(`${A}'s Year 2 consensus EPS is $${aEps.toFixed(2)}. Accretion can't be measured from an EPS that isn't positive.`);
+  if (acquirerSharePrice(calcInputs) == null) return none(`There is no live price for ${A}, so the new shares can't be counted.`);
+  if (!(acquirerDilutedShares(calcInputs).shares > 0)) return none(`${A}'s diluted share count is missing.`);
+  if (!(parseFloat(calcInputs.companyBShares) > 0)) return none(`${T}'s share count is missing.`);
+  if (synergyY1 == null) return none('There is no Year 1 synergy figure.');
+  if (acquisitionNewDebt(calcInputs, spot).newDebt == null) return none(`${T}'s total debt is unavailable, so the new debt and its interest can't be calculated.`);
+
+  const fwd = forwardYearInputs(calcInputs, aEps, tEps);
+  const accretionAt = (p) => epsAccretionPct(offerFromPremium(spot, p), synergyY1, fwd);
+  for (let p = PREMIUM_MAX; p >= PREMIUM_MIN; p--) {
+    const pct = accretionAt(p);
+    if (pct != null && pct > 0) {
+      return { premium: p, offer: offerFromPremium(spot, p), accretionPct: pct, atLimit: p === PREMIUM_MAX };
+    }
+  }
+  const atZero = accretionAt(PREMIUM_MIN);
+  const mix = `${parseFloat(calcInputs.cashPercent)}% cash`;
+  if (atZero == null) return none(`At ${mix}, pro forma Year 2 EPS is not positive at any premium on the slider.`);
+  return none(`At ${mix}, the deal is dilutive in Year 2 even at a 0% premium (${atZero.toFixed(1)}%).`);
 }
