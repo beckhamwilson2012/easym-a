@@ -17,6 +17,12 @@ const num = (v) => {
   return isNaN(n) ? null : n;
 };
 
+// CNBC's own timestamp for the last price, e.g. "2026-11-03T16:00:00.000-0500". Null if missing or unreadable.
+const quoteTimeIso = (v) => {
+  const t = v ? new Date(v) : null;
+  return t && !isNaN(t.getTime()) ? t.toISOString() : null;
+};
+
 // Fetch the full quote ONCE and cache { price, week52High, week52Low }. CNBC's FormattedQuote carries
 // the regular-session last AND the trailing 52-week range (yrhiprice / yrloprice).
 async function fetchQuote(ticker) {
@@ -26,7 +32,7 @@ async function fetchQuote(ticker) {
   if (inflight.has(key)) return inflight.get(key);
 
   const p = (async () => {
-    let quote = { price: null, week52High: null, week52Low: null };
+    let quote = { price: null, week52High: null, week52Low: null, asOf: null };
     try {
       // exthrs=0 → regular-session last (matches Yahoo's regularMarketPrice exactly, so the
       // cross-check is clean; exthrs=1 would return an extended-hours price that drifts from Yahoo).
@@ -40,6 +46,7 @@ async function fetchQuote(ticker) {
           price:      last != null ? parseFloat(last.toFixed(2)) : null,
           week52High: num(q.yrhiprice),
           week52Low:  num(q.yrloprice),
+          asOf:       quoteTimeIso(q.last_time),
         };
       }
     } catch { /* fall through → nulls */ }
@@ -57,6 +64,11 @@ async function fetchPrice(ticker) {
   return (await fetchQuote(ticker)).price;
 }
 
+// When the cached price was struck. Reads the same cached quote, so no second request.
+async function fetchPriceAsOf(ticker) {
+  return (await fetchQuote(ticker)).asOf;
+}
+
 // Field-shaped result so CNBC can be a first-class source in the verified-data reconcile
 // (server/data/reconcile.js). CNBC carries the live price AND the trailing 52-week high/low.
 async function fetchFields(ticker) {
@@ -70,4 +82,4 @@ async function fetchFields(ticker) {
   };
 }
 
-module.exports = { fetchPrice, fetchQuote, fetchFields };
+module.exports = { fetchPrice, fetchQuote, fetchFields, fetchPriceAsOf };

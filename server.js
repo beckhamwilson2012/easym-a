@@ -1225,8 +1225,10 @@ app.get('/api/price/:ticker', async (req, res) => {
     }
   }
 
+  // asOf: the source's own time for this price, where it reports one (null otherwise). retrievedAt: when we got it.
+  const asOf = source === 'cnbc' ? await cnbcClient.fetchPriceAsOf(ticker).catch(() => null) : null;
   const payload = price !== null
-    ? { price, source, attempts }
+    ? { price, source, attempts, asOf, retrievedAt: new Date().toISOString() }
     : { error: 'Price unavailable from all sources', attempts };
 
   // Only cache SUCCESSFUL prices. Caching a failure would pin a transient 429 for the whole TTL.
@@ -1402,6 +1404,27 @@ app.get('/api/shareholder/:ticker', async (req, res) => {
 app.get('/api/prices/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
   try {
+    // One daily close, from the same FMP history this route reads below: ?closeOn=YYYY-MM-DD returns that date's
+    // close, or the last trading day before it, with the date it actually used. Yahoo's fallback here is monthly
+    // bars, which are not a daily close, so it is not used. No close is { close: null }, never an estimate.
+    if (req.query.closeOn !== undefined) {
+      const closeOn = String(req.query.closeOn);
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(closeOn) || isNaN(new Date(closeOn).getTime())) return res.json({ close: null, reason: 'invalid date' });
+      if (closeOn > new Date().toISOString().slice(0, 10)) return res.json({ close: null, reason: 'that date is in the future' });
+      const from = new Date(new Date(closeOn).getTime() - 7 * 86400000).toISOString().slice(0, 10);
+      try {
+        const rows = await get(`https://financialmodelingprep.com/stable/historical-price-eod/light?symbol=${ticker}&from=${from}&to=${closeOn}&apikey=${FMP_KEY}`);
+        const hit = (Array.isArray(rows) ? rows : [])
+          .filter(d => d.date && d.date.slice(0, 10) <= closeOn && Number.isFinite(d.price ?? d.close))
+          .sort((a, b) => b.date.localeCompare(a.date))[0];
+        if (!hit) return res.json({ close: null, reason: 'no close found near that date' });
+        return res.json({ close: hit.price ?? hit.close, date: hit.date.slice(0, 10), source: 'fmp' });
+      } catch (e) {
+        console.log(`[${ticker}] FMP close failed:`, e.message);
+        return res.json({ close: null, reason: 'no historical price source' });
+      }
+    }
+
     // Try FMP first
     const fmpUrl = `https://financialmodelingprep.com/stable/historical-price-eod/light?symbol=${ticker}&apikey=${FMP_KEY}`;
     let daily = null;

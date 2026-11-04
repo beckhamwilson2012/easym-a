@@ -7,10 +7,11 @@ import { pnlFetch } from './components/deck/sections/SectionProFormaPL';
 import { calculate, MIN_CASH_PCT_DEFAULT } from './utils/dealCalc';
 import { useWindowWidth } from './hooks/useWindowWidth';
 import { getBankFacts } from './services/edgarBankFacts';
-import { fetchLivePrice } from './services/priceService';
+import { fetchLivePrice, fetchCloseOn } from './services/priceService';
 import { SuggestionBadge } from './components/shared/SuggestionBadge';
 import { PremiumSlider } from './components/shared/PremiumSlider';
 import { SuggestedPremiumBox } from './components/shared/SuggestedPremiumBox';
+import { PriceTiles } from './components/shared/PriceTiles';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
@@ -714,6 +715,16 @@ function App() {
     setOfferPriceTouched(true);
     setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
   };
+  // Unaffected price: an optional date, read through to that day's close. Display only on this page.
+  const [unaffectedDate, setUnaffectedDate] = useState('');
+  const [unaffected, setUnaffected] = useState({ close: null, date: null, reason: null, loading: false });
+  useEffect(() => {
+    if (!unaffectedDate || !tickerB) { setUnaffected({ close: null, date: null, reason: null, loading: false }); return undefined; }
+    let cancelled = false;
+    setUnaffected({ close: null, date: null, reason: null, loading: true });
+    fetchCloseOn(tickerB, unaffectedDate).then(r => { if (!cancelled) setUnaffected({ ...r, loading: false }); });
+    return () => { cancelled = true; };
+  }, [unaffectedDate, tickerB]);
   // Forward consensus for the Year 2 premium solve, from the same cached /api/pnl fetch slide 8 reads.
   const [fwdPnl, setFwdPnl] = useState({ a: null, b: null, loading: false });
   useEffect(() => {
@@ -787,6 +798,7 @@ function App() {
     setLoadingB(true); setErrorB(''); setBankFactsB(null); setNonGaapB(null); setNonGaapLoadingB(true);
     setPriceStatusB({ loading: true, price: null, source: null, attempts: [] });
     setOfferPriceTouched(false);   // a new target starts over: its offer must not carry the last target's price
+    setUnaffectedDate('');
     setInputs(prev => ({ ...prev, currentSharePriceB: 0, offerPricePerShare: 0 })); // clear stale price; live fetch resets it
     fetchCompanyData(symbol).then(data => {
       setNameB(data.name); setTickerB(symbol.toUpperCase());
@@ -810,11 +822,11 @@ function App() {
     }).catch(() => { setErrorB('Could not load company. Try another.'); setLoadingB(false); setPriceStatusB(p => ({ ...p, loading: false })); });
 
     // Live price fetch runs in parallel — updates currentSharePriceB when it resolves
-    fetchLivePrice(symbol).then(({ price, source, attempts }) => {
+    fetchLivePrice(symbol).then(({ price, source, attempts, quoteAsOf, retrievedAt }) => {
       if (price != null) {
         setInputs(prev => ({ ...prev, currentSharePriceB: price }));
       }
-      setPriceStatusB({ loading: false, price, source, attempts, asOf: price != null ? new Date() : null });
+      setPriceStatusB({ loading: false, price, source, attempts, asOf: price != null ? new Date() : null, quoteAsOf, retrievedAt });
     }).catch(() => {
       setPriceStatusB({ loading: false, price: null, source: null, attempts: [], asOf: null });
     });
@@ -943,7 +955,7 @@ function App() {
     setBankFactsA(null); setBankFactsB(null);
     setPriceStatusA({ loading: false, price: null, source: null, attempts: [] });
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
-    setOfferPriceTouched(false);
+    setOfferPriceTouched(false); setUnaffectedDate('');
     setExpandedA(false); setExpandedB(false);
     setFiscalYearA(null); setFiscalYearEndA(null);
     setFiscalYearB(null); setFiscalYearEndB(null);
@@ -1299,6 +1311,8 @@ function App() {
               acquirerFwd: firstForwardColumn(fwdPnl.a), targetFwd: firstForwardColumn(fwdPnl.b), pnlLoading: fwdPnl.loading,
               acquirerName: tickerA, targetName: tickerB,
             })} onUse={setOfferFromPremium} />
+          <PriceTiles spot={spotB} quoteAsOf={priceStatusB.quoteAsOf} retrievedAt={priceStatusB.retrievedAt} offer={inputs.offerPricePerShare}
+            unaffected={unaffected} unaffectedDate={unaffectedDate} onUnaffectedDate={setUnaffectedDate} />
           <PremiumSlider spot={spotB} offer={inputs.offerPricePerShare} loadingPrice={priceStatusB.loading} onPremiumChange={setOfferFromPremium} />
           <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
             format={formatOfferInput} placeholder="$ per share" />
