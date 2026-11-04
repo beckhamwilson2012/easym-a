@@ -11,6 +11,7 @@ export function CashPercentageSlider({
   dealSize,
   acquirerSharePrice,
   acquirerSharesOutstanding,
+  userEntered,
 }) {
   const pct = Number(value) || 0;
   const band = getCashBand(pct);
@@ -143,7 +144,7 @@ export function CashPercentageSlider({
                 width: 44, padding: '3px 6px', borderRadius: 4,
                 border: `1px solid ${expanded ? '#0F2244' : '#D1D5DB'}`,
                 fontSize: 12, textAlign: 'center', outline: 'none',
-                fontWeight: 600, color: '#0F2244',
+                fontWeight: 600, color: userEntered ? '#1a5fd0' : '#0F2244',
                 transition: 'border-color 0.15s',
               }}
             />

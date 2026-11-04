@@ -80,17 +80,21 @@ function resolveAccretionBasis(baseInputs, ngA, ngB) {
 
 // ── UI components ─────────────────────────────────────────────────────────────
 
-const inputBaseStyle = (disabled) => ({
+// Values the user entered show in blue. Pre-filled figures stay in the default color until edited.
+const USER_ENTERED_BLUE = '#1a5fd0';
+const inputBaseStyle = (disabled, userEntered) => ({
   width: '100%', padding: '8px 10px', borderRadius: 6, border: '1px solid #D1D5DB', fontSize: 14,
-  boxSizing: 'border-box', background: disabled ? '#F9FAFB' : '#fff', color: disabled ? '#9CA3AF' : 'inherit',
+  boxSizing: 'border-box', background: disabled ? '#F9FAFB' : '#fff', color: disabled ? '#9CA3AF' : (userEntered ? USER_ENTERED_BLUE : 'inherit'),
 });
 
-function InputField({ label, name, value, onChange, disabled, note, placeholder, format }) {
+function InputField({ label, name, value, onChange, disabled, note, placeholder, format, userEntered }) {
   const inputRef = useRef(null);
+  const [typed, setTyped] = useState(false);
   const show = (v) => format ? format(v) : (v === 0 ? '' : String(v));
   useEffect(() => {
     if (inputRef.current && document.activeElement !== inputRef.current) {
       inputRef.current.value = show(value);
+      setTyped(false);   // the value changed from elsewhere (a new company, a reset), so it isn't the user's entry
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value]);
@@ -98,8 +102,8 @@ function InputField({ label, name, value, onChange, disabled, note, placeholder,
     <div style={{ marginBottom: 12 }}>
       <label style={{ display: 'block', fontSize: 12, color: disabled ? '#9CA3AF' : '#6B7280', marginBottom: 4 }}>{label}</label>
       <input ref={inputRef} type="number" step="any" name={name} defaultValue={show(value)}
-        placeholder={placeholder || ''} onChange={onChange} disabled={disabled}
-        style={inputBaseStyle(disabled)} />
+        placeholder={placeholder || ''} onChange={(e) => { setTyped(true); onChange(e); }} disabled={disabled}
+        style={inputBaseStyle(disabled, typed || userEntered)} />
       {note && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3, fontStyle: 'italic' }}>{note}</div>}
     </div>
   );
@@ -108,15 +112,18 @@ function InputField({ label, name, value, onChange, disabled, note, placeholder,
 // Large-number input — displays comma separators while keeping state as a clean number.
 function LargeNumericField({ label, name, value, onChange, disabled, note, placeholder }) {
   const inputRef = useRef(null);
+  const [typed, setTyped] = useState(false);
   const fmt = (v) => (v === 0 || v === '') ? '' : Number(v).toLocaleString('en-US');
 
   useEffect(() => {
     if (inputRef.current && document.activeElement !== inputRef.current) {
       inputRef.current.value = fmt(value);
+      setTyped(false);   // the value changed from elsewhere (a new company, a reset), so it isn't the user's entry
     }
   }, [value]);
 
   const handleInput = (e) => {
+    setTyped(true);
     const cleaned = e.target.value.replace(/,/g, '');
     onChange({ target: { name, value: cleaned } });
   };
@@ -127,7 +134,7 @@ function LargeNumericField({ label, name, value, onChange, disabled, note, place
       <input ref={inputRef} type="text" inputMode="decimal" name={name}
         defaultValue={fmt(value)} placeholder={placeholder || ''}
         onChange={handleInput} disabled={disabled}
-        style={inputBaseStyle(disabled)} />
+        style={inputBaseStyle(disabled, typed)} />
       {note && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3, fontStyle: 'italic' }}>{note}</div>}
     </div>
   );
@@ -244,7 +251,7 @@ function ValuationPanel({ panel, valuation, altValuation, classification, sector
       {failed && (
         <div style={{ fontSize: 11, color: '#B45309', marginBottom: 6, lineHeight: 1.5 }}>⚠ No peer median — {valuation.note} Enter a multiple below.</div>
       )}
-      <LargeNumericField label="EV / EBITDA multiple (×)" name={`company${panel}ValuationMultiple`} value={multiple} onChange={onMultipleChange} placeholder="e.g., 12.5" />
+      <LargeNumericField label="EV / EBITDA multiple (×)" name={`company${panel}ValuationMultiple`} value={multiple} onChange={onMultipleChange} placeholder="×" />
       {overridden && <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 8, fontStyle: 'italic' }}>✎ multiple edited by user</div>}
       <div style={{ fontSize: 12, color: '#374151', lineHeight: 1.8, marginTop: 2, paddingTop: 6, borderTop: '1px solid #F3F4F6' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>EV = {mult > 0 ? `${fmtX(mult)} × ` : 'multiple × '}EBITDA {fmtM(Number.isFinite(eb) ? eb : null)}</span><strong>{fmtM(ev)}</strong></div>
@@ -538,6 +545,7 @@ function App() {
   const [priceStatusA, setPriceStatusA] = useState({ loading: false, price: null, source: null, attempts: [], asOf: null });
   const [priceStatusB, setPriceStatusB] = useState({ loading: false, price: null, source: null, attempts: [], asOf: null });
   const [offerPriceTouched, setOfferPriceTouched] = useState(false);
+  const [cashPercentTouched, setCashPercentTouched] = useState(false);
   const [expandedA, setExpandedA] = useState(false);
   const [expandedB, setExpandedB] = useState(false);
   const [revenuePeriodA, setRevenuePeriodA] = useState(null);   // label for the revenue on each company card
@@ -928,7 +936,7 @@ function App() {
     setBankFactsA(null); setBankFactsB(null);
     setPriceStatusA({ loading: false, price: null, source: null, attempts: [] });
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
-    setOfferPriceTouched(false); setUnaffectedDate('');
+    setOfferPriceTouched(false); setCashPercentTouched(false); setUnaffectedDate('');
     setExpandedA(false); setExpandedB(false);
     setFiscalYearA(null); setFiscalYearEndA(null); setRevenuePeriodA(null); setRevenuePeriodB(null);
     setFiscalYearB(null); setFiscalYearEndB(null);
@@ -1253,11 +1261,11 @@ function App() {
         <UploadZone uploading={isA ? uploadingA : uploadingB} error={isA ? uploadErrA : uploadErrB} onFile={f => handleExtract(f, P)} />
         <DocFactsPanel facts={isA ? docFactsA : docFactsB} onChange={isA ? setDocFactsA : setDocFactsB} />
         <div style={{ fontSize: 11, color: '#6B7280', margin: '0 0 12px' }}>Upload a 10-K to pre-fill every figure with a page cite — or enter the six by hand below.</div>
-        <LargeNumericField label="Annual Revenue ($M)" name={`company${P}Revenue`} value={inputs[`company${P}Revenue`]} onChange={changeWithOverride(P)} placeholder="Enter revenue in millions" />
+        <LargeNumericField label="Annual Revenue ($M)" name={`company${P}Revenue`} value={inputs[`company${P}Revenue`]} onChange={changeWithOverride(P)} placeholder="$M" />
         <ExtractCite cite={upload && upload.fields.revenue} overridden={override[`company${P}Revenue`]} />
         <LargeNumericField label="EBITDA ($M)" name={`company${P}EBITDA`} value={inputs[`company${P}EBITDA`]} onChange={changeWithOverride(P)} />
         <ExtractCite cite={ebitdaCite(upload)} overridden={override[`company${P}EBITDA`]} />
-        <LargeNumericField label="Net Income ($M)" name={`company${P}NetIncome`} value={inputs[`company${P}NetIncome`]} onChange={changeWithOverride(P)} placeholder="Enter net income in millions" />
+        <LargeNumericField label="Net Income ($M)" name={`company${P}NetIncome`} value={inputs[`company${P}NetIncome`]} onChange={changeWithOverride(P)} placeholder="$M" />
         <ExtractCite cite={upload && upload.fields.netIncome} overridden={override[`company${P}NetIncome`]} />
         <ValuationPanel panel={P} valuation={isA ? valuationA : valuationB} altValuation={isA ? altValuationA : altValuationB} classification={isA ? classA : classB}
           sectorList={sectorList} selectedSic={isA ? sectorSicA : sectorSicB}
@@ -1287,7 +1295,7 @@ function App() {
             unaffected={unaffected} unaffectedDate={unaffectedDate} onUnaffectedDate={setUnaffectedDate} />
           <PremiumSlider spot={spotB} offer={inputs.offerPricePerShare} loadingPrice={priceStatusB.loading} onPremiumChange={setOfferFromPremium} />
           <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
-            format={formatOfferInput} placeholder="$ per share" />
+            format={formatOfferInput} userEntered={offerPriceTouched} placeholder="$ per share" />
         </>
       ) : (
         <>
@@ -1295,11 +1303,11 @@ function App() {
             <SuggestionBadge primary={fmtMoneyDual(targetEquity)} caption="Derived equity value (peer-median EV/EBITDA × EBITDA − net debt)"
               onUse={() => { setOfferValueTouched(true); setInputs(prev => ({ ...prev, offerValueTotal: Math.round(targetEquity) })); }} />
           )}
-          <LargeNumericField label="Offer / Total Equity Value ($M)" name="offerValueTotal" value={inputs.offerValueTotal} onChange={handleOfferValueChange} placeholder="Total consideration in millions" />
+          <LargeNumericField label="Offer / Total Equity Value ($M)" name="offerValueTotal" value={inputs.offerValueTotal} onChange={handleOfferValueChange} placeholder="$M" />
           <div style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 8, fontStyle: 'italic' }}>Private target — the deal is a total consideration; there is no per-share offer price.</div>
         </>
       )}
-      <CashPercentageSlider value={inputs.cashPercent} onChange={(v) => setInputs(prev => ({ ...prev, cashPercent: v }))}
+      <CashPercentageSlider value={inputs.cashPercent} userEntered={cashPercentTouched} onChange={(v) => { setCashPercentTouched(true); setInputs(prev => ({ ...prev, cashPercent: v })); }}
         tooltip={buildCashPercentTooltip(bankDeal)} dealSize={entryDealSize}
         acquirerSharePrice={acquirerSharePriceForSlider} acquirerSharesOutstanding={inputs.companyAShares} />
       {bPub && <CashFundingBox funding={acquisitionNewDebt(modelInputs(inputs).resolvedWithBank)} targetName={tickerB} />}
@@ -1325,7 +1333,7 @@ function App() {
                 <SuggestionBadge primary={fmtMoneyDual(sug)} caption={caption} tooltip={buildSynergyTooltip(t, a, yr)}
                   onUse={() => setInputs(prev => ({ ...prev, [name]: sug }))} />
               )}
-              <InputField label={`Year ${yr} Synergies ($M)`} name={name} value={inputs[name]} onChange={handleChange} placeholder="Enter synergies" />
+              <InputField label={`Year ${yr} Synergies ($M)`} name={name} value={inputs[name]} onChange={handleChange} placeholder="$M" />
             </div>
           );
         });
