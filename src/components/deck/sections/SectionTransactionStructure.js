@@ -1,6 +1,7 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf } from '../shared/deckTokens';
 import { cashBucket, netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
 import { epsAccretionPct } from '../../../utils/dealCalc';
@@ -180,8 +181,9 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
         )}
       </div>
 
+      <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ padding: '6px 20px 0' }} />
       <SynergyLines deal={deal} title="Synergies ($M). Combined EBITDA above includes Year 1 only" style={{ padding: '6px 20px 0' }} />
-      <div style={{ padding: '8px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
+      <div style={{ padding: '8px 20px 32px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
         <strong style={{ color: NAVY }}>Structure: </strong>
         {bankFin ? (
           <>Cash consideration is debt-financed (new acquisition debt); stock consideration is newly issued {aTk} equity, so <strong>Sources = Uses</strong>. This is a <strong>financial-institution deal</strong>: bank cash and deposits are not netted and {bTk}'s debt is not repaid on change of control, so the 100%-debt financing convention is retained (the cash-funded sources-of-funds construction applies to non-bank targets only). </>

@@ -109,6 +109,26 @@ function SourceCell({ meta, unit, isSot, bg }) {
   );
 }
 
+// This appendix cross-checks fiscal-year figures across feeds. A company on LTM has no second feed: its LTM figures
+// come from EDGAR alone, so they are listed here as used and marked as not cross-checked.
+function LtmUsed({ acquirer, target, showFigures }) {
+  const cos = [acquirer, target].filter((c) => c?.basis === 'ltm');
+  const parts = [acquirer, target].filter((c) => c?.basisLabel).map((c) => `${c.ticker} ${c.basisLabel}`);
+  if (!parts.length) return null;
+  const rows = [['Revenue', 'revenue', '$'], ['Gross Profit', 'grossProfit', '$'], ['Operating Income', 'operatingIncome', '$'], ['EBITDA', 'ebitda', '$'], ['Net Income', 'netIncome', '$'], ['Diluted EPS', 'eps', '$/sh'], ['Free Cash Flow', 'freeCashFlow', '$']];
+  return (
+    <div data-testid="ltm-used" style={{ marginTop: 12, fontSize: 10, color: '#374151', lineHeight: 1.5 }}>
+      <strong style={{ color: NAVY }}>Basis used: </strong>{parts.join('; ')}. The table above cross-checks fiscal-year figures.
+      {showFigures && cos.map((c) => (
+        <div key={c.ticker} style={{ marginTop: 6 }}>
+          <strong style={{ color: NAVY }}>{c.ticker} {c.basisLabel}, as used.</strong> SEC EDGAR 10-K + 10-Q only: not cross-checked against a second feed.
+          <div>{rows.map(([label, key, unit]) => `${label} ${fmtVal(c[key], unit)}`).join(' · ')}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // Shared core — `part` selects which row group + which chrome renders. Both parts call useVerifiedData
 // (memCached, single fetch); only part 'b' fetches /api/analyst-targets (reconcile + ratings).
 // Phase 8 (§16) — uploaded-filing provenance table: every figure with its page cite, the line as printed
@@ -391,6 +411,8 @@ function DataVerificationCore({ target, acquirer, pageNum, part, exhibitLabel })
             ) : 'Nasdaq target unavailable for cross-check.'}
           </div>
         )}
+
+        <LtmUsed acquirer={acquirer} target={target} showFigures={isA} />
 
         {/* Currency conversion block (FX Stage 3, §16b) — foreign filer only (converted:true). */}
         {!isA && fx?.converted && (

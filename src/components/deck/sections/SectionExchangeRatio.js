@@ -2,6 +2,7 @@ import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtPerShare, fmtShares, fmtPct, fmtPctFloor, fmtAsOf } from '../shared/deckTokens';
 import { netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
@@ -49,7 +50,7 @@ function KVTable({ title, rows }) {
 // Premium sensitivity matrix — its own table (NAVY header, alt rows), full width below the KV tables.
 const PREMS = [0, 0.10, 0.20, 0.30, 0.40];
 
-export function SectionExchangeRatio({ target, acquirer, model, pageNum, exhibitLabel }) {
+export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, exhibitLabel }) {
   // Short "Name (TICKER)" form — consistent with §2's shortName ("Atlassian Corp" → "Atlassian"), so the
   // subtitle doesn't read the raw legal name while the tables use the ticker. The separator before a suffix
   // is a REQUIRED comma/space ([,\s]+, not ,?\s*) so "SE" inside "CHASE" isn't stripped as a German-SE suffix;
@@ -111,7 +112,7 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum, exhibit
 
   // EPS-impact row: render the ONE accretion result with its explicit basis (no leading '+').
   const acc = d.accretion || {};
-  const epsImpact = acc.pct == null
+  const epsImpact = deal?._results?.basesDiffer ? 'n/m (companies on different bases)' : acc.pct == null
     ? 'n/m (acquirer or pro-forma EPS ≤ 0)'
     : `${Math.abs(acc.pct).toFixed(1)}% ${acc.isAccretive ? 'accretive' : 'dilutive'} · ${acc.basis || 'computed basis'}`;
 
@@ -248,7 +249,8 @@ export function SectionExchangeRatio({ target, acquirer, model, pageNum, exhibit
         </div>
       </div>
 
-      <div style={{ padding: '0 20px 12px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
+      <BasisNote acquirer={acquirer} target={target} deal={deal} fixed="The LTM EV/Rev column uses LTM revenue whichever basis the card is on." style={{ padding: '0 20px 6px' }} />
+      <div style={{ padding: '0 20px 32px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
         The headline offer reflects {struckIs30
           ? 'an illustrative 30% control premium (industry median, user-adjustable)'
           : `an illustrative ${struckPrem != null ? struckPrem.toFixed(1) + '%' : ''} premium (user-adjustable)`}; the matrix above shows the full 0–40% range so the premium reads as a spectrum, not a single asserted figure. New shares = stock consideration ÷ {aTk} price; ownership and exchange ratio derived therefrom. Illustrative — not investment advice.

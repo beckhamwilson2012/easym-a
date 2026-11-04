@@ -2,6 +2,7 @@ import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, DONUT_COLORS, fmtMoney, fmtAsOf, isUtility, UTILITY_GROSS_NOTE } from '../shared/deckTokens';
 import { getCompanyProfile } from '../../../lib/companyProfiles';
 import { getCustomerMetrics } from '../../../lib/customerMetrics';
@@ -94,7 +95,7 @@ function SegBox({ title, seg }) {
 
 const pct = (v, dp = 1) => (v == null ? '—' : `${(v * 100).toFixed(dp)}%`);
 
-export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
+export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const tk = target?.ticker;
   const [prod, setProd] = useState(null);
   const [geo, setGeo]   = useState(null);
@@ -122,12 +123,14 @@ export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
 
   // Compact trend + margins + CAGR from /api/pnl actuals (on hand; NOT the full §5 P&L).
   const actuals = pnl ? pnl.columns.filter(c => c.actual) : [];
-  const latestAct = actuals.length ? actuals[actuals.length - 1] : null;
+  const onLtm = target?.basis === 'ltm' && pnl?.ltm?.trusted;
+  const latestAct = onLtm ? pnl.ltm : (actuals.length ? actuals[actuals.length - 1] : null);
   const grossMargin = latestAct && latestAct.revenue ? (latestAct.grossProfit != null ? latestAct.grossProfit / latestAct.revenue : null) : null;
   const opMargin    = latestAct && latestAct.revenue && latestAct.operatingIncome != null ? latestAct.operatingIncome / latestAct.revenue : null;
   const revCAGR = (actuals.length >= 2 && actuals[0].revenue > 0)
     ? Math.pow(actuals[actuals.length - 1].revenue / actuals[0].revenue, 1 / (actuals.length - 1)) - 1 : null;
-  const trendMax = Math.max(...actuals.map(c => c.revenue || 0), 1);
+  const trendCols = onLtm ? [...actuals, { label: 'LTM', revenue: pnl.ltm.revenue }] : actuals;
+  const trendMax = Math.max(...trendCols.map(c => c.revenue || 0), 1);
 
   // Key operating metrics (TTM ratios — currency-neutral). EV/EBITDA & negatives that read absurd → n/m.
   const evEbitda = (km?.evToEBITDA != null && km.evToEBITDA > 0 && km.evToEBITDA < 100) ? `${km.evToEBITDA.toFixed(1)}x` : (km?.ok ? 'n/m' : '—');
@@ -139,8 +142,8 @@ export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
     { k: 'Return on invested capital (LTM)', v: pct(km?.returnOnInvestedCapital) },
     { k: 'Return on assets (LTM)',           v: pct(km?.returnOnAssets) },
     { k: 'Free cash flow yield (LTM)',       v: pct(km?.freeCashFlowYield) },
-    { k: 'Gross margin (FY)',          v: isUtility(target) ? 'n/m' : pct(grossMargin) },
-    { k: 'Operating margin (FY)',      v: pct(opMargin) },
+    { k: `Gross margin (${onLtm ? 'LTM' : 'FY'})`,          v: isUtility(target) ? 'n/m' : pct(grossMargin) },
+    { k: `Operating margin (${onLtm ? 'LTM' : 'FY'})`,      v: pct(opMargin) },
     { k: `Revenue CAGR (${actuals.length}yr)`, v: pct(revCAGR) },
     { k: 'EV / EBITDA (LTM)',          v: evEbitda },
   ];
@@ -192,7 +195,7 @@ export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
               {actuals.length >= 2 ? (
                 <>
                   <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8, height: 92 }}>
-                    {actuals.map((c, i) => (
+                    {trendCols.map((c, i) => (
                       <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
                         <span style={{ fontSize: 8, color: '#6B7280', marginBottom: 2 }}>{fmtMoney(c.revenue)}</span>
                         <div style={{ width: '70%', height: `${Math.max(4, (c.revenue / trendMax) * 74)}px`, background: SF_BLUE, borderRadius: '3px 3px 0 0' }} />
@@ -200,7 +203,7 @@ export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
                       </div>
                     ))}
                   </div>
-                  <div style={{ fontSize: 9, color: '#6B7280', marginTop: 6 }}>Reported annual revenue. Full multi-year P&amp;L (margins, EPS): <strong style={{ color: SF_BLUE }}>see Standalone P&amp;L — Target (§{pageNumOf('plTarget')})</strong>.</div>
+                  <div style={{ fontSize: 9, color: '#6B7280', marginTop: 6 }}>{onLtm ? 'Reported annual revenue, plus LTM.' : 'Reported annual revenue.'} Full multi-year P&amp;L (margins, EPS): <strong style={{ color: SF_BLUE }}>see Standalone P&amp;L — Target (§{pageNumOf('plTarget')})</strong>.</div>
                 </>
               ) : <NotReported label="Multi-year revenue" />}
             </div>
@@ -211,9 +214,10 @@ export function SectionTargetOverview({ target, pageNum, exhibitLabel }) {
         {getCustomerMetrics(tk) && <CustomerRetentionBlock cm={getCustomerMetrics(tk)} />}
       </div>
 
+      <BasisNote only={target} style={{ padding: '6px 20px 0' }} />
       <div style={{ padding: '8px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
         {isUtility(target) ? <>{UTILITY_GROSS_NOTE} </> : null}
-        Segment &amp; geographic revenue are the target's <strong>latest reported fiscal year</strong> (Financial Modeling Prep); foreign filers reporting in another currency are converted to USD at the fiscal-year average rate. Geographic tiers are shown as reported and may include overlapping regions/countries — figures are magnitudes, not a normalized 100% split. Operating metrics are <strong>trailing-twelve-month</strong> ratios (return / yield){bsAsOf ? <> — return metrics use trailing-twelve-month earnings over balance-sheet figures <strong>as of {bsAsOf}</strong></> : null}; margins &amp; revenue CAGR are from reported annual filings. Where a filer does not report a segmentation, the block reads "not reported" — never an estimate.
+        Segment &amp; geographic revenue are the target's <strong>latest reported fiscal year</strong> (Financial Modeling Prep); foreign filers reporting in another currency are converted to USD at the fiscal-year average rate. Geographic tiers are shown as reported and may include overlapping regions/countries — figures are magnitudes, not a normalized 100% split. Operating metrics are <strong>trailing-twelve-month</strong> ratios (return / yield){bsAsOf ? <> — return metrics use trailing-twelve-month earnings over balance-sheet figures <strong>as of {bsAsOf}</strong></> : null}; {onLtm ? 'margins are LTM; revenue CAGR is from reported annual filings.' : 'margins & revenue CAGR are from reported annual filings.'} Where a filer does not report a segmentation, the block reads "not reported" — never an estimate.
       </div>
     </PageFrame>
   );

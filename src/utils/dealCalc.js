@@ -1,5 +1,6 @@
 import { cashBucket } from '../lib/netDebt';
 import { synergySchedule } from '../lib/synergies';
+import { basesDiffer, combination } from '../lib/companyBasis';
 
 // ── Sensitivity table constants ───────────────────────────────────────────────
 export const PRICE_MULTS  = [0.8, 0.9, 1.0, 1.1, 1.2];
@@ -148,14 +149,16 @@ export function calculate(inputs) {
   const acqBaseShares    = acqDiluted.shares;
   const totalShares      = acqBaseShares + newSharesIssued;
 
-  const combinedRevenue  = (companyARevenue != null && companyBRevenue != null) ? companyARevenue + companyBRevenue : null;
+  // Two companies on different bases are never added: every combined figure below is null, and the slides say why.
+  const differentBases   = basesDiffer(inputs);
+  const combinedRevenue  = (!differentBases && companyARevenue != null && companyBRevenue != null) ? companyARevenue + companyBRevenue : null;
   // Pro forma revenue carries the revenue synergies; combined revenue stays the two companies' own sum.
   const proFormaRevenue  = combinedRevenue != null ? combinedRevenue + (synergyY1.revenue ?? 0) : null;
   // BOTH sides required. A null EBITDA (e.g. BMY: OperatingIncomeLoss untagged → null EBITDA) must NOT
   // coerce to 0 inside the sum and silently understate combined leverage — a partial input renders '—',
   // never a published ratio (matches the enterpriseValue / netDebt short-circuit, Fix A / 2C-2). Both-real
   // deals are unchanged.
-  const combinedEBITDA   = (companyAEBITDA != null && companyBEBITDA != null)
+  const combinedEBITDA   = (!differentBases && companyAEBITDA != null && companyBEBITDA != null)
     ? companyAEBITDA + companyBEBITDA + synergiesY1 : null; // synergies pre-tax
 
   // Pro-forma RECURRING net income: combine both companies, add after-tax synergies, subtract the
@@ -175,7 +178,7 @@ export function calculate(inputs) {
   // BOTH net incomes required — a null side must NOT coerce to 0 and understate the pro-forma net income
   // that drives EPS and the headline accretion. Null → EPS null → accretion not meaningful → '—' / n/m.
   // Same for an unknown financing drag.
-  const proFormaNetIncome   = (companyANetIncome != null && companyBNetIncome != null && newInterestAfterTax != null)
+  const proFormaNetIncome   = (!differentBases && companyANetIncome != null && companyBNetIncome != null && newInterestAfterTax != null)
     ? companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax : null;
   const proFormaEPS         = (proFormaNetIncome != null && totalShares > 0) ? proFormaNetIncome / totalShares : null;
 
@@ -246,6 +249,8 @@ export function calculate(inputs) {
     // Total pre-tax EBITDA impact per year. The cost and revenue lines are in synergies.years.
     synergiesY1, synergiesY2: synergies.years[1].ebitda, synergiesY3: synergies.years[2].ebitda,
     synergies,
+    basesDiffer: differentBases,
+    basisNote: combination(inputs).note,
     // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
     // dashboard "Before → After" and the percent change are internally consistent).
     companyAEPS:        standaloneEPS.toFixed(2),
@@ -265,6 +270,7 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const acqPrice = acquirerSharePrice(inputs);
   if (!(acqPrice > 0) || companyBShares === 0) return null; // !(x>0) catches null AND 0 (=== 0 missed null → NaN)
   if (companyANetIncome == null || companyBNetIncome == null) return null; // partial input → null (→ '—'), never a 0-coerced EPS
+  if (basesDiffer(inputs)) return null; // one on LTM, one on FY: not added
   const stockPercent = 100 - cashPercent;
   const totalPP      = offerPrice * companyBShares;
   const stockPortion = totalPP * (stockPercent / 100);
@@ -304,6 +310,9 @@ export function forwardYearInputs(inputs, acquirerEps, targetEps) {
     companyAEPS:           acquirerEps,
     companyADilutedShares: acqDilSh,
     companyBNetIncome:     targetEps * tgtDilSh,
+    // Both legs are consensus here, whatever basis the historical figures are on.
+    companyABasis:         'consensus',
+    companyBBasis:         'consensus',
   };
 }
 
@@ -369,6 +378,9 @@ export function buildNarrative(results, inputs, nameA, nameB, flags) {
   } else {
     const epsDir = results.isAccretive ? 'increasing' : 'decreasing';
     text = `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total) would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from $${results.companyAEPS} to $${results.proFormaEPS}.`;
+  }
+  if (results.basesDiffer) {
+    return `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total): pro forma EPS and accretion are not shown because the companies are on different bases. Put both on the same basis to combine them.`;
   }
   if (flags.length > 0) {
     text += ` ${flags[0].text.split('—')[0].trim()} represents the deal's biggest structural risk.`;

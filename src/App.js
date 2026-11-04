@@ -17,8 +17,9 @@ import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
 import { buildCashPercentTooltip } from './lib/suggestionTooltips';
 import { SynergyInputs } from './components/shared/SynergyInputs';
+import { CompanyBasisToggle } from './components/shared/CompanyBasisToggle';
 import { synergySchedule } from './lib/synergies';
-import { revenuePeriodLabel } from './lib/revenuePeriod';
+import { BASIS_FY, BASIS_LTM, ltmAvailability, companyInputs, combination } from './lib/companyBasis';
 import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium } from './lib/offerPremium';
 import './App.css';
 
@@ -406,7 +407,7 @@ function BankFactsDisplay({ bankFacts }) {
   );
 }
 
-function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSource, periodLabel }) {
+function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSource }) {
   const [options, setOptions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -447,9 +448,6 @@ function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSour
                 background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 4, padding: '1px 5px' }}>
                 via {SOURCE_LABEL[dataSource] || dataSource}
               </span>
-            )}
-            {dataSource && dataSource !== 'none' && periodLabel && (
-              <span data-testid="revenue-period" style={{ fontWeight: 'normal', fontSize: 11, color: '#6B7280', marginLeft: 6 }}>{periodLabel}</span>
             )}
           </div>
           {dataSource === 'none' && (
@@ -549,8 +547,8 @@ function App() {
   const [cashPercentTouched, setCashPercentTouched] = useState(false);
   const [expandedA, setExpandedA] = useState(false);
   const [expandedB, setExpandedB] = useState(false);
-  const [revenuePeriodA, setRevenuePeriodA] = useState(null);   // label for the revenue on each company card
-  const [revenuePeriodB, setRevenuePeriodB] = useState(null);
+  const [quoteA, setQuoteA] = useState(null);   // the /quote payload behind each card; the basis toggle reads from it
+  const [quoteB, setQuoteB] = useState(null);
   const [fiscalYearA, setFiscalYearA] = useState(null);   // e.g. 2025
   const [fiscalYearEndA, setFiscalYearEndA] = useState(null);
   const [fiscalYearB, setFiscalYearB] = useState(null);
@@ -692,6 +690,11 @@ function App() {
   };
 
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
+  // The one basis switch: the card's figures are rewritten from its /quote payload. Edits made under "Edit financials" do not survive a switch.
+  const handleBasisChange = (P) => (basis) => {
+    const quote = P === 'A' ? quoteA : quoteB;
+    if (quote) setInputs(prev => ({ ...prev, ...companyInputs(P, quote, basis) }));
+  };
   const handleSynergyChange = (name, value) => setInputs(prev => ({ ...prev, [name]: value }));
   const CLEAR_SYNERGIES = { synergiesY1: null, synergiesY2: null, synergiesY3: null, revenueSynergiesY1: null, revenueSynergiesY2: null, revenueSynergiesY3: null };
 
@@ -752,15 +755,10 @@ function App() {
       setCompanyTypeA(data.companyType || 'standard'); setDataSrcA(data.dataSource || '');
       setSicA(data.sic || null); setSicDescriptionA(data.sicDescription || null);
       setFiscalYearA(data.fiscalYear ?? null); setFiscalYearEndA(data.fiscalYearEnd ?? null);
-      setRevenuePeriodA(revenuePeriodLabel(data));
-      setInputs(prev => ({ ...prev, companyAName: symbol.toUpperCase(), companyAPeriodLabel: revenuePeriodLabel(data), companyADataSource: data.dataSource ?? null,
-        companyACostOfRevenue: data.costOfRevenue ?? null, companyACostOfRevenueSource: data.costOfRevenueSource ?? null,
-        companyAGrossProfitSource: data.grossProfitSource ?? null, companyAGrossProfitBasis: data.grossProfitBasis ?? null,
-        companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
-        companyANetIncome: data.netIncome, companyAShares: data.shares,
-        companyAOperatingIncome: data.operatingIncome, companyAGrossProfit: data.grossProfit ?? null,
-        companyAFreeCashFlow: data.freeCashFlow ?? null,
-        companyADilutedShares: data.dilutedShares, companyADilutedSharesPeriod: data.dilutedSharesPeriod ?? null, companyAEPS: data.eps,
+      setQuoteA(data);
+      setInputs(prev => ({ ...prev, companyAName: symbol.toUpperCase(), companyADataSource: data.dataSource ?? null,
+        ...companyInputs('A', data, BASIS_FY),   // figures on the card's basis; a new company starts on Fiscal year
+        companyAShares: data.shares,
         companyACash: data.cash, companyASti: data.shortTermInvestments ?? null, companyADebt: data.debt,
         companyABsAsOf: data.balanceSheetAsOf ?? null, companyABsBasis: data.balanceSheetBasis ?? null,
         companyALtmRevenue: data.ltm?.trusted ? data.ltm.revenue : null,   // LTM (not FY) — min-cash basis
@@ -801,15 +799,10 @@ function App() {
       setCompanyTypeB(data.companyType || 'standard'); setDataSrcB(data.dataSource || '');
       setSicB(data.sic || null); setSicDescriptionB(data.sicDescription || null);
       setFiscalYearB(data.fiscalYear ?? null); setFiscalYearEndB(data.fiscalYearEnd ?? null);
-      setRevenuePeriodB(revenuePeriodLabel(data));
-      setInputs(prev => ({ ...prev, companyBName: symbol.toUpperCase(), companyBPeriodLabel: revenuePeriodLabel(data), companyBDataSource: data.dataSource ?? null,
-        companyBCostOfRevenue: data.costOfRevenue ?? null, companyBCostOfRevenueSource: data.costOfRevenueSource ?? null,
-        companyBGrossProfitSource: data.grossProfitSource ?? null, companyBGrossProfitBasis: data.grossProfitBasis ?? null,
-        companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
-        companyBNetIncome: data.netIncome, companyBShares: data.shares,
-        companyBOperatingIncome: data.operatingIncome, companyBGrossProfit: data.grossProfit ?? null,
-        companyBFreeCashFlow: data.freeCashFlow ?? null,
-        companyBDilutedShares: data.dilutedShares, companyBEPS: data.eps,
+      setQuoteB(data);
+      setInputs(prev => ({ ...prev, companyBName: symbol.toUpperCase(), companyBDataSource: data.dataSource ?? null,
+        ...companyInputs('B', data, BASIS_FY),   // figures on the card's basis; a new company starts on Fiscal year
+        companyBShares: data.shares,
         companyBCash: data.cash, companyBSti: data.shortTermInvestments ?? null, companyBDebt: data.debt,
         companyBBsAsOf: data.balanceSheetAsOf ?? null, companyBBsBasis: data.balanceSheetBasis ?? null,
         companyBLtmRevenue: data.ltm?.trusted ? data.ltm.revenue : null,   // LTM (not FY) — min-cash basis
@@ -842,7 +835,9 @@ function App() {
   // controls WHEN it runs (after the non-GAAP fetches settle). Reads the freshest non-GAAP via the ref.
   // The inputs the deal model runs on. The build and the input page's live figures both come through here.
   const modelInputs = (effectiveInputs) => {
-    const { calcInputs, basis } = resolveAccretionBasis(effectiveInputs, nonGaapRef.current.a, nonGaapRef.current.b);
+    // Reported non-GAAP is annual, so a company on LTM keeps the deal on GAAP rather than mix the periods.
+    const onLtm = effectiveInputs.companyABasis === BASIS_LTM || effectiveInputs.companyBBasis === BASIS_LTM;
+    const { calcInputs, basis } = onLtm ? { calcInputs: effectiveInputs, basis: 'GAAP' } : resolveAccretionBasis(effectiveInputs, nonGaapRef.current.a, nonGaapRef.current.b);
     // Guard 1 (Stage 2E): tag the resolved inputs with the deck's isBankDeal (SIC-based, catches JPM/BAC) so
     // dealCalc's sources-of-funds construction — and every sensitivity cell that shares it — keeps bank deals
     // on today's 100%-debt behavior. Bank classification is read here, never modified.
@@ -940,7 +935,7 @@ function App() {
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
     setOfferPriceTouched(false); setCashPercentTouched(false); setUnaffectedDate('');
     setExpandedA(false); setExpandedB(false);
-    setFiscalYearA(null); setFiscalYearEndA(null); setRevenuePeriodA(null); setRevenuePeriodB(null);
+    setFiscalYearA(null); setFiscalYearEndA(null); setQuoteA(null); setQuoteB(null);
     setFiscalYearB(null); setFiscalYearEndB(null);
     setNonGaapA(null); setNonGaapB(null);
     setNonGaapLoadingA(false); setNonGaapLoadingB(false);
@@ -955,7 +950,7 @@ function App() {
       nameB: nameB || 'Company B',
       tickerA, tickerB,
       companyTypeA, companyTypeB,
-      results, inputs, mode, dealType, fetchedA, fetchedB,
+      results, inputs, mode, dealType, fetchedA, fetchedB, quoteA, quoteB,
       bankFactsA, bankFactsB,
       savedAt: new Date().toLocaleDateString(),
     }, ...prev]);
@@ -963,7 +958,7 @@ function App() {
 
   const handleLoadAnalysis = (saved) => {
     setOfferPriceTouched(true);   // a saved deal keeps its own offer
-    setInputs(saved.inputs); setResults(saved.results);
+    setInputs(saved.inputs); setResults(saved.results); setQuoteA(saved.quoteA || null); setQuoteB(saved.quoteB || null);
     setNameA(saved.nameA); setNameB(saved.nameB);
     setTickerA(saved.tickerA || ''); setTickerB(saved.tickerB || '');
     // Restore the deal type (derive from the saved private flags for pre-deal-type saves), and route the
@@ -1075,6 +1070,8 @@ function App() {
     riskWeightedAssets: bankFactsB?.riskWeightedAssets ?? null,
     totalAssets:        bankFactsB?.totalAssets ?? null,
     totalDeposits:      bankFactsB?.totalDeposits ?? null,
+    basis:         inputs.companyBBasis ?? null,
+    basisLabel:    inputs.companyBPeriodLabel ?? null,
     fiscalYear:    fiscalYearB,
     fiscalYearEnd: fiscalYearEndB,
     // Reported annual non-GAAP payload — drives the §4/§5/§6 display layer; the accretion flip reads it
@@ -1106,6 +1103,8 @@ function App() {
     riskWeightedAssets: bankFactsA?.riskWeightedAssets ?? null,
     totalAssets:        bankFactsA?.totalAssets ?? null,
     totalDeposits:      bankFactsA?.totalDeposits ?? null,
+    basis:         inputs.companyABasis ?? null,
+    basisLabel:    inputs.companyAPeriodLabel ?? null,
     fiscalYear:    fiscalYearA,
     fiscalYearEnd: fiscalYearEndA,
     // Reported annual non-GAAP payload — drives the §4/§5/§6 display layer; the accretion flip reads it
@@ -1113,6 +1112,7 @@ function App() {
     nonGaap: nonGaapA,
   });
 
+  const numOrNull = (v) => (v == null ? null : parseFloat(v));   // a null combined figure stays null, never NaN
   const buildDealForDeck = () => ({
     offerPrice: inputs.offerPricePerShare, cashPercent: inputs.cashPercent,
     // Phase 8 — false when either company is private (no market data) → DeckShell suppresses the
@@ -1128,17 +1128,18 @@ function App() {
     synergiesY3: synergySchedule(resolvedInputs || inputs).years[2].ebitda,
     synergies:   synergySchedule(resolvedInputs || inputs),
     proFormaRevenue: results ? results.proFormaRevenue : null,
+    combination: combination(resolvedInputs || inputs),
     epsAccretion:    results ? parseFloat(results.epsChangePct) : 0,
     isAccretive:     results ? results.isAccretive : false,
     purchasePremium: results ? parseFloat(results.purchasePremium) : 0,
-    proFormaEPS:     results ? parseFloat(results.proFormaEPS) : 0,
+    proFormaEPS:     results ? numOrNull(results.proFormaEPS) : 0,
     evEBITDA:        results ? results.evEBITDA   : 'N/A',
     peRatio:         results ? results.peRatio    : 'N/A',
     debtEBITDA:      results ? results.debtEBITDA : 'N/A',
     dealSize:        results ? parseFloat(results.totalPurchasePrice) : 0,
-    combinedRevenue: results ? parseFloat(results.combinedRevenue) : 0,
-    combinedEBITDA:  results ? parseFloat(results.combinedEBITDA) : 0,
-    combinedNetIncome: results ? parseFloat(results.combinedNetIncome) : 0,
+    combinedRevenue: results ? numOrNull(results.combinedRevenue) : 0,
+    combinedEBITDA:  results ? numOrNull(results.combinedEBITDA) : 0,
+    combinedNetIncome: results ? numOrNull(results.combinedNetIncome) : 0,
     newSharesIssued: results ? parseFloat(results.newSharesIssued) : 0,
     // Accretion basis label (Non-GAAP when both companies reconcile, else GAAP).
     basis: (results && results.basis) || accretionBasis,
@@ -1198,14 +1199,17 @@ function App() {
     const setExpanded = isA ? setExpandedA : setExpandedB;
     const companyType = isA ? companyTypeA : companyTypeB;
     const bankFacts = isA ? bankFactsA : bankFactsB;
+    const quote = isA ? quoteA : quoteB;
+    const ltm = ltmAvailability(quote, { bank: !!quote && isFinancial(quote) });
     return (
       <div style={cardStyle}>
         <h2 style={sectionTitle}>Company {P} — {isA ? 'Acquirer' : 'Target'}</h2>
         <TickerSelect onSelect={isA ? handleSelectA : handleSelectB} error={isA ? errorA : errorB} fetched={fetched}
-          companyName={isA ? nameA : nameB} loading={isA ? loadingA : loadingB} dataSource={isA ? dataSrcA : dataSrcB}
-          periodLabel={isA ? revenuePeriodA : revenuePeriodB} />
+          companyName={isA ? nameA : nameB} loading={isA ? loadingA : loadingB} dataSource={isA ? dataSrcA : dataSrcB} />
         {fetched && (
           <div style={{ marginTop: 10 }}>
+            <CompanyBasisToggle panel={P} basis={inputs[`company${P}Basis`] || BASIS_FY} onChange={handleBasisChange(P)}
+              ltmAvailable={ltm.available} ltmReason={ltm.reason} periodLabel={(isA ? dataSrcA : dataSrcB) === 'none' ? null : inputs[`company${P}PeriodLabel`]} />
             {priceStatus.loading && <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6, fontStyle: 'italic' }}>⟳ Fetching live price…</div>}
             <div style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 8, padding: '8px 12px', marginBottom: 8 }}>
               <div style={{ fontSize: 12, color: '#374151', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
@@ -1246,6 +1250,7 @@ function App() {
     return (
       <div style={cardStyle}>
         <h2 style={sectionTitle}>Company {P} — {isA ? 'Acquirer' : 'Target'}</h2>
+        <CompanyBasisToggle panel={P} basis={BASIS_FY} onChange={() => {}} ltmAvailable={false} ltmReason="a private company has no LTM data here" />
         <UploadZone uploading={isA ? uploadingA : uploadingB} error={isA ? uploadErrA : uploadErrB} onFile={f => handleExtract(f, P)} />
         <DocFactsPanel facts={isA ? docFactsA : docFactsB} onChange={isA ? setDocFactsA : setDocFactsB} />
         <div style={{ fontSize: 11, color: '#6B7280', margin: '0 0 12px' }}>Upload a 10-K to pre-fill every figure with a page cite — or enter the six by hand below.</div>

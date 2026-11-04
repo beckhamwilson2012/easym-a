@@ -2,6 +2,7 @@ import { apiUrl } from '../../../api';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, isBankDeal, isUtility, UTILITY_GROSS_NOTE } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
@@ -133,6 +134,7 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     peCell, peNonOp, evEbitCell, evEbitApprox, netDebt: netDebtLtm,
     // raw inputs for the EPS-impact engine
     netIncome: data.netIncome != null ? parseFloat(data.netIncome) : null,
+    netIncomeLtm: niLtm, growthBaseFy: latestAct?.label ?? null,
     shares, eps: data.eps != null ? parseFloat(data.eps) : null, livePrice: live,
   };
 }
@@ -318,7 +320,11 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
     if (dealPremium == null || !(c.livePrice > 0) || c.netIncome == null || !(c.shares > 0)) return null;
     // applySourcesOfFunds:false — the peer screen carries no per-peer balance sheet, so it keeps the simple
     // 100%-debt convention (unchanged); the sources-of-funds construction applies to the main deal only.
-    const peerInputs = { ...baseInputs, companyBShares: c.shares, companyBNetIncome: c.netIncome, companyBEPS: c.eps, currentSharePriceB: c.livePrice, applySourcesOfFunds: false };
+    // On an LTM acquirer the candidate's net income is LTM too, or absent: the impact never mixes periods.
+    const onLtm = baseInputs.companyABasis === 'ltm';
+    const peerNi = onLtm ? c.netIncomeLtm : c.netIncome;
+    if (peerNi == null) return null;
+    const peerInputs = { ...baseInputs, companyBBasis: baseInputs.companyABasis, companyBShares: c.shares, companyBNetIncome: peerNi, companyBEPS: c.eps, currentSharePriceB: c.livePrice, applySourcesOfFunds: false };
     const peerOffer = c.livePrice * (1 + dealPremium);
     const pct = epsAccretionPct(peerOffer, 0, peerInputs); // 0 synergies → pre-synergy structural impact
     return Number.isFinite(pct) ? pct : null;
@@ -326,9 +332,11 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   ordered.forEach(c => { c.epsImpact = epsImpactFor(c); });
 
   // ── Target-screen metric rows (Stage 3) — real where sourceable; NRR + Customers honest "—" ──────────
+  const growthBases = [...new Set(ordered.map(c => c.growthBaseFy).filter(Boolean))];
+  const growthUnit = growthBases.length === 1 ? `next-FY est. vs ${growthBases[0]}` : 'next-FY est. vs last FY';
   const STD_METRICS = [
     { label: 'Revenue',              unit: '$M LTM',    get: c => c.revenue,       fmt: fmtIntParens },
-    { label: 'Revenue Growth',       unit: 'next-FY est.', get: c => c.revGrowthProj, fmt: fmtPct1Signed },
+    { label: 'Revenue Growth',       unit: growthUnit, get: c => c.revGrowthProj, fmt: fmtPct1Signed },
     { label: 'Gross Margin',         unit: 'LTM %',     get: c => c.grossMargin,   fmt: fmtPct1, nm: c => c.grossNm },
     { label: 'Op Margin',            unit: 'NTM',       get: c => c.opMarginNG,    fmt: fmtPct1 },
     { label: 'Op Income',            unit: '$M NTM',    get: c => c.opIncomeNG,    fmt: fmtIntParens },
@@ -481,6 +489,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
       {editOpen && (
         <EditPeersModal autoPeers={autoPeers} customPeers={customPeers} onSave={handleSavePeers} onClose={() => setEditOpen(false)} />
       )}
+      <BasisNote acquirer={acquirer} target={target} fixed="Actuals on this slide are LTM for every company with trusted LTM, whichever basis the card is on. Forward growth is against the last fiscal year, never LTM." style={{ padding: '0 22px 6px' }} />
       {(sourceLine || peerProvenance) && (
         <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}

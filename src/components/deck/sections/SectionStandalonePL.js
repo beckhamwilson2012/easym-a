@@ -2,6 +2,7 @@ import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isUtility, UTILITY_GROSS_NOTE, standaloneEPS, nonGaapFigures, fmtAsOf } from '../shared/deckTokens';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
@@ -96,6 +97,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
   ];
   const MARGINS = [
     { label: 'Revenue Growth %',   val: (c) => c._growth },
+    { label: 'Growth compared with', text: (c) => c._growthBase },
     { label: 'Gross Margin %',     val: (c) => marginOf(c.grossProfit, c), noConsensus: !utilityMode, nm: utilityMode },
     { label: 'Operating Margin %', val: (c) => marginOf(c.operatingIncome, c) },
     { label: 'EBITDA Margin %',    val: (c) => marginOf(c.ebitda, c) },
@@ -130,6 +132,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
     operatingIncome: L.operatingIncome, nonOperatingIncome: L.nonOperatingIncome?.ltmM ?? null, netIncome: L.netIncome,
     ebitda: L.ebitda, ebitdaDaFound: L.ebitdaDaFound, dilutedShares: L.dilutedShares, eps: L.eps,
     _growth: (lastActual && lastActual.revenue && L.revenue != null) ? ((L.revenue - lastActual.revenue) / lastActual.revenue * 100) : null,
+    _growthBase: lastActual ? `vs ${lastActual.label}` : null,
   } : null;
 
   // 2c — LTM non-operating disclosure (fallback ii): name ONLY the sourced NonoperatingIncomeExpense total
@@ -152,7 +155,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
   const fwd2d = (_fwd.length >= 2 && _nm(_fwd[0]) != null && _nm(_fwd[1]) != null && (_nm(_fwd[0]) - _nm(_fwd[1])) > 10)
     ? { y1: _fwd[0].label, m1: _nm(_fwd[0]), y2: _fwd[1].label, m2: _nm(_fwd[1]) } : null;
 
-  const withGrowth = cols.map((c, i) => ({ ...c, _growth: growthOf(i) }));
+  const withGrowth = cols.map((c, i) => ({ ...c, _growth: growthOf(i), _growthBase: i > 0 ? `vs ${cols[i - 1].label}` : null }));
   const dcols = ltmCol
     ? [...withGrowth.filter(c => c.actual), ltmCol, ...withGrowth.filter(c => !c.actual)]
     : withGrowth;
@@ -255,7 +258,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
               <tr key={m.label}>
                 <td style={{ padding: '3px 8px', paddingLeft: 18, background: ri % 2 ? ALT_ROW : '#fff', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10, color: '#374151' }}>{m.label}</td>
                 {dcols.map((c, i) => {
-                  const v = m.val(c, i);
+                  const v = m.val ? m.val(c, i) : null;
                   const neg = typeof v === 'number' && v < 0;
                   return (
                     <td key={i} style={{
@@ -265,7 +268,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
                       fontStyle: (c.actual || c.isLtm) ? 'normal' : 'italic',
                       color: neg ? '#DC2626' : (c.actual ? '#374151' : '#1E3A5F'),
                     }}>
-                      {m.nm ? 'n/m' : fmtPctV(v)}
+                      {m.text ? (m.text(c) || '—') : m.nm ? 'n/m' : fmtPctV(v)}
                       {m.noConsensus && !c.actual && v == null ? <sup style={{ fontSize: 7, fontWeight: 400, color: '#6B7280' }}> n</sup> : null}
                     </td>
                   );
@@ -430,7 +433,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
     // Net income / EPS use the SAME basis-aware values the table renders (niVal/epsVal), so the commentary
     // never contradicts the table. On a GAAP/bank deal niVal/epsVal == the GAAP figures → wording unchanged.
     if (rev > 0 && niVal != null && niVal > 0) lines.push(`Net income of ${fmtMoneyTable(niVal)} — a ${fmtPct(niMarginVal)} net margin.`);
-    if (rev > 0 && niVal != null && niVal < 0) lines.push(`Reported a net loss of ${fmtMoneyTable(Math.abs(niVal))} in the latest fiscal year — growth-stage profitability profile.`);
+    if (rev > 0 && niVal != null && niVal < 0) lines.push(`Reported a net loss of ${fmtMoneyTable(Math.abs(niVal))} in ${target?.basis === 'ltm' ? `the period, ${target.basisLabel}` : 'the latest fiscal year'} — growth-stage profitability profile.`);
     if (shares > 0 && epsVal != null) lines.push(`${shares.toFixed(0)}M shares outstanding; ${epsNonGaap ? 'non-GAAP' : 'reported'} diluted EPS of ${fmtPerShare(epsVal)}.`);
     if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}.`);
     else lines.push(`Net cash / (debt) position: N/A — a balance-sheet figure was unavailable in the filing.`);
@@ -441,6 +444,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
   // Build an honest fiscal-year label from the server-supplied metadata.
   // CRM FY ends Jan → "FY2026 (ended Jan 2026)"; TEAM FY ends Jun → "FY2025 (ended Jun 2025)".
   const fyLabel = (() => {
+    if (target?.basis === 'ltm') return target.basisLabel;
     const fy  = target?.fiscalYear;
     const end = target?.fiscalYearEnd;
     if (!fy && !end) return 'Most Recent Annual Filing';
@@ -459,6 +463,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
           : `${fyLabel} · $ in millions · profitability Non-GAAP where labeled (see basis note)`}
       />
 
+      <BasisNote only={target} fixed={target?.basis === 'ltm' ? 'The commentary and the deal model read the LTM column; the fiscal-year columns are for reference.' : null} style={{ padding: '8px 20px 0' }} />
       {pnl && <MultiYearPL pnl={pnl} restaurantMode={restaurantMode} utilityMode={utilityMode} />}
 
       <div style={{ display: 'flex', gap: 20, padding: pnl ? '4px 20px 30px' : '16px 20px 36px' }}>
@@ -471,7 +476,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
           <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden', marginBottom: 14 }}>
             <div style={{ background: NAVY, padding: '5px 10px', display: 'flex', justifyContent: 'space-between' }}>
               <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>Line Item</span>
-              <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>Latest FY ($M)</span>
+              <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>{target?.basis === 'ltm' ? 'LTM ($M)' : 'Latest FY ($M)'}</span>
             </div>
             {bankMode ? (
               <>

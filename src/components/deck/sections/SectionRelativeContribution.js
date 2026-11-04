@@ -1,6 +1,8 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
+import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, nonGaapFigures, isBankDeal, isRestaurant, isUtility } from '../shared/deckTokens';
 import { UTILITY_GROSS_REASON } from '../../../lib/utilitySic';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
@@ -48,8 +50,9 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   //    which previously forced the split to n/m). ───────────────────────────────────────────────
   const { data: aVerified } = useVerifiedData(acquirer?.ticker ?? null);
   const { data: bVerified } = useVerifiedData(target?.ticker ?? null);
-  const aFetchedFCF = aVerified?.fields?.freeCashFlow?.value ?? null;
-  const bFetchedFCF = bVerified?.fields?.freeCashFlow?.value ?? null;
+  // On LTM the card's own LTM free cash flow is the figure; the verified layer carries the fiscal year.
+  const aFetchedFCF = acquirer?.basis === 'ltm' ? (acquirer.freeCashFlow ?? null) : (aVerified?.fields?.freeCashFlow?.value ?? null);
+  const bFetchedFCF = target?.basis === 'ltm' ? (target.freeCashFlow ?? null) : (bVerified?.fields?.freeCashFlow?.value ?? null);
   const aFCF = aFetchedFCF != null ? parseFloat(aFetchedFCF) : (parseFloat(acquirer.netIncome) || 0);
   const bFCF = bFetchedFCF != null ? parseFloat(bFetchedFCF) : (parseFloat(target.netIncome) || 0);
   const fcfFromProxy = aFetchedFCF == null || bFetchedFCF == null; // label honestly if either side fell back
@@ -91,7 +94,9 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   // ── Metric rows ─────────────────────────────────────────────────────────────
   // CONTRIBUTION metrics only. Ownership (the equity split) is a DIFFERENT concept and lives on §H as a
   // donut — it is deliberately NOT a bar here (contribution ≠ ownership; do not conflate the two).
-  const metrics = bankMode ? [
+  const differentBases = !!deal?._results?.basesDiffer;
+  const noSplit = (m) => (differentBases ? { ...m, aPct: null, bPct: null, nm: true, blocked: true, nmReason: DIFFERENT_BASES } : m);
+  const metrics = (bankMode ? [
     { label: 'Net Interest Income', isMoney: true, ...splitContribution(aNII, bNII) },
     { label: 'Total Revenue',       isMoney: true, ...splitContribution(aRev, bRev) },
     { label: 'Net Income',          isMoney: true, ...splitContribution(aNI, bNI) },
@@ -103,7 +108,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
     : (restaurantDeal || !gpAvailable) ? null : { label: 'Gross Profit', isMoney: true, ...splitContribution(aGP, bGP) },
     { label: `Operating Income (${oiNonGaap ? 'Non-GAAP' : 'GAAP'})`, isMoney: true, ...splitContribution(aOI, bOI) },
     { label: fcfLabel, isMoney: true, ...splitContribution(aFCF, bFCF) },
-  ].filter(Boolean);
+  ].filter(Boolean)).map(noSplit);
 
   // Thesis sentence (spec §2 Slide 11): "{Acquirer} acquires 100% of {Target}, which contributes
   // X–Y% of pro forma financials, for Z% of combined equity." Range = target's contribution across
@@ -178,7 +183,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}>
-                  <span style={{ fontSize: 10, color: '#9CA3AF', fontStyle: 'italic' }}>n/m</span>
+                  <span style={{ fontSize: 10, color: '#9CA3AF', fontStyle: 'italic' }}>{m.blocked ? '—' : 'n/m'}</span>
                 </div>
               ) : (() => {
                 // Both slices are ALWAYS labeled (Fix 10c): wide slices (≥12%) get a label inside;
@@ -277,8 +282,8 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
           {metrics.map((m, i) => {
             const aDisp = m.aNm ? 'n/m' : m.isMoney ? fmtScaled(m.aVal, moneyScale) : `${(parseFloat(m.aVal) || 0).toFixed(1)}M sh`;
             const bDisp = m.bNm ? 'n/m' : m.isMoney ? fmtScaled(m.bVal, moneyScale) : `${(parseFloat(m.bVal) || 0).toFixed(1)}M sh`;
-            const aPctDisp = m.nm ? 'n/m' : fmtPct(m.aPct, 1);
-            const bPctDisp = m.nm ? 'n/m' : fmtPct(m.bPct, 1);
+            const aPctDisp = m.blocked ? '—' : m.nm ? 'n/m' : fmtPct(m.aPct, 1);
+            const bPctDisp = m.blocked ? '—' : m.nm ? 'n/m' : fmtPct(m.bPct, 1);
             return (
               <div key={m.label} style={{ display: 'flex', padding: '5px 10px', background: i % 2 === 1 ? ALT_ROW : '#fff', borderBottom: i === metrics.length - 1 ? 'none' : `1px solid ${GRAY_BORDER}` }}>
                 <span style={{ flex: 2.4, fontSize: 11, color: '#374151' }}>{m.label}</span>
@@ -292,6 +297,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
         </div>
       </div>
 
+      <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ padding: '0 20px 6px' }} />
       {/* Source line */}
       <div style={{ padding: '0 20px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
         {sourceLine}

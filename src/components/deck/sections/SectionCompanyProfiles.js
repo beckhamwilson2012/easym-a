@@ -2,6 +2,7 @@ import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, isUtility, UTILITY_GROSS_NOTE, fmtAsOf } from '../shared/deckTokens';
 import { getCompanyProfile, PROFILES_AS_OF } from '../../../lib/companyProfiles';
 import { enterpriseValue, NET_DEBT_BASIS } from '../../../lib/netDebt';
@@ -113,6 +114,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
       revenue: revA,
       revBasis, ltmAsOf: T ? T.asOf : null,
       growth,   // forward (NTM consensus) — unchanged
+      growthBase: act?.label ?? null,
       grossNm: isUtility(co),
       grossMargin: (gpL != null && revL > 0) ? gpL / revL * 100 : ((gp != null && rev) ? gp / rev * 100 : null),
       opMargin:    (oiL != null && revL > 0) ? oiL / revL * 100 : ((oi != null && rev) ? oi / rev * 100 : null),
@@ -130,9 +132,10 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
   const acqFin = buildKeyFin(acquirerObj, acqPnl, acqQuote?.ltm, acqQuote?.totalAssets);
   const tgtFin = buildKeyFin(targetObj, tgtPnl, tgtQuote?.ltm, tgtQuote?.totalAssets);
   // Standard (non-financial) Key Financials — the original, unchanged row set.
+  const growthVs = acqFin.growthBase && acqFin.growthBase === tgtFin.growthBase ? `vs ${acqFin.growthBase}` : 'vs last FY';
   const STANDARD_ROWS = [
     { label: 'Revenue',              fmt: (f) => f.revenue != null ? fmtMoneyTable(f.revenue) : '—', get: (f) => f.revenue },
-    { label: 'Revenue growth (proj.)', fmt: (f) => f.growth != null ? `${f.growth >= 0 ? '+' : '−'}${Math.abs(f.growth).toFixed(1)}%` : '—', get: (f) => f.growth },
+    { label: `Revenue growth (proj., ${growthVs})`, fmt: (f) => f.growth != null ? `${f.growth >= 0 ? '+' : '−'}${Math.abs(f.growth).toFixed(1)}%` : '—', get: (f) => f.growth },
     { label: 'Gross margin (GAAP)',     fmt: (f) => f.grossNm ? 'n/m' : f.grossMargin != null ? fmtPct(f.grossMargin) : '—', get: (f) => f.grossMargin },
     { label: 'Operating margin (GAAP)', fmt: (f) => f.opMargin != null ? fmtPct(f.opMargin) : '—', get: (f) => f.opMargin },
     { label: 'Free cash flow',       fmt: (f) => f.fcf != null ? fmtMoneyTable(f.fcf) : '—', get: (f) => f.fcf },
@@ -294,6 +297,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
         </div>
       </div>
 
+      <BasisNote acquirer={acquirerObj} target={targetObj} fixed="Key Financials are LTM for every company with trusted LTM, whichever basis the card is on." style={{ padding: '0 20px 6px' }} />
       {/* Source / footnote line */}
       <div style={{
         padding: '0 20px 14px',

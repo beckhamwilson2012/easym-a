@@ -1,3 +1,5 @@
+import { basesDiffer, DIFFERENT_BASES } from './companyBasis';
+
 // The one synergy calculation. Every slide, the deal model and the input page read this schedule; nothing else
 // derives a synergy figure.
 //
@@ -63,7 +65,7 @@ export function revenueSynergyBase(inputs) {
 export function combinedGrossMargin(inputs) {
   const names = { A: inputs.companyAName || 'the acquirer', B: inputs.companyBName || 'the target' };
   const none = (reason) => ({ pct: null, reason });
-  if (inputs.basisMismatch) return none('companies on different bases');
+  if (basesDiffer(inputs)) return none(DIFFERENT_BASES);
   for (const P of ['A', 'B']) {
     if (val(inputs[`company${P}GrossProfit`]) == null) return none(`${names[P]} has no gross profit figure`);
     if (inputs[`company${P}GrossProfitSource`] !== 'sec_edgar') return none(`${names[P]}'s gross profit is not from a filing`);

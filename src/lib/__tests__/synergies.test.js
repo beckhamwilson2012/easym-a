@@ -67,7 +67,7 @@ describe('combined gross margin', () => {
     expect(combinedGrossMargin({ ...netDdog, companyBGrossProfit: null }).pct).toBeNull();
     expect(combinedGrossMargin({ ...netDdog, companyBGrossProfit: null }).reason).toContain('DDOG');
     expect(combinedGrossMargin({ ...netDdog, companyAGrossProfitSource: 'fmp' }).reason).toContain('not from a filing');
-    expect(combinedGrossMargin({ ...netDdog, basisMismatch: true }).reason).toBe('companies on different bases');
+    expect(combinedGrossMargin({ ...netDdog, companyABasis: 'ltm', companyBBasis: 'fy' }).reason).toBe('companies on different bases');
   });
 });
 

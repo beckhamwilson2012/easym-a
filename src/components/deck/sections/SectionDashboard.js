@@ -16,6 +16,8 @@ import {
 import { useWindowWidth } from '../../../hooks/useWindowWidth';
 import { ExplainButton } from '../../shared/ExplainButton';
 import { SynergyLines } from '../shared/SynergyLines';
+import { BasisNote } from '../shared/BasisNote';
+import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
@@ -118,7 +120,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const breakevenEPS = acquirerStandaloneEPS(inputs); // net income ÷ shares (matches calculate())
   const currentRowData = sensitivityData[sensitivityCurrentRow] || [];
   let sensitivityFooter = null;
-  if (!synergyY1Entered) {
+  if (results.basesDiffer) {
+    sensitivityFooter = `Pro forma EPS is not shown: ${DIFFERENT_BASES}.`;
+  } else if (!synergyY1Entered) {
     sensitivityFooter = `No Year 1 synergies entered, so every column shows EPS with no synergies assumed.`;
   } else if (breakevenEPS > 0 && currentRowData.length > 0) {
     const firstAccretiveIdx = currentRowData.findIndex(eps => eps !== null && eps >= breakevenEPS);
@@ -199,7 +203,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 Deal Score
                 <ExplainButton explain={() => explainDealScore({ score: dealScore, results })} />
               </div>
-              <div style={{ fontSize: 22, fontWeight: 'bold', color: scoreColor }}>{dealScore}/10</div>
+              <div style={{ fontSize: 22, fontWeight: 'bold', color: results.basesDiffer ? '#6B7280' : scoreColor }}>{results.basesDiffer ? '—' : `${dealScore}/10`}</div>
             </div>
           </div>
         </div>
@@ -207,6 +211,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         {/* Narrative */}
         <div style={{ ...cardStyle, marginBottom: 24, background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
           <p style={{ margin: 0, fontSize: 14, color: '#1E3A5F', lineHeight: 1.7 }}>{narrative}</p>
+          <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ marginTop: 6, fontSize: 11 }} />
         </div>
 
         {/* Key metrics */}
@@ -260,11 +265,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             },
             {
               label: 'Debt / EBITDA',
-              value: results.debtEBITDA === 'N/A' ? 'n/m' : `${results.debtEBITDA}x`,
+              value: results.basesDiffer ? '—' : results.debtEBITDA === 'N/A' ? 'n/m' : `${results.debtEBITDA}x`,
               // Branch on WHY the ratio is N/A (dealCalc: combinedEBITDA > 0 && combinedDebt != null) — a null
               // combined debt with positive EBITDA is "debt not available", never "EBITDA is non-positive".
               note:  results.debtEBITDA === 'N/A'
-                ? (results.combinedEBITDA == null ? 'Combined EBITDA not available'
+                ? (results.basesDiffer ? DIFFERENT_BASES : results.combinedEBITDA == null ? 'Combined EBITDA not available'
                   : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
                   : 'Combined debt not available')
                 : null,
@@ -307,13 +312,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>After</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {fmtPerShare(results.proFormaEPS)}
+                  {results.basesDiffer ? '—' : fmtPerShare(results.proFormaEPS)}
                 </div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Change</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {fmtPctSigned(parseFloat(results.epsChangePct))}
+                  {results.basesDiffer ? '—' : fmtPctSigned(parseFloat(results.epsChangePct))}
                 </div>
               </div>
             </div>
@@ -351,16 +356,16 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Pro Forma Net Income',          value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',                 value: fmtPerShare(results.proFormaEPS), bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ] : [
-              { label: 'Combined Revenue',    value: fmtMoneyTable(results.combinedRevenue)                          },
+              { label: 'Combined Revenue',    value: results.basesDiffer ? '—' : fmtMoneyTable(results.combinedRevenue)                          },
               ...(results.synergies.years[0].revenue != null ? [{ label: 'Pro Forma Revenue (incl. Y1 revenue synergies)', value: fmtMoneyTable(results.proFormaRevenue) }] : []),
-              { label: 'Combined EBITDA (incl. Y1 synergies)', value: fmtMoneyTable(results.combinedEBITDA) },
+              { label: 'Combined EBITDA (incl. Y1 synergies)', value: results.basesDiffer ? '—' : fmtMoneyTable(results.combinedEBITDA) },
               { label: 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Synergies (Y1)',  value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered, explain: () => explainSynergies({ schedule: results.synergies, isBank: false }) },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
-              { label: 'Pro Forma Net Income', value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
-              { label: 'Pro Forma EPS',       value: fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
+              { label: 'Pro Forma Net Income', value: results.basesDiffer ? '—' : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
+              { label: 'Pro Forma EPS',       value: results.basesDiffer ? '—' : fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F3F4F6' }}>
                 <span style={{ fontSize: 13, color: '#6B7280', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -460,7 +465,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                               Current
                             </span>
                           )}
-                          {eps === null ? 'N/A' : fmtPerShare(eps)}
+                          {eps === null ? (results.basesDiffer ? '—' : 'N/A') : fmtPerShare(eps)}
                         </td>
                       );
                     })}
@@ -495,7 +500,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                     {cashPct}% cash
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 700, color }}>
-                    {eps === null ? 'N/A' : fmtPerShare(eps)}
+                    {eps === null ? (results.basesDiffer ? '—' : 'N/A') : fmtPerShare(eps)}
                   </div>
                 </div>
               );
@@ -523,7 +528,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           return (
             <div style={{ ...cardStyle, marginBottom: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h3 style={{ color: '#0F2244', margin: 0, fontSize: 15 }}>Source Verification — {target?.ticker}</h3>
+                <h3 style={{ color: '#0F2244', margin: 0, fontSize: 15 }}>Source Verification — {target?.ticker}{target?.basis === 'ltm' ? ' (fiscal-year figures)' : ''}</h3>
                 <span style={{ fontSize: 11, color: allGood ? '#16A34A' : '#B45309', fontWeight: 600 }}>
                   {counts.verified} verified · {counts.single} single · {counts.flagged} flagged
                 </span>

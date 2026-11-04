@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { BasisNote } from '../shared/BasisNote';
+import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { NAVY, SF_BLUE, GRAY_BORDER, LIGHT_BLUE, fmtMoney, fmtPct, fmtPctSigned, fmtPctFloor, fmtShares } from '../shared/deckTokens';
 import { ISSUANCE_VOTE_THRESHOLD, ISSUANCE_MAJORITY_THRESHOLD } from '../../../lib/premiumThresholds';
@@ -115,7 +117,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   // non-positive (accretionMeaningful === false), so a null there means "not meaningful", not
   // "unknown". Distinguish them rather than printing one dash for both.
   const accPct = d.accretion ? d.accretion.pct : null;
-  const accText = R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
+  const accText = R.basesDiffer ? `n/m — ${DIFFERENT_BASES}` : R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
 
   const snapshot = [
     { label: 'Acquirer', value: A.name ? `${A.name}${aTk ? ` (${aTk})` : ''}` : DASH },
@@ -158,7 +160,9 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   if (num(d.premiumPct) != null && pos(d.currentPriceTarget) != null && pos(d.offerPrice) != null) {
     rationale.push(`Price: the ${ps(d.offerPrice)} offer is a ${pc(d.premiumPct)} premium to the target's ${ps(d.currentPriceTarget)} market price.`);
   }
-  rationale.push(R.accretionMeaningful === false
+  rationale.push(R.basesDiffer
+    ? `Earnings: Year-1 accretion / (dilution) is not shown — ${DIFFERENT_BASES}.`
+    : R.accretionMeaningful === false
     ? `Earnings: Year-1 accretion / (dilution) is not meaningful — the acquirer's or pro-forma EPS base is non-positive, so a percentage change carries no signal.`
     : `Earnings: Year-1 pro forma EPS moves ${pcS(accPct)} against the acquirer's standalone reported-diluted EPS.`);
 
@@ -183,6 +187,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
         subtitle={aTk && bTk ? `${aTk} / ${bTk} · deal snapshot, rationale & certainty of close` : 'Deal snapshot, rationale & certainty of close'}
       />
       <div style={{ padding: '12px 22px 40px' }}>
+        <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ marginBottom: 8 }} />
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
 
           {/* ── Left: snapshot ── */}

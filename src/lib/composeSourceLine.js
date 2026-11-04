@@ -50,7 +50,7 @@ export function forwardNetIncomeLabel(inputs) {
   const p = inputs?.companyADilutedSharesPeriod;
   const date = formatDeckDate(p?.end);
   const period = date
-    ? `${p.basis}, ${p.basis === 'cover page' ? 'as of' : 'fiscal year ended'} ${date}`
+    ? `${p.basis}, ${p.basis === 'cover page' ? 'as of' : p.interim ? 'latest interim period ended' : 'fiscal year ended'} ${date}`
     : 'period not available';
   return `Acquirer net income = consensus EPS × current diluted shares (${period})`;
 }

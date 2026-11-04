@@ -785,6 +785,8 @@ async function fetchFromEDGAR(symbol, cik) {
     ltm = raw.ltm ? {
       trusted: true, asOf: raw.asOf, fallback: null,
       revenue:         raw.flows.revenue.ltmM,
+      costOfRevenue:   raw.flows.costOfRevenue.ltmM,
+      costOfRevenueSource: raw.flows.costOfRevenue.sourceLabel,
       grossProfit:     grossNotMeaningful ? null : raw.flows.grossProfit.ltmM,
       operatingIncome: raw.flows.operatingIncome.ltmM,
       ebitda:          raw.flows.ebitda.ltmM,
