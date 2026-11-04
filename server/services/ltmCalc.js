@@ -17,7 +17,8 @@
 // EDGAR is the sole source for LTM v1 (no FMP).
 
 const { get } = require('../utils/httpGet');
-const { COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, grossFromCostOfRevenue, describeLtmCostSource, prepareIncomeFacts } = require('./incomeConcepts');
+const { COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, grossFromCostOfRevenue, describeLtmCostSource, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./incomeConcepts');
+const { chooseNamespace, ltmRevenueConcepts, isOlderFiscalYear } = require('./revenueConcepts');
 
 const DAY = 86400000;
 const days = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / DAY);
@@ -33,8 +34,6 @@ function scaleShares(v) {
 
 const NAMES = {
   gaap: {
-    revenue: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet',
-              'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense'],
     grossProfit: GROSS_PROFIT_CONCEPTS,
     costOfRevenue: COST_OF_REVENUE_CONCEPTS.gaap,
     operatingIncome: ['OperatingIncomeLoss'],
@@ -51,7 +50,6 @@ const NAMES = {
     sharesInstant: ['CommonStockSharesOutstanding'],
   },
   ifrs: {
-    revenue: ['Revenue', 'RevenueFromContractsWithCustomers', 'RevenueAndOtherIncome'],
     grossProfit: GROSS_PROFIT_CONCEPTS,
     costOfRevenue: COST_OF_REVENUE_CONCEPTS.ifrs,
     operatingIncome: ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities'],
@@ -264,17 +262,17 @@ function ltmDA(ns, names, P) {
 }
 
 // Pure: takes an already-fetched companyfacts object. Returns an LTM structure or an honest degrade.
-function computeLTM(facts) {
+// floorEnd: the latest annual filing period (revenueConcepts). An LTM built on an older annual leg is not an LTM.
+function computeLTM(facts, floorEnd = null) {
   const gaap = facts?.facts?.['us-gaap'] || {};
-  const ifrs = facts?.facts?.['ifrs-full'] || {};
   const dei  = facts?.facts?.['dei'] || {};
-  const useIfrs = Object.keys(ifrs).length > 0 && Object.keys(gaap).length === 0;
-  const ns = useIfrs ? ifrs : gaap;
+  const { useIfrs, ns } = chooseNamespace(facts, floorEnd);
   const N  = useIfrs ? NAMES.ifrs : NAMES.gaap;
+  const revenueNames = ltmRevenueConcepts(ns, useIfrs);
   const degrade = (reason, extra) => ({ ltm: false, fallback: 'annual', reason, ...(extra || {}) });
 
   // B2 — revenue anchor via staleness-triggered selection (single source for ALL THREE legs below).
-  const sel = selectConcept(ns, N.revenue);
+  const sel = selectConcept(ns, revenueNames);
   if (!sel) return degrade('no revenue concept in companyfacts');
   const revE = sel.entries;
   const revConcept = sel.conceptName;
@@ -283,6 +281,7 @@ function computeLTM(facts) {
   const legs = deriveRevenueLegs(revE);
   if (legs.degradeReason) return degrade(legs.degradeReason);
   const { annual, latestYTD, priorYTD } = legs;
+  if (isOlderFiscalYear(annual.end, floorEnd)) return degrade(`annual revenue leg ends ${annual.end}, older than the latest annual filing period ${floorEnd}`);
 
   // ── tie-out gate ─────────────────────────────────────────────────────────────
   const spanMatch     = Math.abs(latestYTD.span - priorYTD.span) <= 10;
@@ -308,7 +307,7 @@ function computeLTM(facts) {
   // fresher AND complete. If one is, the selector locked onto stale residue (the GOOGL failure mode) —
   // fail LOUD and degrade to annual rather than serve a stale number. Catches the next GOOGL unattended.
   // B4 DEGRADES (not throws): a stale concept is a FILER-DATA condition → the same honest annual exit as SHOP/JPM.
-  const fresher = fresherCompleteAlias(ns, N.revenue, revConcept);
+  const fresher = fresherCompleteAlias(ns, revenueNames, revConcept);
   if (fresher) {
     console.error(`[ltmCalc] FRESHNESS VIOLATION: selected ${revConcept}@${maxEndOf(revE)} but later alias ${fresher.conceptName}@${fresher.maxEnd} is fresher AND complete — concept migration. Degrading to annual rather than serve a stale LTM.`);
     return { ltm: false, fallback: 'annual', reason: 'freshness assertion failed — a later-listed revenue alias is fresher and complete (concept migration)',
@@ -400,7 +399,7 @@ async function computeLTMForCik(cik) {
     return { ltm: false, fallback: 'annual', reason: `no EDGAR companyfacts (${e.message || 'fetch failed'})` };
   }
   if (!facts || !facts.facts) return { ltm: false, fallback: 'annual', reason: 'empty companyfacts (foreign/ADR — no XBRL financials)' };
-  return computeLTM(await prepareIncomeFacts(facts, cik));
+  return computeLTM(await prepareIncomeFacts(facts, cik), await latestAnnualFilingPeriod(cik));
 }
 
 module.exports = { computeLTM, computeLTMForCik, scaleShares };

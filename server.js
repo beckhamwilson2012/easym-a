@@ -15,7 +15,8 @@ const { UTILITY_SIC, UTILITY_GROSS_REASON } = require('./src/lib/utilitySic'); /
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
-const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
+const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
+const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts'); // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
@@ -336,54 +337,51 @@ app.get('/search', async (req, res) => {
 // Accepts both 10-K (domestic) and 20-F (foreign private issuer) annual filings.
 // When multiple entries share the same end date takes the max — consolidated
 // total is always >= any individual segment breakdown.
-function latestAnnualEntry(concept, unit) {
+// floorEnd: the latest annual filing period. A tag whose latest year is older returns null, never that old year.
+function latestAnnualEntry(concept, unit, floorEnd = null) {
   const entries = concept?.units?.[unit];
   if (!entries?.length) return null;
   const annuals = entries.filter((e) => e.form === '10-K' || e.form === '20-F');
   if (!annuals.length) return null;
   const latestEnd = annuals.reduce((max, e) => (e.end > max ? e.end : max), '');
+  if (isOlderFiscalYear(latestEnd, floorEnd)) return null;
   const forLatest = annuals.filter((e) => e.end === latestEnd);
   return { end: latestEnd, val: Math.max(...forLatest.map((e) => e.val)) };
 }
 
-function latestAnnual(concept, unit) {
-  return latestAnnualEntry(concept, unit)?.val ?? null;
+function latestAnnual(concept, unit, floorEnd = null) {
+  return latestAnnualEntry(concept, unit, floorEnd)?.val ?? null;
 }
 
-// Returns value from the concept with the most recent end date across candidates.
-function pick(namespace, names, unit = 'USD') {
+// Returns value from the concept with the most recent end date across candidates. A concept the filer never tagged
+// gives 0, as it always has. A tag that exists but stopped before floorEnd gives null: nothing current is filed, and
+// that absence must not become a number (callers guard every sum).
+function pick(namespace, names, unit = 'USD', floorEnd = null) {
   let best = null;
+  let rejectedOld = false;
   for (const name of names) {
-    const entry = latestAnnualEntry(namespace[name], unit);
-    if (!entry) continue;
+    const entry = latestAnnualEntry(namespace[name], unit, floorEnd);
+    if (!entry) {
+      if (latestAnnualEntry(namespace[name], unit)) rejectedOld = true;
+      continue;
+    }
     if (!best || entry.end > best.end) best = entry;
   }
-  return best?.val ?? 0;
+  return best ? best.val : (rejectedOld ? null : 0);
 }
 
 // Identical to pick() in selection (same latestAnnualEntry, same unit default, same e.end tie-break),
 // EXCEPT an absent concept returns null instead of 0 — so a genuinely-missing tag (e.g. banks don't tag
 // us-gaap:OperatingIncomeLoss) becomes first-class N/A (Fix-A discipline) rather than a false $0. Used
 // only for operatingIncome/ebitda; pick() and all its other callers are untouched.
-function pickOrNull(namespace, names, unit = 'USD') {
+function pickOrNull(namespace, names, unit = 'USD', floorEnd = null) {
   let best = null;
   for (const name of names) {
-    const e = latestAnnualEntry(namespace[name], unit);
+    const e = latestAnnualEntry(namespace[name], unit, floorEnd);
     if (!e) continue;
     if (!best || e.end > best.end) best = e;
   }
   return best ? best.val : null;
-}
-
-function pickWithSource(namespace, names, unit = 'USD') {
-  let best = null;
-  let bestName = null;
-  for (const name of names) {
-    const entry = latestAnnualEntry(namespace[name], unit);
-    if (!entry) continue;
-    if (!best || entry.end > best.end) { best = entry; bestName = name; }
-  }
-  return { val: best?.val ?? 0, concept: bestName, entry: best };
 }
 
 // Period-match guard (Fix A). A balance-sheet/income value should come from the SAME fiscal period as
@@ -465,10 +463,16 @@ function pnlLineSeries(namespace, names, unit = 'USD') {
 
 // Last `n` distinct annual values for a concept, oldest→newest (for multi-year trajectory charts).
 // Dedupes by fiscal-year-end (keeps the largest val per end — handles restatements/amendments).
+// Full-year facts only: a 10-K's Revenues tag also carries its quarterly rows, and a quarter is not a year.
 function annualSeries(concept, unit, n = 4) {
   const entries = concept?.units?.[unit];
   if (!entries?.length) return [];
-  const annuals = entries.filter((e) => e.form === '10-K' || e.form === '20-F');
+  const annuals = entries.filter((e) => {
+    if (e.form !== '10-K' && e.form !== '20-F') return false;
+    if (!e.start) return true;
+    const span = (Date.parse(e.end) - Date.parse(e.start)) / 86400000;
+    return span >= 350 && span <= 380;
+  });
   const byEnd = {};
   for (const e of annuals) { if (!byEnd[e.end] || e.val > byEnd[e.end].val) byEnd[e.end] = e; }
   return Object.values(byEnd)
@@ -497,7 +501,7 @@ async function fetchFmpGrossProfit(symbol) {
 }
 
 async function fetchFromEDGAR(symbol, cik) {
-  const [factsResult, sicResult] = await Promise.allSettled([
+  const [factsResult, sicResult, floorResult] = await Promise.allSettled([
     (async () => {
       let facts = getEdgarFactsCache(cik);
       if (!facts) {
@@ -507,6 +511,7 @@ async function fetchFromEDGAR(symbol, cik) {
       return facts;
     })(),
     fetchSubmissions(cik),
+    latestAnnualFilingPeriod(cik),
   ]);
   if (factsResult.status === 'rejected') throw factsResult.reason;
   const facts = await prepareIncomeFacts(factsResult.value, cik);
@@ -520,39 +525,34 @@ async function fetchFromEDGAR(symbol, cik) {
   const ifrsCount = Object.keys(ifrs).length;
   console.log(`[${symbol}] EDGAR namespaces — us-gaap: ${gaapCount} concepts, ifrs-full: ${ifrsCount} concepts, dei: ${Object.keys(dei).length} concepts`);
 
-  // Foreign private issuers (e.g. Shell, Alibaba) file under ifrs-full, not us-gaap
-  const useIfrs = ifrsCount > 0 && gaapCount === 0;
+  // Revenue, its tag and which namespace is current: revenueConcepts. No current year in SEC filings (SAP's USD facts
+  // stop at FY2017) means no EDGAR result at all, so /quote's FMP fallback fills it, labeled as FMP. A filer's lines
+  // must not be a mix of the fallback's year and EDGAR's.
+  const floorEnd = floorResult.status === 'fulfilled' ? floorResult.value : null;
+  const filer = resolveFilerRevenue(facts, floorEnd, { subLines: true });
+  if (filer.unavailableReason) {
+    console.log(`[${symbol}] EDGAR no current year: ${filer.unavailableReason} (latest tagged ${filer.latestTaggedEnd || 'none'}, latest annual filing ${floorEnd || 'unknown'})`);
+    return { noCurrentYear: filer.unavailableReason, detail: filer.unavailableDetail, latestTaggedEnd: filer.latestTaggedEnd, latestAnnualFilingPeriod: floorEnd };
+  }
+  const { useIfrs } = filer;
   console.log(`[${symbol}] EDGAR using ${useIfrs ? 'IFRS (20-F filer)' : 'US-GAAP (10-K filer)'}`);
 
-  let revenue, revenueConcept;
-  let revenueEntry = null;
-  if (useIfrs) {
-    ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(ifrs, [
-      'Revenue',
-      'RevenueFromContractsWithCustomers',
-      'OtherRevenue',
-      'RevenueAndOtherIncome',
-    ]));
-  } else {
-    ({ val: revenue, concept: revenueConcept, entry: revenueEntry } = pickWithSource(gaap, [
-      'RevenueFromContractWithCustomerExcludingAssessedTax',
-      'Revenues',
-      'SalesRevenueNet',
-      'RevenueFromContractWithCustomerIncludingAssessedTax',
-      'RevenuesNetOfInterestExpense',
-      'InterestAndFeeIncomeLoansAndLeases',
-    ]));
-  }
+  const revenueResolved = filer.revenue;
+  const revenue = revenueResolved ? revenueResolved.value : 0;
+  const revenueConcept = revenueResolved ? revenueResolved.concept : null;
+  const revenueEntry = revenueResolved ? { end: revenueResolved.end, val: revenueResolved.value } : null;
+  // Every "latest" line below is held to the same floor. Submissions unreadable: revenue's own year is the best known.
+  const lineFloor = floorEnd ?? revenueResolved?.end ?? null;
 
   const netIncome = useIfrs
-    ? pick(ifrs, ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'])
-    : pick(gaap, ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic']);
+    ? pick(ifrs, ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'], 'USD', lineFloor)
+    : pick(gaap, ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'], 'USD', lineFloor);
 
   // IFRS filers often don't tag operating income separately; ProfitLossBeforeTax
   // is the closest proxy (before finance items + tax → approximates EBIT).
   const operatingIncome = useIfrs
-    ? pickOrNull(ifrs, ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'])
-    : pickOrNull(gaap, ['OperatingIncomeLoss']);
+    ? pickOrNull(ifrs, ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'], 'USD', lineFloor)
+    : pickOrNull(gaap, ['OperatingIncomeLoss'], 'USD', lineFloor);
 
   const da = useIfrs
     ? pick(ifrs, [
@@ -561,17 +561,18 @@ async function fetchFromEDGAR(symbol, cik) {
         'DepreciationAndAmortisationExpense',
         'DepreciationAmortisationAndImpairmentLoss',
         'DepreciationAndAmortisation',
-      ])
-    : pick(gaap, ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization']);
+      ], 'USD', lineFloor)
+    : pick(gaap, ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'], 'USD', lineFloor);
 
-  const ebitda = operatingIncome == null ? null : (operatingIncome === 0 ? 0 : operatingIncome + da);
+  // da null: the D&A tag stopped before this year. There is no current D&A, so there is no EBITDA to report.
+  const ebitda = (operatingIncome == null || da == null) ? null : (operatingIncome === 0 ? 0 : operatingIncome + da);
 
   // Free cash flow = OCF + CapEx (CapEx stored as a negative outflow). Always from us-gaap — IFRS 20-F
   // filers that don't tag us-gaap cash-flow concepts resolve to null (not fabricated), matching the
   // verified-data edgarClient exactly so the comps screening table stays consistent with §10.
-  const ocf   = pick(gaap, ['NetCashProvidedByUsedInOperatingActivities']);
-  const capex = pick(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment']);
-  const freeCashFlow = (ocf !== 0 && capex !== 0) ? inM(ocf + capex) : null;
+  const ocf   = pick(gaap, ['NetCashProvidedByUsedInOperatingActivities'], 'USD', lineFloor);
+  const capex = pick(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment'], 'USD', lineFloor);
+  const freeCashFlow = (ocf != null && capex != null && ocf !== 0 && capex !== 0) ? inM(ocf + capex) : null;
 
   // Gross profit — from the filing, at revenue's exact period (incomeConcepts). A tag from any other period
   // cannot match: Oracle froze GrossProfit at FY2018 → paired with FY2026 revenue it gave a nonsense 36.1%;
@@ -597,7 +598,7 @@ async function fetchFromEDGAR(symbol, cik) {
 
   // ── Balance-sheet anchor (2B-2) — computed HERE (before the share-count gate below) so the staleness check
   // and the net-debt trio further down share ONE reference. computeLTM runs once and is reused (line ~590).
-  let ltmRaw; try { ltmRaw = computeLTM(facts); } catch (e) { ltmRaw = { ltm: false, reason: 'computeLTM error: ' + (e.message || 'err') }; }
+  let ltmRaw; try { ltmRaw = computeLTM(facts, floorEnd); } catch (e) { ltmRaw = { ltm: false, reason: 'computeLTM error: ' + (e.message || 'err') }; }
   const bsInterim = !!(ltmRaw && ltmRaw.ltm && ltmRaw.asOf);
   const bsAnchor  = bsInterim ? ltmRaw.asOf : (revenueEntry?.end || null);
 
@@ -648,13 +649,13 @@ async function fetchFromEDGAR(symbol, cik) {
 
   // Reported DILUTED EPS is the canonical per-share figure — prefer it over basic (diluted is the
   // standard EPS investors quote, and basic biases high by ignoring dilution).
-  const eps = useIfrs
-    ? (latestAnnual(ifrs['DilutedEarningsLossPerShareFromContinuingOperations'], 'USD/shares') ??
-       latestAnnual(ifrs['DilutedEarningsLossPerShare'],                         'USD/shares') ??
-       latestAnnual(ifrs['BasicEarningsLossPerShareFromContinuingOperations'],   'USD/shares') ??
-       latestAnnual(ifrs['BasicEarningsLossPerShare'],                           'USD/shares') ?? 0)
-    : (latestAnnual(gaap['EarningsPerShareDiluted'], 'USD/shares') ??
-       latestAnnual(gaap['EarningsPerShareBasic'],   'USD/shares') ?? 0);
+  // A tag that stopped before this year gives null. A filer with no EPS tag at all keeps today's 0.
+  const epsSources = useIfrs
+    ? [ifrs['DilutedEarningsLossPerShareFromContinuingOperations'], ifrs['DilutedEarningsLossPerShare'],
+       ifrs['BasicEarningsLossPerShareFromContinuingOperations'], ifrs['BasicEarningsLossPerShare']]
+    : [gaap['EarningsPerShareDiluted'], gaap['EarningsPerShareBasic']];
+  const currentEps = epsSources.map((c) => latestAnnual(c, 'USD/shares', lineFloor)).find((v) => v != null) ?? null;
+  const eps = currentEps ?? (epsSources.some((c) => latestAnnual(c, 'USD/shares') != null) ? null : 0);
 
   // Weighted-average DILUTED shares — the correct denominator for EPS math (fallback EPS and the
   // pro-forma accretion base). Kept SEPARATE from `shares` (the point-in-time cover-page count that
@@ -668,13 +669,13 @@ async function fetchFromEDGAR(symbol, cik) {
     ? netIncome / eps
     : null;
   const dilutedShares =
-    latestAnnual(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares') ??
-    latestAnnual(gaap['WeightedAverageNumberOfSharesOutstandingBasic'],   'shares') ??
+    latestAnnual(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares', lineFloor) ??
+    latestAnnual(gaap['WeightedAverageNumberOfSharesOutstandingBasic'],   'shares', lineFloor) ??
     effectiveDiluted ??
     shares;
   // Which period that count belongs to, for the label on forward pro forma EPS. Follows the same order as above.
-  const dilutedWa = latestAnnualEntry(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares');
-  const basicWa   = latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares');
+  const dilutedWa = latestAnnualEntry(gaap['WeightedAverageNumberOfDilutedSharesOutstanding'], 'shares', lineFloor);
+  const basicWa   = latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares', lineFloor);
   const dilutedSharesPeriod = dilutedWa ? { basis: 'weighted average', end: dilutedWa.end }
     : basicWa ? { basis: 'basic weighted average', end: basicWa.end }
     : effectiveDiluted != null ? { basis: 'net income ÷ EPS', end: revenueEntry?.end ?? null }
@@ -781,7 +782,7 @@ async function fetchFromEDGAR(symbol, cik) {
   // { trusted:false, fallback:'annual' } (Stage 0's tie-out gate), returned flagged, never omitted.
   let ltm;
   try {
-    const raw = ltmRaw && !ltmRaw.__err ? ltmRaw : computeLTM(facts); // reuse the anchor's computeLTM (no recompute)
+    const raw = ltmRaw && !ltmRaw.__err ? ltmRaw : computeLTM(facts, floorEnd); // reuse the anchor's computeLTM (no recompute)
     ltm = raw.ltm ? {
       trusted: true, asOf: raw.asOf, fallback: null,
       revenue:         raw.flows.revenue.ltmM,
@@ -810,6 +811,12 @@ async function fetchFromEDGAR(symbol, cik) {
     name:           cleanEntityTitle(titleBySymbol[symbol]) || facts.entityName || symbol,  // registry title (BAC fix) > entityName (can be a subsidiary shell) > ticker
     companyType,
     revenue:        revenueM,
+    // Trace-back for the revenue figure: the tag used, why it won, any disagreement, and the fiscal year.
+    revenueTrace: {
+      source: 'sec_edgar', concept: revenueConcept, label: revenueResolved?.label ?? null, status: revenueResolved?.status ?? null,
+      tieOut: revenueResolved?.tieOut ?? null, flag: revenueResolved?.flag ?? null, candidates: revenueResolved?.candidates ?? [],
+      fiscalYearEnd: revenueEntry?.end ?? null, latestAnnualFilingPeriod: floorEnd, unavailableReason: null,
+    },
     ebitda:         ebitda != null ? inM(ebitda) : null,
     operatingIncome: operatingIncome != null ? inM(operatingIncome) : null, // screening table (matches verified edgarClient); null when the concept is absent (Fix-A discipline)
     grossProfit:    grossProfit != null ? inM(grossProfit) : null, // real GP; null when filer doesn't tag it
@@ -822,13 +829,13 @@ async function fetchFromEDGAR(symbol, cik) {
     freeCashFlow,                          // null for IFRS filers with no us-gaap cash-flow tags
     // Last 4 annual revenues (oldest→newest) for the §6 multi-year revenue-trajectory line chart.
     revenueHistory: annualSeries((useIfrs ? ifrs : gaap)[revenueConcept], 'USD', 4),
-    netIncome:      inM(netIncome),
+    netIncome:      netIncome != null ? inM(netIncome) : null,
     shares:         sharesM,
     sharesConcept:  sharesConcept,       // provenance: which concept the point-in-time count resolved from (staleness-gated)
     sharesAsOf:     sharesInstant,        // provenance: its instant (may differ from balanceSheetAsOf by design — cover-page is as-of the filing date)
     dilutedShares:  inM(dilutedShares), // weighted-avg diluted — for EPS math only (not market cap)
     dilutedSharesPeriod,                // provenance: { basis, end } of that count
-    eps:            parseFloat(eps.toFixed(2)),
+    eps:            eps != null ? parseFloat(eps.toFixed(2)) : null,
     cash:           cash != null ? inM(cash) : null, // null when the cash tag was stale-rejected (Fix A) → deck shows N/A
     shortTermInvestments: shortTermInvestments != null ? inM(shortTermInvestments) : null, // short-term marketable securities (net-debt convention b); null → cash-only for this filer
     debt:           debt != null ? inM(debt) : null, // null when the debt tag was stale-rejected (Fix A) → deck shows N/A
@@ -934,6 +941,7 @@ async function buildFmpCompany(income, balance, profile, symbol) {
     debt:       field(cvS(toMillions(rawDebt)), { source: 'fmp' }),
     sharePrice: field(profile?.price != null ? parseFloat((profile.price * fx.priceRate).toFixed(2)) : null, { source: 'fmp' }),
     dataSource: 'fmp',
+    fmpPeriodEnd: income?.date ?? null,   // period of FMP's income statement, for the revenue trace-back
     // FX provenance (Stage 1) — USD filer: converted:false, rates 1.
     reportedCurrency: fx.reportedCurrency,
     priceCurrency:    fx.priceCurrency,
@@ -1053,6 +1061,7 @@ app.get('/quote', async (req, res) => {
     const tlog = (...a) => { if (trace) console.log(...a); };
     const short = (m) => String(m || '').replace(/\s+/g, ' ').slice(0, 60);
     let edgarStatus = cik ? 'pending' : 'no-cik';
+    let edgarGap = null;   // SEC filings hold no current year for this filer: why, for the trace-back
     let fmpStatus = 'pending';
     tlog(`\n[${symbol}] ── quote request ──`);
     tlog(`[${symbol}] CIK: ${cik || 'NOT FOUND in SEC ticker list'}`);
@@ -1062,7 +1071,8 @@ app.get('/quote', async (req, res) => {
       tlog(`[${symbol}] Trying SEC EDGAR…`);
       try {
         result = await fetchFromEDGAR(symbol, cik);
-        edgarStatus = result ? 'ok' : 'null';
+        if (result?.noCurrentYear) { edgarGap = result; result = null; }
+        edgarStatus = edgarGap ? 'no-current-year' : (result ? 'ok' : 'null');
         tlog(`[${symbol}] EDGAR result: ${result ? `✓ revenue ${result.revenue}M shares ${result.shares}M` : '✗ null (all zeros)'}`);
       } catch (e) {
         edgarStatus = `error:${short(e.message)}`;
@@ -1107,7 +1117,17 @@ app.get('/quote', async (req, res) => {
         revenue: absent(), ebitda: absent(), netIncome: absent(), shares: absent(),
         eps: absent(), cash: absent(), debt: absent(),
         ltm: { trusted: false, fallback: 'annual', reason: 'no data source resolved' },
+        revenueTrace: { source: null, concept: null, label: null, status: null, tieOut: null, flag: null, candidates: [],
+          fiscalYearEnd: null, latestAnnualFilingPeriod: edgarGap?.latestAnnualFilingPeriod ?? null,
+          unavailableReason: edgarGap?.noCurrentYear ?? null, unavailableDetail: edgarGap?.detail ?? null },
       }));
+    }
+
+    // The FMP fallback's revenue is labeled as FMP, with why EDGAR did not supply it when that is known.
+    if (!result.revenueTrace) {
+      result.revenueTrace = { source: 'fmp', concept: null, label: 'FMP income statement', status: null, tieOut: null, flag: null, candidates: [],
+        fiscalYearEnd: result.fmpPeriodEnd ?? null, latestAnnualFilingPeriod: edgarGap?.latestAnnualFilingPeriod ?? null,
+        unavailableReason: edgarGap?.noCurrentYear ?? null, unavailableDetail: edgarGap?.detail ?? null };
     }
 
     // LTM is EDGAR-only (Stage 1). Non-EDGAR results (the FMP fallback — e.g. NSRGY, no CIK) never got
@@ -1259,19 +1279,12 @@ app.get('/api/segments/:ticker', async (req, res) => {
     const facts = await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`);
     const gaap = facts.facts?.['us-gaap'] || {};
 
-    const revNames = [
-      'RevenueFromContractWithCustomerExcludingAssessedTax',
-      'Revenues', 'SalesRevenueNet',
-    ];
-    let totalEntry = null;
-    for (const name of revNames) {
-      const e = latestAnnualEntry(gaap[name], 'USD');
-      if (e) { totalEntry = e; break; }
-    }
-    if (!totalEntry) return res.json({ source: 'estimated', year: null, segments: [] });
+    const revenue = resolveLatestRevenue(gaap);
+    const floorEnd = await latestAnnualFilingPeriod(cik);
+    if (!revenue || isOlderFiscalYear(revenue.end, floorEnd)) return res.json({ source: 'estimated', year: null, segments: [] });
 
-    const totalVal = totalEntry.val;
-    const latestEnd = totalEntry.end;
+    const totalVal = revenue.value;
+    const latestEnd = revenue.end;
     const year = latestEnd.slice(0, 4);
 
     const candidates = [];
@@ -1279,7 +1292,7 @@ app.get('/api/segments/:ticker', async (req, res) => {
       const lower = cname.toLowerCase();
       if (!lower.includes('revenue') && !lower.includes('subscription') && !lower.includes('service')) continue;
       if (cname === 'Revenues' || cname === 'SalesRevenueNet') continue;
-      if (revNames.includes(cname)) continue;
+      if (revenue.candidates.some((c) => c.concept === cname)) continue;
       const units = cdata?.units?.USD;
       if (!units) continue;
       const matching = units.filter(e =>
@@ -1716,7 +1729,6 @@ app.get('/api/profile/:ticker', async (req, res) => {
 const pnlCache = new Map();
 const PNL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PNL_GAAP = {
-  revenue: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense', 'InterestAndFeeIncomeLoansAndLeases'],
   opInc:   ['OperatingIncomeLoss'],
   netInc:  ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
   da:      ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'],
@@ -1724,7 +1736,6 @@ const PNL_GAAP = {
   eps:     ['EarningsPerShareDiluted', 'EarningsPerShareBasic'],
 };
 const PNL_IFRS = {
-  revenue: ['Revenue', 'RevenueFromContractsWithCustomers'],
   opInc:   ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'],
   netInc:  ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'],
   da:      ['DepreciationAndAmortisationExpense', 'DepreciationAmortisationAndImpairmentLoss'],
@@ -1751,14 +1762,19 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     let rawFacts = getEdgarFactsCache(cik);
     if (!rawFacts) { rawFacts = await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`); setEdgarFactsCache(cik, rawFacts); }
     const facts = await prepareIncomeFacts(rawFacts, cik);
-    const gaap = facts.facts?.['us-gaap'] || {};
-    const ifrs = facts.facts?.['ifrs-full'] || {};
-    const useIfrs = Object.keys(ifrs).length > 0 && Object.keys(gaap).length === 0;
-    const ns = useIfrs ? ifrs : gaap;
+    // IFRS sub-line tags stay out of the P&L, as they always have: Novartis's OtherRevenue is not a revenue column.
+    const floorEnd = await latestAnnualFilingPeriod(cik);
+    const filer = resolveFilerRevenue(facts, floorEnd, { subLines: 'gaap' });
+    if (filer.unavailableReason) {
+      return res.json({ ok: false, ticker, note: filer.unavailableReason, noteDetail: filer.unavailableDetail,
+        latestTaggedEnd: filer.latestTaggedEnd, latestAnnualFilingPeriod: floorEnd });
+    }
+    const { useIfrs, ns } = filer;
     const C = useIfrs ? PNL_IFRS : PNL_GAAP;
 
     // Build each line's annual series (raw $ / shares / per-share), keyed by period-end.
-    const sRev = pnlLineSeries(ns, C.revenue);
+    const revenueByEnd = revenueSeries(ns, { useIfrs, subLines: 'gaap' });
+    const sRev = Object.fromEntries(Object.entries(revenueByEnd).map(([end, r]) => [end, r.value]));
     const sOpInc = pnlLineSeries(ns, C.opInc);
     const sNet = pnlLineSeries(ns, C.netInc);
     const sDa = pnlLineSeries(ns, C.da);
@@ -1790,6 +1806,9 @@ app.get('/api/pnl/:ticker', async (req, res) => {
       return {
         fy: parseInt(end.slice(0, 4), 10), end, label: `FY${end.slice(0, 4)}`, actual: true,
         revenue, costOfRevenue: cor, grossProfit: gross,
+        // Trace-back for the revenue figure: the tag used and any disagreement. The fiscal year is `end`.
+        revenueConcept: revenueByEnd[end].concept, revenueSource: revenueByEnd[end].label, revenueStatus: revenueByEnd[end].status,
+        revenueTieOut: revenueByEnd[end].tieOut, revenueFlag: revenueByEnd[end].flag,
         // Provenance, in raw dollars: what the deck rounds and where it came from.
         costOfRevenueSource: lines.costOfRevenue.label, costOfRevenueKind: lines.costOfRevenue.kind,
         grossProfitBasis: grossRes.basis, grossProfitLabel: lines.grossProfit.label,
@@ -1849,7 +1868,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     // `columns`, which would move the rendered §4/§5 table) so §4/§5 can later add an LTM column. No consumer yet.
     let ltmBlock;
     try {
-      const lr = computeLTM(facts);
+      const lr = computeLTM(facts, floorEnd);
       ltmBlock = lr.ltm ? {
         trusted: true, asOf: lr.asOf, label: 'LTM', actual: true, ltm: true,
         revenue: lr.flows.revenue.ltmM,
@@ -1865,7 +1884,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     } catch (e) { ltmBlock = { trusted: false, fallback: 'annual', reason: 'computeLTM error: ' + e.message }; }
 
     const payload = {
-      ok: true, ticker, basis: useIfrs ? 'IFRS' : 'US-GAAP', fiscalYearEnd: latestEnd,
+      ok: true, ticker, basis: useIfrs ? 'IFRS' : 'US-GAAP', fiscalYearEnd: latestEnd, latestAnnualFilingPeriod: floorEnd,
       columns: [...cols, ...fwd], grossProfitNotMeaningful: grossNotMeaningful,
       ltm: ltmBlock,   // ADDITIVE — Stage 1; §4/§5 not consuming yet
       note: fwd.length ? null : 'No forward analyst estimates returned — forward columns omitted.',

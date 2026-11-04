@@ -301,6 +301,23 @@ async function filerSic(cik) {
   try { return (await submissions(cik))?.sic ?? null; } catch { return null; }
 }
 
+// The period of the company's latest annual filing (10-K or 20-F), from submissions. The floor for "latest": nothing
+// older may be presented as the current year. null when submissions cannot be read or lists neither form.
+async function latestAnnualFilingPeriod(cik) {
+  try {
+    const recent = (await submissions(cik))?.filings?.recent;
+    if (!recent?.form) return null;
+    let latest = null;
+    recent.form.forEach((form, i) => {
+      if ((form === '10-K' || form === '20-F') && recent.reportDate[i] && (!latest || recent.reportDate[i] > latest)) latest = recent.reportDate[i];
+    });
+    return latest;
+  } catch (e) {
+    console.error(`[incomeConcepts] submissions read failed for CIK ${cik}: ${e.message}`);
+    return null;
+  }
+}
+
 // Filings to read: only the latest 10-K / 10-Q whose period companyfacts cannot supply. A filer that tags cost
 // in companyfacts gets no extra request. Banks have no cost of revenue, so their (very large) filings are skipped.
 async function filingsWithCostGap(gaap, cik) {
@@ -338,7 +355,7 @@ async function prepareIncomeFacts(facts, cik) {
 }
 
 module.exports = {
-  COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, FILING_INSTANCE_CONCEPT, COMPONENT_SUM_CONCEPT,
+  COST_OF_REVENUE_CONCEPTS, FILED_COST_CONCEPTS, GROSS_PROFIT_CONCEPTS, FILING_INSTANCE_CONCEPT, COMPONENT_SUM_CONCEPT,
   sumComponents, calculateGrossProfit, resolveGrossProfit, grossFromCostOfRevenue,
-  pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts, filerSic,
+  pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts, filerSic, latestAnnualFilingPeriod,
 };

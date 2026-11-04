@@ -131,7 +131,7 @@ async function lookup(ticker, cik) {
       const srcMap  = srcMaps[srcName] || {};
       const fd      = srcMap[fieldSpec.key];
       if (fd) sourceMeta[srcName] = { value: fd.value, asOf: fd.asOf, period: fd.period,
-        ...(fd.basis ? { basis: fd.basis, sourceLabel: fd.sourceLabel } : {}) };
+        ...(fd.basis ? { basis: fd.basis, sourceLabel: fd.sourceLabel } : {}), ...(fd.flag ? { flag: fd.flag } : {}) };
     }
 
     fields[fieldSpec.key] = { ...rec, unit: fieldSpec.unit, sot: fieldSpec.sot, sourceMeta };

@@ -1,7 +1,8 @@
 'use strict';
 const { get } = require('../utils/httpGet');
 const { resolveTotalDebt } = require('./debtConcepts'); // shared total-debt resolution (deal EV / comps / §16 identical)
-const { annualIncomeLines, prepareIncomeFacts } = require('./incomeConcepts'); // shared cost of revenue / gross profit (/quote, /api/pnl, LTM, §16 identical)
+const { annualIncomeLines, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./incomeConcepts'); // shared cost of revenue / gross profit (/quote, /api/pnl, LTM, §16 identical)
+const { resolveFilerRevenue, isOlderFiscalYear } = require('./revenueConcepts'); // shared revenue and fiscal-year floor (/quote, /api/pnl, LTM, §16 identical)
 
 const factsCache = new Map();
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours — fundamentals change quarterly
@@ -16,27 +17,18 @@ function inM(val) { return val != null ? Math.round(val / 1e6) : null; }
 
 // Most recent annual entry (10-K or 20-F) from a concept's unit array.
 // When multiple entries share the same end date, takes the largest (consolidated > segment).
-function latestAnnualEntry(concept, unit = 'USD') {
+// floorEnd: the latest annual filing period. A tag whose latest year is older returns null, never that old year.
+function latestAnnualEntry(concept, unit = 'USD', floorEnd = null) {
   const entries = concept?.units?.[unit];
   if (!entries?.length) return null;
   const annuals = entries.filter(e => e.form === '10-K' || e.form === '20-F');
   if (!annuals.length) return null;
   const latestEnd = annuals.reduce((mx, e) => e.end > mx ? e.end : mx, '');
+  if (isOlderFiscalYear(latestEnd, floorEnd)) return null;
   const forLatest = annuals.filter(e => e.end === latestEnd);
   const val = Math.max(...forLatest.map(e => e.val));
   const chosen = forLatest.find(e => e.val === val);
   return { val, end: latestEnd, fy: chosen.fy, fp: chosen.fp, form: chosen.form };
-}
-
-// Try a list of concept names in order; return the one with the most recent end date.
-function pick(ns, names, unit = 'USD') {
-  let best = null;
-  for (const name of names) {
-    const entry = latestAnnualEntry(ns[name], unit);
-    if (!entry) continue;
-    if (!best || entry.end > best.end) best = entry;
-  }
-  return best;
 }
 
 // Period-MATCHED pick (Pass A): the annual (10-K/20-F) entry for the first concept in `names` whose
@@ -82,19 +74,15 @@ async function fetchFields(cik) {
   const facts = await prepareIncomeFacts(rawFacts, cik);
 
   const gaap = facts.facts?.['us-gaap']   || {};
-  const ifrs = facts.facts?.['ifrs-full'] || {};
   const dei  = facts.facts?.['dei']       || {};
-  const useIfrs = Object.keys(ifrs).length > 0 && Object.keys(gaap).length === 0;
-  const ns = useIfrs ? ifrs : gaap;
-
-  const revenueEntry = pick(ns, useIfrs
-    ? ['Revenue', 'RevenueFromContractsWithCustomers', 'RevenueAndOtherIncome']
-    : ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet',
-       'RevenueFromContractWithCustomerIncludingAssessedTax', 'RevenuesNetOfInterestExpense']);
+  const floorEnd = await latestAnnualFilingPeriod(cik);
+  const filer = resolveFilerRevenue(facts, floorEnd);
+  const { useIfrs, ns } = filer;
+  const revenueEntry = filer.revenue ? { ...filer.revenue.entry, val: filer.revenue.value, end: filer.revenue.end } : null;
 
   // Revenue's period-end is the ONE anchor for the whole §16 EDGAR page — every NON-anchor financial row
   // period-matches to it (pickAtEnd) so a discontinued tag's stale latest-end can't win (JPM debt @2013
-  // $267.9B, cash @2018 $278.8B). Revenue itself stays pick() — it DEFINES this anchor. sharesOutstanding
+  // $267.9B, cash @2018 $278.8B). Revenue itself comes from revenueConcepts — it DEFINES this anchor. sharesOutstanding
   // stays latestAnnualEntry (its count is often cover-dated post-FYE, so pickAtEnd would null legit counts).
   const refEnd = revenueEntry?.end;
 
@@ -145,9 +133,9 @@ async function fetchFields(cik) {
 
   // Shares: point-in-time balance sheet count preferred over weighted average
   const sharesEntry =
-    latestAnnualEntry(gaap['CommonStockSharesOutstanding'],      'shares') ??
-    latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares') ??
-    latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares');
+    latestAnnualEntry(gaap['CommonStockSharesOutstanding'],      'shares', floorEnd) ??
+    latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares', floorEnd) ??
+    latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares', floorEnd);
 
   // FCF = OCF + CapEx (CapEx is stored as a negative outflow in EDGAR)
   let freeCashFlow = null;
@@ -168,7 +156,11 @@ async function fetchFields(cik) {
   } : null;
 
   return {
-    revenue:           makeField(revenueEntry),
+    revenue:           revenueEntry
+      ? { ...makeField(revenueEntry), basis: filer.revenue.status, sourceLabel: filer.revenue.label, ...(filer.revenue.flag ? { flag: filer.revenue.flag } : {}) }
+      : null,
+    revenueUnavailableReason: filer.unavailableReason,
+    latestAnnualFilingPeriod: floorEnd,
     operatingIncome:   makeField(opIncomeEntry),
     netIncome:         makeField(netIncomeEntry),
     cash:              makeField(cashEntry),
