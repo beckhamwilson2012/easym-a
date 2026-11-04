@@ -4,7 +4,7 @@ import Select from 'react-select';
 import { DeckShell } from './components/deck/DeckShell';
 import { SectionScreening } from './components/deck/sections/SectionScreening';
 import { pnlFetch } from './components/deck/sections/SectionProFormaPL';
-import { calculate, MIN_CASH_PCT_DEFAULT } from './utils/dealCalc';
+import { calculate, acquisitionNewDebt, MIN_CASH_PCT_DEFAULT } from './utils/dealCalc';
 import { useWindowWidth } from './hooks/useWindowWidth';
 import { getBankFacts } from './services/edgarBankFacts';
 import { fetchLivePrice, fetchCloseOn } from './services/priceService';
@@ -12,6 +12,7 @@ import { SuggestionBadge } from './components/shared/SuggestionBadge';
 import { PremiumSlider } from './components/shared/PremiumSlider';
 import { SuggestedPremiumBox } from './components/shared/SuggestedPremiumBox';
 import { PriceTiles } from './components/shared/PriceTiles';
+import { CashFundingBox } from './components/shared/CashFundingBox';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
@@ -1330,6 +1331,7 @@ function App() {
       <CashPercentageSlider value={inputs.cashPercent} onChange={(v) => setInputs(prev => ({ ...prev, cashPercent: v }))}
         tooltip={buildCashPercentTooltip(bankDeal)} dealSize={entryDealSize}
         acquirerSharePrice={acquirerSharePriceForSlider} acquirerSharesOutstanding={inputs.companyAShares} />
+      {bPub && <CashFundingBox funding={acquisitionNewDebt(modelInputs(inputs).resolvedWithBank)} targetName={tickerB} />}
       <div style={{ margin: '16px 0', borderTop: '1px solid #E5E7EB' }} />
       {(() => {
         const totalFee = calcSuggestedTransactionFees(entryDealSize);
