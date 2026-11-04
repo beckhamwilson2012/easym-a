@@ -15,11 +15,9 @@ import { PriceTiles } from './components/shared/PriceTiles';
 import { CashFundingBox } from './components/shared/CashFundingBox';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
 import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
-import {
-  calcSuggestedSynergy,
-  buildCashPercentTooltip,
-  buildSynergyTooltip,
-} from './lib/suggestionTooltips';
+import { buildCashPercentTooltip } from './lib/suggestionTooltips';
+import { SynergyInputs } from './components/shared/SynergyInputs';
+import { synergySchedule } from './lib/synergies';
 import { revenuePeriodLabel } from './lib/revenuePeriod';
 import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium } from './lib/offerPremium';
 import './App.css';
@@ -501,7 +499,10 @@ const defaultInputs = {
   companyBValuationMultiple: 0,   // Phase 9 — EV/EBITDA multiple (peer-median pre-fill, user-editable) for a private company
   companyBValuationPin: null,      // Phase 9 — pinned peer median { sic, sector, median, asOf, n, source, peers } so a saved deal reproduces
   offerPricePerShare: 0, offerValueTotal: 0, cashPercent: 60,   // offerValueTotal ($M): total consideration for a PRIVATE target (no per-share price)
-  synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
+  // Null is empty: no synergy assumed, shown "none entered". synergiesY* are the COST synergies, revenueSynergiesY* the
+  // revenue synergies. lib/synergies is the one place that turns these into figures.
+  synergiesY1: null, synergiesY2: null, synergiesY3: null,
+  revenueSynergiesY1: null, revenueSynergiesY2: null, revenueSynergiesY3: null,
   // Stage 2E — min operating cash the pro-forma co retains, as a % of pro-forma LTM revenue (scaled default,
   // user-overridable). Drives the sources-of-funds construction in dealCalc (excess cash funds part of the deal).
   minCashPct: MIN_CASH_PCT_DEFAULT,
@@ -691,6 +692,8 @@ function App() {
   };
 
   const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
+  const handleSynergyChange = (name, value) => setInputs(prev => ({ ...prev, [name]: value }));
+  const CLEAR_SYNERGIES = { synergiesY1: null, synergiesY2: null, synergiesY3: null, revenueSynergiesY1: null, revenueSynergiesY2: null, revenueSynergiesY3: null };
 
   // One source of truth: inputs.offerPricePerShare. The slider writes it; the premium is derived from it.
   const spotB = liveSpot(inputs.currentSharePriceB);
@@ -750,7 +753,10 @@ function App() {
       setSicA(data.sic || null); setSicDescriptionA(data.sicDescription || null);
       setFiscalYearA(data.fiscalYear ?? null); setFiscalYearEndA(data.fiscalYearEnd ?? null);
       setRevenuePeriodA(revenuePeriodLabel(data));
-      setInputs(prev => ({ ...prev, companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
+      setInputs(prev => ({ ...prev, companyAName: symbol.toUpperCase(), companyAPeriodLabel: revenuePeriodLabel(data), companyADataSource: data.dataSource ?? null,
+        companyACostOfRevenue: data.costOfRevenue ?? null, companyACostOfRevenueSource: data.costOfRevenueSource ?? null,
+        companyAGrossProfitSource: data.grossProfitSource ?? null, companyAGrossProfitBasis: data.grossProfitBasis ?? null,
+        companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
         companyANetIncome: data.netIncome, companyAShares: data.shares,
         companyAOperatingIncome: data.operatingIncome, companyAGrossProfit: data.grossProfit ?? null,
         companyAFreeCashFlow: data.freeCashFlow ?? null,
@@ -788,14 +794,18 @@ function App() {
     setPriceStatusB({ loading: true, price: null, source: null, attempts: [] });
     setOfferPriceTouched(false);   // a new target starts over: its offer must not carry the last target's price
     setUnaffectedDate('');
-    setInputs(prev => ({ ...prev, currentSharePriceB: 0, offerPricePerShare: 0 })); // clear stale price; live fetch resets it
+    // Clear the stale price (the live fetch resets it) and the synergies: their presets were struck on the old target.
+    setInputs(prev => ({ ...prev, currentSharePriceB: 0, offerPricePerShare: 0, ...CLEAR_SYNERGIES }));
     fetchCompanyData(symbol).then(data => {
       setNameB(data.name); setTickerB(symbol.toUpperCase());
       setCompanyTypeB(data.companyType || 'standard'); setDataSrcB(data.dataSource || '');
       setSicB(data.sic || null); setSicDescriptionB(data.sicDescription || null);
       setFiscalYearB(data.fiscalYear ?? null); setFiscalYearEndB(data.fiscalYearEnd ?? null);
       setRevenuePeriodB(revenuePeriodLabel(data));
-      setInputs(prev => ({ ...prev, companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
+      setInputs(prev => ({ ...prev, companyBName: symbol.toUpperCase(), companyBPeriodLabel: revenuePeriodLabel(data), companyBDataSource: data.dataSource ?? null,
+        companyBCostOfRevenue: data.costOfRevenue ?? null, companyBCostOfRevenueSource: data.costOfRevenueSource ?? null,
+        companyBGrossProfitSource: data.grossProfitSource ?? null, companyBGrossProfitBasis: data.grossProfitBasis ?? null,
+        companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
         companyBNetIncome: data.netIncome, companyBShares: data.shares,
         companyBOperatingIncome: data.operatingIncome, companyBGrossProfit: data.grossProfit ?? null,
         companyBFreeCashFlow: data.freeCashFlow ?? null,
@@ -897,15 +907,7 @@ function App() {
   }, [pendingBuild]);
 
   const handleSubmit = () => {
-    const updates = {};
-    if (inputs.synergiesY1 === 0 && synAuto1 != null && synAuto1 > 0) updates.synergiesY1 = synAuto1;
-    if (inputs.synergiesY2 === 0 && synAuto2 != null && synAuto2 > 0) updates.synergiesY2 = synAuto2;
-    if (inputs.synergiesY3 === 0 && synAuto3 != null && synAuto3 > 0) updates.synergiesY3 = synAuto3;
-    let effectiveInputs = inputs;
-    if (Object.keys(updates).length > 0) {
-      effectiveInputs = { ...inputs, ...updates };
-      setInputs(effectiveInputs);
-    }
+    const effectiveInputs = inputs;
     // Wait-then-build (#5): the accretion basis must be decided on the FINAL non-GAAP values, not a
     // cold-cache snapshot. If either selected company's non-GAAP fetch is still in flight, defer — stash
     // the inputs and show the "resolving basis" state; the settle/timeout effects above run the build
@@ -1120,7 +1122,12 @@ function App() {
     // football-field footnote can cite "live market price as of [date]" (explains run-to-run drift).
     offerPriceAsOf: priceStatusB.asOf ? priceStatusB.asOf.toISOString() : null,
     totalPrice:      results ? parseFloat(results.totalPurchasePrice) : 0,
-    synergiesY1: inputs.synergiesY1, synergiesY2: inputs.synergiesY2, synergiesY3: inputs.synergiesY3,
+    // Total EBITDA impact per year (what the accretion engine takes), plus the full schedule for the slides' lines.
+    synergiesY1: synergySchedule(resolvedInputs || inputs).years[0].ebitda,
+    synergiesY2: synergySchedule(resolvedInputs || inputs).years[1].ebitda,
+    synergiesY3: synergySchedule(resolvedInputs || inputs).years[2].ebitda,
+    synergies:   synergySchedule(resolvedInputs || inputs),
+    proFormaRevenue: results ? results.proFormaRevenue : null,
     epsAccretion:    results ? parseFloat(results.epsChangePct) : 0,
     isAccretive:     results ? results.isAccretive : false,
     purchasePremium: results ? parseFloat(results.purchasePremium) : 0,
@@ -1145,29 +1152,10 @@ function App() {
 
   // ── Computed values for input screen hints ────────────────────────────────────
 
-  const partialTarget = {
-    companyType: companyTypeB,
-    revenue: inputs.companyBRevenue,
-    ebitda: inputs.companyBEBITDA,
-    eps: inputs.companyBEPS,
-    shares: inputs.companyBShares,
-    sharePrice: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null,
-    nonInterestExpense: bankFactsB?.nonInterestExpense || 0,
-  };
-  const partialAcquirer = {
-    companyType: companyTypeA,
-    revenue: inputs.companyARevenue,
-    nonInterestExpense: bankFactsA?.nonInterestExpense || 0,
-  };
-
   const bankDeal = companyTypeA === 'financial' && companyTypeB === 'financial';
 
   const acquirerSharePriceForSlider = inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null;
 
-  // ── Synergy pre-computations (used in handleSubmit auto-fill)
-  const synAuto1 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 1) : null;
-  const synAuto2 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 2) : null;
-  const synAuto3 = fetchedA && fetchedB ? calcSuggestedSynergy(partialTarget, partialAcquirer, 3) : null;
   // ── Layout helpers ────────────────────────────────────────────────────────────
 
   const scrollToApp = () => document.getElementById('app-section').scrollIntoView({ behavior: 'smooth' });
@@ -1287,7 +1275,7 @@ function App() {
         <>
           <SuggestedPremiumBox spot={spotB} solve={highestAccretivePremium({
               calcInputs: modelInputs(inputs).resolvedWithBank, spot: spotB,
-              synergyY1: inputs.synergiesY1 > 0 ? inputs.synergiesY1 : synAuto1,   // what the build will use
+              synergyY1: synergySchedule(inputs).years[0].ebitda,   // what the build will use
               acquirerFwd: firstForwardColumn(fwdPnl.a), targetFwd: firstForwardColumn(fwdPnl.b), pnlLoading: fwdPnl.loading,
               acquirerName: tickerA, targetName: tickerB,
             })} onUse={setOfferFromPremium} />
@@ -1314,30 +1302,10 @@ function App() {
     </div>
   );
 
-  // Synergies — revenue-based suggestions (unchanged from the manual flow).
   const renderSynergies = () => (
     <div style={cardStyle}>
-      <h2 style={sectionTitle}>{bankDeal ? 'Cost Takeouts (Year 1 → Year 3)' : 'Synergies (Year 1 → Year 3)'}</h2>
-      {(() => {
-        const t = { companyType: 'standard', revenue: inputs.companyBRevenue, nonInterestExpense: 0 };
-        const a = { companyType: 'standard', revenue: inputs.companyARevenue, nonInterestExpense: 0 };
-        const s = [1, 2, 3].map(yr => calcSuggestedSynergy(t, a, yr));
-        const hasSug = s.every(x => x != null);
-        return [1, 2, 3].map(yr => {
-          const name = `synergiesY${yr}`;
-          const sug = s[yr - 1];
-          const caption = `Year ${yr}: ${['2%', '3.5%', '5%'][yr - 1]} of target revenue (${['40%', '70%', '100%'][yr - 1]} of Year 3 run-rate)`;
-          return (
-            <div key={yr}>
-              {hasSug && sug != null && (
-                <SuggestionBadge primary={fmtMoneyDual(sug)} caption={caption} tooltip={buildSynergyTooltip(t, a, yr)}
-                  onUse={() => setInputs(prev => ({ ...prev, [name]: sug }))} />
-              )}
-              <InputField label={`Year ${yr} Synergies ($M)`} name={name} value={inputs[name]} onChange={handleChange} placeholder="$M" />
-            </div>
-          );
-        });
-      })()}
+      <h2 style={sectionTitle}>Synergies (Year 1 → Year 3)</h2>
+      <SynergyInputs inputs={inputs} onChange={handleSynergyChange} />
     </div>
   );
 

@@ -2399,7 +2399,7 @@ const CHAT_SYSTEM = [
   '- Where a filer publishes a GAAP-to-non-GAAP reconciliation in its earnings exhibit — mostly software and tech companies — a model locates that table, the arithmetic is re-run in code, and the figure is dropped if it does not tie. Most filers do not publish one; those decks stay on GAAP, and the deck labels the basis either way. The model never gets the last word.',
   '- Yes, EasyM&A uses a language model for one narrowly scoped job: reading an earnings exhibit to locate a GAAP-to-non-GAAP reconciliation table — which most filers do not publish, so most decks stay on GAAP. It does not write, calculate, or choose any number. Every figure it extracts is re-added in code and dropped if the arithmetic does not tie. Everything else in the deck comes from filings and providers.',
   '- Sector handling: banks get P/TBV, CET1, efficiency ratio instead of EBITDA; restaurants split company-operated from franchised revenue; foreign filers convert at a stated rate on a stated date; pre-profit companies have the DCF suppressed rather than run on negative equity.',
-  '- The user sets offer price, cash/stock mix, minimum cash, and three years of synergies.',
+  '- The user sets offer price, cash/stock mix, minimum cash, and three years each of cost and revenue synergies.',
   '- Public filers only. Manual entry exists but has no filings behind it.',
   '- Sections 16 and 17 list every figure and where it came from.',
   '- Free while in beta.',

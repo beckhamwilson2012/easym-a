@@ -4,6 +4,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { HEADLINE_SOURCES, formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
+import { NONE_ENTERED, fmtSynergy, marginSentence } from '../../../lib/synergies';
 
 // ── Sources & Methodology — the closing page (§14) ─────────────────────────────
 // Methodology bullets are static, but the named data providers (pricing, analyst targets) are
@@ -151,7 +152,7 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
       bullets: [
         'Company descriptions, CEO, headquarters, employee counts, IPO date, sector / industry classification, beta, average trading volume, and company logos are from the Financial Modeling Prep company profile.',
         'Segment, geography, and customer-mix figures, where shown, are illustrative and are not company-disclosed breakdowns.',
-        'The pro-forma forward columns use sell-side ANALYST CONSENSUS estimates (via Financial Modeling Prep) for forward revenue and EPS — these are analyst forecasts, not the app’s own model. The accretion, synergy and combination MATH applied on top of those inputs IS the app’s model. Multi-year synergy ramps are model assumptions, not guidance; forward operating expense is shown as "—" rather than estimated.',
+        'The pro-forma forward columns use sell-side ANALYST CONSENSUS estimates (via Financial Modeling Prep) for forward revenue and EPS — these are analyst forecasts, not the app’s own model. The accretion, synergy and combination MATH applied on top of those inputs IS the app’s model. Multi-year synergies are entered assumptions, not guidance; forward operating expense is shown as "—" rather than estimated.',
       ],
     },
     {
@@ -172,7 +173,12 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
       label: 'Transaction Assumptions',
       bullets: [
         'Offer price, acquisition premium, and cash/stock consideration mix are user- or model-defined inputs.',
-        'Year 1–Year 3 synergies are user/model assumptions, not negotiated terms.',
+        'Year 1–Year 3 synergies are entered assumptions, not negotiated terms. An empty line assumes no synergy. Preset percentages on the input page are app defaults, editable, and are not market figures.',
+        ...(deal?.synergies ? [
+          `Cost synergies: ${deal.synergies.years.map((y) => `Year ${y.year} ${fmtSynergy(y.cost)}`).join(', ')}. They add to EBITDA dollar for dollar.`,
+          `Revenue synergies: ${deal.synergies.years.map((y) => `Year ${y.year} ${fmtSynergy(y.revenue)}`).join(', ')}. They add to pro forma revenue${deal.synergies.anyRevenue ? (deal.synergies.revenueOnly ? `, and not to EBITDA. ${marginSentence(deal.synergies.margin)}` : `, and to EBITDA at the combined gross margin. ${marginSentence(deal.synergies.margin)}`) : ', and to EBITDA at the combined gross margin from filed figures.'}`,
+          `Total synergies (EBITDA impact): ${deal.synergies.years.map((y) => `Year ${y.year} ${y.entered ? fmtSynergy(y.ebitda) : NONE_ENTERED}`).join(', ')}.`,
+        ] : []),
         'A 21% marginal tax rate and a 5% interest rate on acquisition debt are applied as standing model assumptions.',
       ],
     },

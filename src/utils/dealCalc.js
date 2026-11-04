@@ -1,4 +1,5 @@
 import { cashBucket } from '../lib/netDebt';
+import { synergySchedule } from '../lib/synergies';
 
 // ── Sensitivity table constants ───────────────────────────────────────────────
 export const PRICE_MULTS  = [0.8, 0.9, 1.0, 1.1, 1.2];
@@ -121,8 +122,11 @@ export function calculate(inputs) {
     companyARevenue, companyAEBITDA, companyANetIncome,
     companyBRevenue, companyBEBITDA, companyBNetIncome,
     offerPricePerShare, cashPercent,
-    synergiesY1, synergiesY2, synergiesY3,
   } = inputs;
+  // The one synergy calculation. Year 1 pre-tax EBITDA impact = cost + revenue × combined gross margin.
+  const synergies          = synergySchedule(inputs);
+  const synergyY1          = synergies.years[0];
+  const synergiesY1        = synergyY1.ebitda;
 
   const stockPercent       = 100 - cashPercent;
   // Purchase price: a PRIVATE target has no per-share price or share count, so the total consideration is
@@ -145,6 +149,8 @@ export function calculate(inputs) {
   const totalShares      = acqBaseShares + newSharesIssued;
 
   const combinedRevenue  = (companyARevenue != null && companyBRevenue != null) ? companyARevenue + companyBRevenue : null;
+  // Pro forma revenue carries the revenue synergies; combined revenue stays the two companies' own sum.
+  const proFormaRevenue  = combinedRevenue != null ? combinedRevenue + (synergyY1.revenue ?? 0) : null;
   // BOTH sides required. A null EBITDA (e.g. BMY: OperatingIncomeLoss untagged → null EBITDA) must NOT
   // coerce to 0 inside the sum and silently understate combined leverage — a partial input renders '—',
   // never a published ratio (matches the enterpriseValue / netDebt short-circuit, Fix A / 2C-2). Both-real
@@ -233,10 +239,13 @@ export function calculate(inputs) {
     newSharesIssued:    newSharesIssued === null ? null : newSharesIssued.toFixed(0),
     purchasePremium:    purchasePremium === null ? null : purchasePremium.toFixed(1),
     combinedRevenue:    combinedRevenue === null ? null : combinedRevenue.toFixed(0),
+    proFormaRevenue:    proFormaRevenue === null ? null : proFormaRevenue.toFixed(0),
     combinedEBITDA:     combinedEBITDA === null ? null : combinedEBITDA.toFixed(0),
     // combinedNetIncome reflects the pro-forma recurring net income used for EPS (consistent).
     combinedNetIncome:  proFormaNetIncome === null ? null : proFormaNetIncome.toFixed(0),
-    synergiesY1, synergiesY2, synergiesY3,
+    // Total pre-tax EBITDA impact per year. The cost and revenue lines are in synergies.years.
+    synergiesY1, synergiesY2: synergies.years[1].ebitda, synergiesY3: synergies.years[2].ebitda,
+    synergies,
     // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
     // dashboard "Before → After" and the percent change are internally consistent).
     companyAEPS:        standaloneEPS.toFixed(2),

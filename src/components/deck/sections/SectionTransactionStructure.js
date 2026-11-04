@@ -6,6 +6,7 @@ import { cashBucket, netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
 import { epsAccretionPct } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
+import { SynergyLines } from '../shared/SynergyLines';
 
 // Transaction Structure — Sources & Uses + pro-forma capitalization. The FUNDING / balance-sheet view of the
 // deal. Stated inputs (offer / premium / mix / minimum cash kept) sit up top per faculty's note. The
@@ -179,6 +180,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
         )}
       </div>
 
+      <SynergyLines deal={deal} title="Synergies ($M). Combined EBITDA above includes Year 1 only" style={{ padding: '6px 20px 0' }} />
       <div style={{ padding: '8px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
         <strong style={{ color: NAVY }}>Structure: </strong>
         {bankFin ? (

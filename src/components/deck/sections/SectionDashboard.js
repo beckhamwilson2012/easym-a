@@ -15,6 +15,8 @@ import {
 } from '../shared/deckTokens';
 import { useWindowWidth } from '../../../hooks/useWindowWidth';
 import { ExplainButton } from '../../shared/ExplainButton';
+import { SynergyLines } from '../shared/SynergyLines';
+import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
   explainPTBV, explainCombinedCET1,
@@ -78,13 +80,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // Cash sensitivity strip: pro forma EPS at 100/80/60/40/20% cash
   const cashSensitivity = [100, 80, 60, 40, 20].map(cp => ({
     cashPct: cp,
-    eps: calcProFormaEPS(inputs.offerPricePerShare, inputs.synergiesY1, { ...inputs, cashPercent: cp }),
+    eps: calcProFormaEPS(inputs.offerPricePerShare, results.synergiesY1, { ...inputs, cashPercent: cp }),
   }));
 
-  // Synergy reference for sensitivity: user's Y1 value, or 2% of combined revenue if none entered
-  const synSensBase = inputs.synergiesY1 > 0
-    ? inputs.synergiesY1
-    : Math.max(1, Math.round(0.02 * ((inputs.companyARevenue || 0) + (inputs.companyBRevenue || 0))));
+  // Synergy reference for sensitivity: the Year 1 total as entered. With none entered there is nothing to flex, so
+  // every column is the same no-synergy EPS and the page says so.
+  const synergyY1Entered = results.synergies.years[0].entered;
+  const synSensBase = results.synergiesY1;
 
   // Build a 5-row premium ladder for the sensitivity grid. Center on the deal's ACTUAL premium when
   // it is a sane positive number; otherwise fall back to a standard 10/15/20/25/30% acquisition
@@ -116,7 +118,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const breakevenEPS = acquirerStandaloneEPS(inputs); // net income ÷ shares (matches calculate())
   const currentRowData = sensitivityData[sensitivityCurrentRow] || [];
   let sensitivityFooter = null;
-  if (breakevenEPS > 0 && currentRowData.length > 0) {
+  if (!synergyY1Entered) {
+    sensitivityFooter = `No Year 1 synergies entered, so every column shows EPS with no synergies assumed.`;
+  } else if (breakevenEPS > 0 && currentRowData.length > 0) {
     const firstAccretiveIdx = currentRowData.findIndex(eps => eps !== null && eps >= breakevenEPS);
     if (firstAccretiveIdx === -1) {
       // Find minimum synergy mult needed (extrapolate beyond 150%)
@@ -124,7 +128,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
       // Reconcile with the §7 multi-year ramp (Fix 9): this grid is a Year-1 SNAPSHOT — it varies the
       // Year-1 synergy run-rate only up to 150%. The Year-2/3 synergies ramp far higher, so the deal
       // can be dilutive across this grid yet turn accretive by Year 3 (no contradiction).
-      const y3EPS = calcProFormaEPS(inputs.offerPricePerShare, inputs.synergiesY3, inputs);
+      const y3EPS = calcProFormaEPS(inputs.offerPricePerShare, results.synergiesY3, inputs);
       if (y3EPS != null && y3EPS > breakevenEPS) {
         sensitivityFooter += ` Note: the grid reflects Year-1 synergies only; as synergies ramp to their full run-rate the deal turns accretive by Year 3 (see Pro Forma P&L accretion table).`;
       }
@@ -315,21 +319,22 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             </div>
             <h3 style={{ color: '#0F2244', display: 'flex', alignItems: 'center', gap: 6 }}>
               {bankMode ? 'Cost Savings' : 'Synergies'}
-              <ExplainButton explain={() => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, targetRevenue: target?.revenue, isBank: bankMode, targetNIE: target?.nonInterestExpense })} />
+              <ExplainButton explain={() => explainSynergies({ schedule: results.synergies, isBank: bankMode })} />
             </h3>
             {[
-              { label: 'Year 1', value: results.synergiesY1 },
-              { label: 'Year 2', value: results.synergiesY2 },
-              { label: 'Year 3', value: results.synergiesY3 },
+              { label: 'Year 1', value: results.synergiesY1, entered: results.synergies.years[0].entered },
+              { label: 'Year 2', value: results.synergiesY2, entered: results.synergies.years[1].entered },
+              { label: 'Year 3', value: results.synergiesY3, entered: results.synergies.years[2].entered },
             ].map(s => (
               <div key={s.label} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
                 <div style={{ width: 50, fontSize: 12, color: '#6B7280' }}>{s.label}</div>
                 <div style={{ flex: 1, background: '#F3F4F6', borderRadius: 4, height: 8 }}>
                   <div style={{ width: results.synergiesY3 > 0 ? `${(s.value / results.synergiesY3) * 100}%` : '0%', background: '#0F2244', height: 8, borderRadius: 4 }} />
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 'bold' }}>${s.value}M</div>
+                <div style={{ fontSize: 12, fontWeight: 'bold' }}>{s.entered ? fmtSynergy(s.value) : NONE_ENTERED}</div>
               </div>
             ))}
+            <SynergyLines deal={deal} style={{ marginTop: 10 }} />
           </div>
 
           <div style={cardStyle}>
@@ -340,17 +345,18 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Combined Non-Interest Expense', value: `(${fmtMoneyTable((target?.nonInterestExpense || 0) + (acquirer?.nonInterestExpense || 0))})`, red: true },
               { label: 'Acquirer Net Income',           value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',             value: fmtMoneyAccounting(inputs.companyBNetIncome) },
-              { label: 'After-Tax Cost Synergies (Y1)', value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true },
+              { label: 'After-Tax Cost Synergies (Y1)', value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income',          value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',                 value: fmtPerShare(results.proFormaEPS), bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ] : [
               { label: 'Combined Revenue',    value: fmtMoneyTable(results.combinedRevenue)                          },
+              ...(results.synergies.years[0].revenue != null ? [{ label: 'Pro Forma Revenue (incl. Y1 revenue synergies)', value: fmtMoneyTable(results.proFormaRevenue) }] : []),
               { label: 'Combined EBITDA (incl. Y1 synergies)', value: fmtMoneyTable(results.combinedEBITDA) },
               { label: 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
               { label: 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
-              { label: 'After-Tax Synergies (Y1)',  value: `+${fmtMoneyTable(results.afterTaxSynergies)}`, green: true, explain: () => explainSynergies({ synY1: results.synergiesY1, synY2: results.synergiesY2, synY3: results.synergiesY3, targetRevenue: target?.revenue, isBank: false }) },
+              { label: 'After-Tax Synergies (Y1)',  value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered, explain: () => explainSynergies({ schedule: results.synergies, isBank: false }) },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income', value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
@@ -390,7 +396,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         <div style={{ ...cardStyle, marginBottom: 24 }}>
           <h3 style={{ color: '#0F2244', marginTop: 0, marginBottom: 4 }}>Sensitivity Analysis</h3>
           <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 16px', lineHeight: 1.6 }}>
-            Pro forma EPS at varying premium levels (rows) and synergy realization (columns).<br />
+            Pro forma EPS at varying premium levels (rows) and synergy realization (columns). 100% = {synergyY1Entered ? `${fmtSynergy(results.synergiesY1)} Year 1 total synergies as entered` : `${NONE_ENTERED}: no synergies assumed`}.<br />
             {breakevenEPS > 0 && <>Breakeven: <strong style={{ color: '#374151' }}>${breakevenEPS.toFixed(2)}</strong> (acquirer standalone EPS).<br /></>}
             {breakevenEPS > 0
               ? 'Cells above breakeven are accretive; below are dilutive.'

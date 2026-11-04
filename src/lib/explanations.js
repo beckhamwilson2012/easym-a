@@ -1,4 +1,5 @@
 import { fmtMoney, fmtPerShare, fmtPct } from '../components/deck/shared/deckTokens';
+import { NONE_ENTERED, fmtSynergy, marginSentence } from './synergies';
 
 // Pure-function explainer registry.
 // Each function takes relevant deal/company data and returns:
@@ -115,39 +116,15 @@ export function explainDebtEbitda({ combinedDebt, combinedEbitda, multiple }) {
 
 // ── Synergies ─────────────────────────────────────────────────────────────────
 
-export function explainSynergies({ synY1, synY2, synY3, targetRevenue, isBank, targetNIE }) {
-  const y1 = parseFloat(synY1) || 0;
-  const y2 = parseFloat(synY2) || 0;
-  const y3 = parseFloat(synY3) || 0;
-
-  if (isBank) {
-    const nie = parseFloat(targetNIE) || 0;
-    const niePct = nie > 0 ? ` (${(y1 / nie * 100).toFixed(1)}% of target NIE)` : '';
-    return {
-      formula: 'Cost Savings = headcount reduction + branch consolidation + technology integration + back-office overlap (scaled to the target expense base)',
-      inputs: [
-        { label: 'Year 1 cost savings', value: `${fmtMoney(y1)}${niePct}` },
-        { label: 'Year 2 cost savings', value: fmtMoney(y2) },
-        { label: 'Year 3 cost savings', value: fmtMoney(y3) },
-      ],
-      result: `Year 3 run-rate: ${fmtMoney(y3)}`,
-      notes: 'Bank mergers typically target 15–25% of the TARGET non-interest expense (NIE) base as cost savings — synergies are bounded by the target being absorbed, not the combined entity. Revenue synergies from cross-sell are harder to model reliably and are excluded here. Historical cost-savings realization: ~70–80% of announced targets.',
-      sources: ['FDIC merger research', 'Federal Reserve bank merger analysis'],
-    };
-  }
-
-  const rev = parseFloat(targetRevenue) || 0;
-  const revPct = rev > 0 ? ` (${(y1 / rev * 100).toFixed(1)}% of target revenue)` : '';
+export function explainSynergies({ schedule, isBank }) {
+  const line = (y) => `Cost ${fmtSynergy(y.cost)} · Revenue ${fmtSynergy(y.revenue)} · Total ${y.entered ? fmtSynergy(y.ebitda) : NONE_ENTERED}`;
+  const y3 = schedule.years[2];
   return {
-    formula: 'Synergies ≈ target revenue × year-ramp rate (~2% Y1 → ~5% Y3); blend of ~55% cost + ~45% revenue synergies',
-    inputs: [
-      { label: 'Year 1 synergies', value: `${fmtMoney(y1)}${revPct}` },
-      { label: 'Year 2 synergies', value: fmtMoney(y2) },
-      { label: 'Year 3 synergies', value: fmtMoney(y3) },
-    ],
-    result: `Year 3 run-rate: ${fmtMoney(y3)}`,
-    notes: 'Synergies typically ramp from ~2% of TARGET revenue in Year 1 to ~5% by Year 3 — scaled to the target being absorbed, not the combined entity. Historical realization averages 60–70% of announced targets. This model blends cost and revenue synergies; real deals track them separately.',
-    sources: ['McKinsey M&A research', 'Bain & Company synergy studies'],
+    formula: 'Total synergies (EBITDA impact) = cost synergies + revenue synergies × combined gross margin',
+    inputs: schedule.years.map((y) => ({ label: `Year ${y.year}`, value: line(y) })),
+    result: `Year 3 total: ${y3.entered ? fmtSynergy(y3.ebitda) : NONE_ENTERED}`,
+    notes: `${isBank ? 'Bank deal: gross margin does not apply, so revenue synergies add to revenue only. ' : ''}${marginSentence(schedule.margin)} Every figure here is what was entered on the input page: an empty line assumes no synergy. The preset percentages are app defaults, editable, and are not market figures.`,
+    sources: ['Entered on the input page'],
   };
 }
 

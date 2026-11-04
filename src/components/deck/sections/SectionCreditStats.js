@@ -1,6 +1,7 @@
 import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
+import { SynergyLines } from '../shared/SynergyLines';
 
 // Phase 8 — Pro-Forma Credit Statistics. Leverage & coverage — the credit view that replaces the
 // market-based analysis (equity performance / analyst consensus / EPS accretion) for a private deal,
@@ -48,6 +49,7 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
             ))}
           </tbody>
         </table>
+        <SynergyLines deal={deal} title="Synergies ($M). Combined EBITDA above includes Year 1 only" style={{ marginTop: 12 }} />
         <div style={{ marginTop: 12, fontSize: 11, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           Combined total debt includes the acquisition financing (new debt raised for the cash consideration). Interest is grossed up from the after-tax financing drag at the deck's {Math.round(TAX * 100)}% tax rate. Any component that is unavailable renders “—”, never a fabricated figure.
         </div>
