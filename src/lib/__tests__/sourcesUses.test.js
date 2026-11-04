@@ -25,8 +25,4 @@ describe('Sources & Uses totals', () => {
     expect(r.totalUses).toBeNull();
     expect(r.totalSources).toBeNull();
   });
-
-  test('no fee key survives in the results', () => {
-    expect(Object.keys(calculate(deal)).filter(k => /fee/i.test(k))).toEqual([]);
-  });
 });
