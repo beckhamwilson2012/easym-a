@@ -20,6 +20,7 @@ import {
   buildCashPercentTooltip,
   buildSynergyTooltip,
 } from './lib/suggestionTooltips';
+import { revenuePeriodLabel } from './lib/revenuePeriod';
 import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium } from './lib/offerPremium';
 import './App.css';
 
@@ -400,7 +401,7 @@ function BankFactsDisplay({ bankFacts }) {
   );
 }
 
-function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSource }) {
+function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSource, periodLabel }) {
   const [options, setOptions] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [inputValue, setInputValue] = useState('');
@@ -441,6 +442,9 @@ function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSour
                 background: '#F3F4F6', border: '1px solid #E5E7EB', borderRadius: 4, padding: '1px 5px' }}>
                 via {SOURCE_LABEL[dataSource] || dataSource}
               </span>
+            )}
+            {dataSource && dataSource !== 'none' && periodLabel && (
+              <span data-testid="revenue-period" style={{ fontWeight: 'normal', fontSize: 11, color: '#6B7280', marginLeft: 6 }}>{periodLabel}</span>
             )}
           </div>
           {dataSource === 'none' && (
@@ -536,6 +540,8 @@ function App() {
   const [offerPriceTouched, setOfferPriceTouched] = useState(false);
   const [expandedA, setExpandedA] = useState(false);
   const [expandedB, setExpandedB] = useState(false);
+  const [revenuePeriodA, setRevenuePeriodA] = useState(null);   // label for the revenue on each company card
+  const [revenuePeriodB, setRevenuePeriodB] = useState(null);
   const [fiscalYearA, setFiscalYearA] = useState(null);   // e.g. 2025
   const [fiscalYearEndA, setFiscalYearEndA] = useState(null);
   const [fiscalYearB, setFiscalYearB] = useState(null);
@@ -735,6 +741,7 @@ function App() {
       setCompanyTypeA(data.companyType || 'standard'); setDataSrcA(data.dataSource || '');
       setSicA(data.sic || null); setSicDescriptionA(data.sicDescription || null);
       setFiscalYearA(data.fiscalYear ?? null); setFiscalYearEndA(data.fiscalYearEnd ?? null);
+      setRevenuePeriodA(revenuePeriodLabel(data));
       setInputs(prev => ({ ...prev, companyARevenue: data.revenue, companyAEBITDA: data.ebitda,
         companyANetIncome: data.netIncome, companyAShares: data.shares,
         companyAOperatingIncome: data.operatingIncome, companyAGrossProfit: data.grossProfit ?? null,
@@ -779,6 +786,7 @@ function App() {
       setCompanyTypeB(data.companyType || 'standard'); setDataSrcB(data.dataSource || '');
       setSicB(data.sic || null); setSicDescriptionB(data.sicDescription || null);
       setFiscalYearB(data.fiscalYear ?? null); setFiscalYearEndB(data.fiscalYearEnd ?? null);
+      setRevenuePeriodB(revenuePeriodLabel(data));
       setInputs(prev => ({ ...prev, companyBRevenue: data.revenue, companyBEBITDA: data.ebitda,
         companyBNetIncome: data.netIncome, companyBShares: data.shares,
         companyBOperatingIncome: data.operatingIncome, companyBGrossProfit: data.grossProfit ?? null,
@@ -922,7 +930,7 @@ function App() {
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
     setOfferPriceTouched(false); setUnaffectedDate('');
     setExpandedA(false); setExpandedB(false);
-    setFiscalYearA(null); setFiscalYearEndA(null);
+    setFiscalYearA(null); setFiscalYearEndA(null); setRevenuePeriodA(null); setRevenuePeriodB(null);
     setFiscalYearB(null); setFiscalYearEndB(null);
     setNonGaapA(null); setNonGaapB(null);
     setNonGaapLoadingA(false); setNonGaapLoadingB(false);
@@ -1198,7 +1206,8 @@ function App() {
       <div style={cardStyle}>
         <h2 style={sectionTitle}>Company {P} — {isA ? 'Acquirer' : 'Target'}</h2>
         <TickerSelect onSelect={isA ? handleSelectA : handleSelectB} error={isA ? errorA : errorB} fetched={fetched}
-          companyName={isA ? nameA : nameB} loading={isA ? loadingA : loadingB} dataSource={isA ? dataSrcA : dataSrcB} />
+          companyName={isA ? nameA : nameB} loading={isA ? loadingA : loadingB} dataSource={isA ? dataSrcA : dataSrcB}
+          periodLabel={isA ? revenuePeriodA : revenuePeriodB} />
         {fetched && (
           <div style={{ marginTop: 10 }}>
             {priceStatus.loading && <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 6, fontStyle: 'italic' }}>⟳ Fetching live price…</div>}
