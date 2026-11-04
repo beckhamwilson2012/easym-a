@@ -409,7 +409,6 @@ function toCalcInputs({ A, B, priceA, priceB, pair }) {
     offerPricePerShare,
     offerValueTotal: 0,
     cashPercent: pair.cashPercent,
-    transactionFees: 0,
     synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
     minCashPct: 0.02,        // dealCalc.MIN_CASH_PCT_DEFAULT — re-read from the module below
   };
@@ -448,7 +447,6 @@ async function stageAssembly({ A, B, priceA, priceB, pair }) {
     proFormaEPS: results.proFormaEPS,
     combinedRevenue: results.combinedRevenue,
     synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
-    transactionFees: 0,
     _results: results,
     _dataDate: new Date().toISOString().slice(0, 10),
     hasMarketData: true,

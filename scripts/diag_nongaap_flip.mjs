@@ -17,7 +17,7 @@ const B = {
   shares: 929,                                    // companyBShares (cover-page) — used for purchase price
 };
 // Deal terms observed in the live render (auto-suggested by the app):
-const deal = { offer: 195.16, cashPct: 60, synY1: 831 };  // fees ($544M) are excluded from recurring EPS
+const deal = { offer: 195.16, cashPct: 60, synY1: 831 };
 
 function impliedDil(ng){ return ng.ni / ng.eps; }  // the denominator the company itself used for non-GAAP EPS
 

@@ -120,7 +120,7 @@ export function calculate(inputs) {
     companyBShares, companyBEPS, companyBCash, companyBDebt,
     companyARevenue, companyAEBITDA, companyANetIncome,
     companyBRevenue, companyBEBITDA, companyBNetIncome,
-    offerPricePerShare, cashPercent, transactionFees,
+    offerPricePerShare, cashPercent,
     synergiesY1, synergiesY2, synergiesY3,
   } = inputs;
 
@@ -153,14 +153,19 @@ export function calculate(inputs) {
     ? companyAEBITDA + companyBEBITDA + synergiesY1 : null; // synergies pre-tax
 
   // Pro-forma RECURRING net income: combine both companies, add after-tax synergies, subtract the
-  // after-tax interest cost of debt-funding the cash portion. One-time transaction fees do NOT
-  // belong in recurring earnings, so they are excluded from EPS (shown separately as a deal cost).
+  // after-tax interest cost of debt-funding the cash portion.
   const afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE);
   // Sources of funds (Stage 2E): the drag is charged on the NEW debt after combined excess cash funds part of
   // the deal — ONE construction, shared with the sensitivity grid (calcProFormaEPS) and read by §8/§9/§10/§11.
   const sources             = acquisitionNewDebt(inputs);
   // newDebt is null when the target's debt is unavailable → the drag is unknown, not zero.
   const newInterestAfterTax = sources.newDebt != null ? sources.newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE) : null;
+  // Sources & Uses totals at full precision, so the table foots on the real figures rather than on rounded rows.
+  // Bank deals repay no target debt and draw no excess cash (a genuine 0). Otherwise an unavailable leg stays null.
+  const debtRepaidInUses   = sources.bank ? 0 : sources.targetDebtRepaid;
+  const excessCashInSources = sources.bank ? 0 : sources.excessCashUsed;
+  const totalUses    = debtRepaidInUses != null ? totalPurchasePrice + debtRepaidInUses : null;
+  const totalSources = (sources.newDebt != null && excessCashInSources != null) ? sources.newDebt + stockPortion + excessCashInSources : null;
   // BOTH net incomes required — a null side must NOT coerce to 0 and understate the pro-forma net income
   // that drives EPS and the headline accretion. Null → EPS null → accretion not meaningful → '—' / n/m.
   // Same for an unknown financing drag.
@@ -209,6 +214,8 @@ export function calculate(inputs) {
     minCashRetained:   sources.minCash       == null ? null : sources.minCash.toFixed(0),
     combinedCash:      sources.combinedCash  == null ? null : sources.combinedCash.toFixed(0),
     targetDebtRepaid:  sources.targetDebtRepaid == null ? null : sources.targetDebtRepaid.toFixed(0),
+    totalUses:         totalUses == null ? null : totalUses.toFixed(0),
+    totalSources:      totalSources == null ? null : totalSources.toFixed(0),
     pfLtmRevenue:      sources.pfLtmRevenue  == null ? null : sources.pfLtmRevenue.toFixed(0),
     minCashPct:        sources.minCashPct,
     bankFinancing:     sources.bank,
@@ -230,7 +237,6 @@ export function calculate(inputs) {
     // combinedNetIncome reflects the pro-forma recurring net income used for EPS (consistent).
     combinedNetIncome:  proFormaNetIncome === null ? null : proFormaNetIncome.toFixed(0),
     synergiesY1, synergiesY2, synergiesY3,
-    transactionFees,
     // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
     // dashboard "Before → After" and the percent change are internally consistent).
     companyAEPS:        standaloneEPS.toFixed(2),
@@ -357,9 +363,6 @@ export function buildNarrative(results, inputs, nameA, nameB, flags) {
   }
   if (flags.length > 0) {
     text += ` ${flags[0].text.split('—')[0].trim()} represents the deal's biggest structural risk.`;
-  }
-  if (inputs.synergiesY1 > 0) {
-    text += ` Year 1 synergies of ${formatDollars(inputs.synergiesY1)} help offset ${formatDollars(inputs.transactionFees)} in transaction costs.`;
   }
   return text;
 }

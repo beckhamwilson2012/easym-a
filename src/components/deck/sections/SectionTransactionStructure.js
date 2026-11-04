@@ -52,7 +52,6 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const newDebt  = num(r.newDebt);                        // new acquisition debt (banks: = cash consideration)
   const newStock = num(r.stockPortion);                  // stock consideration — newly issued acquirer equity
   const equityPurchase   = num(deal?.totalPrice);        // purchase of target equity (cash + stock consideration)
-  const fees             = num(deal?.transactionFees) || 0;
   const targetDebtRepaid = num(r.targetDebtRepaid);      // null for banks (not repaid on change of control)
   const excessCashUsed   = num(r.excessCashUsed);        // combined cash above the retained min, drawn to fund the deal
   const minCashRetained  = num(r.minCashRetained);
@@ -60,25 +59,19 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
 
   // Banks: target debt is not repaid and no excess cash is drawn — a genuine 0 in the sums. Non-bank: null means
   // the target's debt is unavailable (dealCalc propagates it), so every total it feeds is unknown, never $0-based.
-  const debtRepaidAmt = bankFin ? 0 : targetDebtRepaid;
   const excessUsedAmt = bankFin ? (excessCashUsed || 0) : excessCashUsed;
-  const suKnown   = debtRepaidAmt != null && excessUsedAmt != null && newDebt != null;
-  const totalUses = debtRepaidAmt != null ? (equityPurchase || 0) + debtRepaidAmt + fees : null;
-  // Fee cash = the balancing draw (≈ fees; absorbs sub-$M rounding), so Sources === Uses exactly.
-  const feeCash   = suKnown ? totalUses - newDebt - (newStock || 0) - excessUsedAmt : null;
-  const totalSources = suKnown ? newDebt + (newStock || 0) + excessUsedAmt + feeCash : null;
-  const foots = suKnown ? Math.abs(totalUses - totalSources) < 1 : null;   // null = cannot be footed (input unavailable)
+  const totalUses    = num(r.totalUses);
+  const totalSources = num(r.totalSources);
+  const foots = (totalUses != null && totalSources != null) ? Math.abs(totalUses - totalSources) < 1 : null;   // null = cannot be footed (input unavailable)
 
   const usesRows = [
     { k: `Purchase of ${bTk} equity (offer × shares)`, v: equityPurchase },
     ...((targetDebtRepaid || (!bankFin && targetDebtRepaid == null)) ? [{ k: `Repay ${bTk} debt (assumed 100%)`, v: targetDebtRepaid }] : []),
-    { k: 'Transaction fees (one-time)', v: fees },
   ];
   const sourcesRows = [
     { k: 'New acquisition debt', v: newDebt },
     { k: `New ${aTk} equity issued (stock consideration)`, v: newStock },
     ...((excessCashUsed || (!bankFin && excessCashUsed == null)) ? [{ k: 'Excess cash on hand used', v: excessCashUsed }] : []),
-    { k: 'Cash on hand (funds fees)', v: feeCash },
   ];
 
   // ── Pro-forma capitalization / leverage ─────────────────────────────────────────────────────────────
@@ -93,7 +86,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const proFormaDebt = newDebt == null ? null : (bankFin ? (preDebt != null ? preDebt + newDebt : null) : aDebt + newDebt);
   // ONE cash definition (convention b): cash & equivalents + short-term marketable securities, both companies.
   const preCash      = cashBucket(aCash, aSti).value + cashBucket(bCash, bSti).value;
-  const pfCash       = (excessUsedAmt != null && feeCash != null) ? preCash - excessUsedAmt - feeCash : null;   // cash drawn to fund the deal + fees
+  const pfCash       = excessUsedAmt != null ? preCash - excessUsedAmt : null;   // cash drawn to fund the deal
   const preNetDebt   = sub(preDebt, preCash);
   const pfNetDebt    = sub(proFormaDebt, pfCash);
   const combinedEBITDA = num(deal?.combinedEBITDA);          // SAME non-GAAP EBITDA as §6/§7 (incl. Y1 synergies)
@@ -189,9 +182,9 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
       <div style={{ padding: '8px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
         <strong style={{ color: NAVY }}>Structure: </strong>
         {bankFin ? (
-          <>Cash consideration is debt-financed (new acquisition debt); stock consideration is newly issued {aTk} equity; transaction fees are funded from balance-sheet cash, so <strong>Sources = Uses</strong>. This is a <strong>financial-institution deal</strong>: bank cash and deposits are not netted and {bTk}'s debt is not repaid on change of control, so the 100%-debt financing convention is retained (the cash-funded sources-of-funds construction applies to non-bank targets only). </>
+          <>Cash consideration is debt-financed (new acquisition debt); stock consideration is newly issued {aTk} equity, so <strong>Sources = Uses</strong>. This is a <strong>financial-institution deal</strong>: bank cash and deposits are not netted and {bTk}'s debt is not repaid on change of control, so the 100%-debt financing convention is retained (the cash-funded sources-of-funds construction applies to non-bank targets only). </>
         ) : (
-          <>New acquisition debt <strong>= cash consideration, less total combined cash, plus minimum cash kept by the combined company, plus {bTk} debt repaid on change of control (assumed 100%), floored at zero</strong>. Equivalently — the collapsed form the Sources &amp; Uses "Excess cash on hand used" line ties to — this is cash consideration + {bTk} debt repaid − excess cash on hand, where excess cash on hand = combined cash less minimum cash kept. Combined cash above the retained minimum funds part of the deal, so the financing drag reflects net funding rather than a 100%-debt assumption. Stock consideration is newly issued {aTk} equity, and a small cash draw funds fees, so <strong>Sources = Uses</strong>. <strong style={{ color: '#374151' }}>Assumption:</strong> minimum cash kept by the combined company is set at <strong>{minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% of pro-forma LTM revenue</strong>{minCashRetained != null ? ` (${fmtMoneyTable(minCashRetained)})` : ''} — a modeling assumption, not a sourced figure. <strong style={{ color: '#374151' }}>Assumption:</strong> 100% of {bTk}'s debt is assumed repaid on change of control — a stated assumption, not sourced. {accAtCurrent != null && accAtZero != null ? <><strong style={{ color: '#374151' }}>Robustness:</strong> the accretion/(dilution) conclusion does not depend on the min-cash assumption — at min cash = 0 the pro-forma EPS impact is <strong>{accAtZero >= 0 ? '+' : ''}{accAtZero.toFixed(1)}%</strong> and at the assumed {minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% it is <strong>{accAtCurrent >= 0 ? '+' : ''}{accAtCurrent.toFixed(1)}%</strong>, {(accAtZero < 0) === (accAtCurrent < 0) ? `${accAtCurrent < 0 ? 'dilutive' : 'accretive'} across the full range` : 'the sign is stable across the range'}. </> : null}</>
+          <>New acquisition debt <strong>= cash consideration, less total combined cash, plus minimum cash kept by the combined company, plus {bTk} debt repaid on change of control (assumed 100%), floored at zero</strong>. Equivalently — the collapsed form the Sources &amp; Uses "Excess cash on hand used" line ties to — this is cash consideration + {bTk} debt repaid − excess cash on hand, where excess cash on hand = combined cash less minimum cash kept. Combined cash above the retained minimum funds part of the deal, so the financing drag reflects net funding rather than a 100%-debt assumption. Stock consideration is newly issued {aTk} equity, so <strong>Sources = Uses</strong>. <strong style={{ color: '#374151' }}>Assumption:</strong> minimum cash kept by the combined company is set at <strong>{minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% of pro-forma LTM revenue</strong>{minCashRetained != null ? ` (${fmtMoneyTable(minCashRetained)})` : ''} — a modeling assumption, not a sourced figure. <strong style={{ color: '#374151' }}>Assumption:</strong> 100% of {bTk}'s debt is assumed repaid on change of control — a stated assumption, not sourced. {accAtCurrent != null && accAtZero != null ? <><strong style={{ color: '#374151' }}>Robustness:</strong> the accretion/(dilution) conclusion does not depend on the min-cash assumption — at min cash = 0 the pro-forma EPS impact is <strong>{accAtZero >= 0 ? '+' : ''}{accAtZero.toFixed(1)}%</strong> and at the assumed {minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% it is <strong>{accAtCurrent >= 0 ? '+' : ''}{accAtCurrent.toFixed(1)}%</strong>, {(accAtZero < 0) === (accAtCurrent < 0) ? `${accAtCurrent < 0 ? 'dilutive' : 'accretive'} across the full range` : 'the sign is stable across the range'}. </> : null}</>
         )}
         {!bankDeal && <>Leverage is <strong>net debt (and total debt) ÷ combined EBITDA</strong> — the same EBITDA basis used on the Pro Forma slides (includes Year-1 synergies). </>}{NET_DEBT_BASIS}{aBsAsOf && bBsAsOf ? ` Balance-sheet items (cash, debt, marketable securities) are as of ${aTk} ${aBsAsOf} and ${bTk} ${bBsAsOf}.` : ''} Figures are illustrative transaction assumptions — not negotiated terms.
       </div>

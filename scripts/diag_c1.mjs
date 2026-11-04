@@ -22,7 +22,7 @@ const deal = {
   offerPrice: 114.34, cashPercent: 60, purchasePremium: 30.0,
   totalPrice: 29957, newSharesIssued: 74.0,
   epsAccretion: -10.2, isAccretive: false, proFormaEPS: 7.21,
-  combinedRevenue: 46740, synergiesY1: 935, transactionFees: 90,
+  combinedRevenue: 46740, synergiesY1: 935,
   _results: { companyAEPS: 8.03 },
 };
 

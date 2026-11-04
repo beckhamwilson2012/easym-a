@@ -38,23 +38,6 @@ export function explainDealSize({ offerPrice, shares, targetName }) {
   };
 }
 
-export function explainTransactionFees({ fees, dealSize }) {
-  const f = parseFloat(fees) || 0;
-  const d = parseFloat(dealSize) || 0;
-  const pct = d > 0 ? (f / d * 100).toFixed(2) : null;
-  return {
-    formula: 'Transaction Fees = Advisory + Legal + Financing + Regulatory costs',
-    inputs: [
-      { label: 'Total fees', value: fmtMoney(f) },
-      { label: 'Deal size', value: fmtMoney(d) },
-      ...(pct !== null ? [{ label: 'Fees as % of deal', value: `${pct}%` }] : []),
-    ],
-    result: fmtMoney(f),
-    notes: 'Typical M&A fees range 1–3% of deal value. Larger deals carry lower fee rates. Fees are expensed in Year 1 and directly reduce EPS.',
-    sources: ['Morgan Stanley M&A benchmarks'],
-  };
-}
-
 export function explainCashPercent({ cashPercent, dealSize }) {
   const pct = parseFloat(cashPercent) || 0;
   const stock = 100 - pct;
@@ -195,8 +178,7 @@ export function explainProFormaEPS({ combinedNetIncome, synergiesY1, totalShares
   const ni = parseFloat(combinedNetIncome) || 0;
   const syn = parseFloat(synergiesY1) || 0;
   const ts = parseFloat(totalShares) || 0;
-  // Transaction fees are NOT subtracted from recurring EPS (matches dealCalc — they are a one-time
-  // cost shown separately); after-tax financing interest is netted into pro-forma net income.
+  // After-tax financing interest is netted into pro-forma net income (matches dealCalc).
   const pf = ts > 0 ? (ni + syn) / ts : 0;
   return {
     formula: 'Pro Forma EPS = (Combined Net Income + After-Tax Synergies − After-Tax Financing Cost) ÷ (Diluted Acquirer Shares + New Shares Issued)',
@@ -207,7 +189,7 @@ export function explainProFormaEPS({ combinedNetIncome, synergiesY1, totalShares
       { label: '+ New shares issued', value: `${(parseFloat(newShares) || 0).toFixed(1)}M` },
     ],
     result: fmtPerShare(pf),
-    notes: 'New shares are issued at the acquirer\'s live market price (primary); a 15× EPS proxy is used only as a fallback when no live price is available. Transaction fees are excluded from recurring EPS (shown separately as a one-time cost); after-tax financing interest on the cash portion is netted into pro-forma net income. More shares issued = more dilution = lower pro forma EPS.',
+    notes: 'New shares are issued at the acquirer\'s live market price (primary); a 15× EPS proxy is used only as a fallback when no live price is available. After-tax financing interest on the cash portion is netted into pro-forma net income. More shares issued = more dilution = lower pro forma EPS.',
   };
 }
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // scripts/sources-check.mjs — `npm run sources:check`. Hits every source the /quote chain depends on and
 // prints ONE status line each. Exits non-zero if EDGAR or FMP fail: those two are the fundamentals chain, so
-// a failure there means /quote can only return absent values. Yahoo is price-only and advisory — a 429 from
+// a failure there means /quote can only return absent values. Yahoo is price-only and optional — a 429 from
 // it is Yahoo rate-limiting this IP, not a broken build, so it never fails the check.
 //
 // Reads FMP_KEY from ma-app/.env (never printed — only its length, and only when missing/invalid matters).
@@ -49,7 +49,7 @@ if (!key) console.log('  note: FMP_KEY is empty in ma-app/.env — the fmp probe
 const results = [];
 for (const p of probes) results.push(await probe(p));   // serial: never burst a rate-limited source
 for (const r of results) {
-  console.log(`  ${r.ok ? 'OK  ' : 'FAIL'}  ${r.name.padEnd(26)} ${r.line}${r.required ? '' : '   (advisory — price only)'}`);
+  console.log(`  ${r.ok ? 'OK  ' : 'FAIL'}  ${r.name.padEnd(26)} ${r.line}${r.required ? '' : '   (optional — price only)'}`);
 }
 const failed = results.filter((r) => r.required && !r.ok);
 if (failed.length) {

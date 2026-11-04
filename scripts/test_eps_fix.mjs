@@ -22,7 +22,7 @@ const inputs = {
   companyBRevenue: tgt.revenue, companyBEBITDA: tgt.ebitda, companyBNetIncome: tgt.netIncome,
   companyBShares: tgt.shares, companyBDilutedShares: tgt.dilutedShares, companyBEPS: tgt.eps,
   companyBCash: tgt.cash, companyBDebt: tgt.debt, currentSharePriceB: priceB,
-  offerPricePerShare: offer, cashPercent: 60, transactionFees: 100,
+  offerPricePerShare: offer, cashPercent: 60,
   synergiesY1: 200, synergiesY2: 400, synergiesY3: 600,
 };
 

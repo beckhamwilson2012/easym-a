@@ -16,7 +16,7 @@ const baseGAAP = {
   companyBRevenue: qB.revenue, companyBEBITDA: qB.ebitda, companyBNetIncome: qB.netIncome,
   companyBEPS: qB.eps, companyBShares: qB.shares, companyBCash: qB.cash, companyBDebt: qB.debt,
   currentSharePriceB: 150.12,
-  offerPricePerShare: 195.16, cashPercent: 60, transactionFees: 544,
+  offerPricePerShare: 195.16, cashPercent: 60,
   synergiesY1: 831, synergiesY2: 831, synergiesY3: 831,
 };
 // The flip override (resolveAccretionBasis): only these four fields move to non-GAAP.

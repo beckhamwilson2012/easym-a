@@ -20,7 +20,7 @@ async function run(at, an, tt, tn) {
     companyBRevenue: tgt.revenue, companyBEBITDA: tgt.ebitda, companyBNetIncome: tgt.netIncome,
     companyBShares: tgt.shares, companyBDilutedShares: tgt.dilutedShares, companyBEPS: tgt.eps,
     companyBCash: tgt.cash, companyBDebt: tgt.debt, currentSharePriceB: priceB,
-    offerPricePerShare: offer, cashPercent: 60, transactionFees: 100,
+    offerPricePerShare: offer, cashPercent: 60,
     synergiesY1: Math.round(rev * RATES[1]), synergiesY2: Math.round(rev * RATES[2]), synergiesY3: Math.round(rev * RATES[3]),
   });
   const inOld = base(combinedRev), inNew = base(targetRev);

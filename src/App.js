@@ -14,14 +14,10 @@ import { SuggestedPremiumBox } from './components/shared/SuggestedPremiumBox';
 import { PriceTiles } from './components/shared/PriceTiles';
 import { CashFundingBox } from './components/shared/CashFundingBox';
 import { CashPercentageSlider } from './components/shared/CashPercentageSlider';
-import { CollapsibleNote } from './components/shared/CollapsibleNote';
 import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './components/deck/shared/deckTokens';
 import {
-  calcSuggestedTransactionFees,
-  calcAllInFeeEstimate,
   calcSuggestedSynergy,
   buildCashPercentTooltip,
-  buildTransactionFeesTooltip,
   buildSynergyTooltip,
 } from './lib/suggestionTooltips';
 import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium } from './lib/offerPremium';
@@ -459,29 +455,6 @@ function TickerSelect({ onSelect, error, fetched, companyName, loading, dataSour
   );
 }
 
-// Reference-only all-in fee breakdown shown inside the collapsible note. The MODEL uses only the
-// base advisory fee; legal & financing here are rough, clearly-labeled estimates (Phase 2.4).
-function AllInFeeBreakdown({ allIn }) {
-  const row = (label, value, strong) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0',
-      borderTop: strong ? '1.5px solid #0F2244' : '1px solid #EEF2F6' }}>
-      <span style={{ color: strong ? '#0F2244' : '#6B7280', fontWeight: strong ? 700 : 400 }}>{label}</span>
-      <span style={{ color: '#111827', fontWeight: strong ? 700 : 500 }}>{fmtMoney(value)}</span>
-    </div>
-  );
-  return (
-    <div>
-      {row('Base advisory fee (model input)', allIn.advisorFee)}
-      {row('Legal & regulatory (est.)', allIn.legalFee)}
-      {row('Financing & other (est.)', allIn.otherFee)}
-      {row('All-in estimate', allIn.total, true)}
-      <div style={{ fontSize: 10, color: '#9CA3AF', marginTop: 6, fontStyle: 'italic', lineHeight: 1.4 }}>
-        Reference only — the model uses the base advisory fee above. Legal & financing are rough estimates.
-      </div>
-    </div>
-  );
-}
-
 const SearchIcon = () => (
   <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'center' }}>
     <svg width="60" height="60" viewBox="0 0 24 24" fill="none" stroke="#0F2244" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -516,7 +489,7 @@ const defaultInputs = {
   companyBPrivate: false, companyBTotalEquity: 0,   // Phase 7 — private company: no market data, equity value entered directly
   companyBValuationMultiple: 0,   // Phase 9 — EV/EBITDA multiple (peer-median pre-fill, user-editable) for a private company
   companyBValuationPin: null,      // Phase 9 — pinned peer median { sic, sector, median, asOf, n, source, peers } so a saved deal reproduces
-  offerPricePerShare: 0, offerValueTotal: 0, cashPercent: 60, transactionFees: 0,   // offerValueTotal ($M): total consideration for a PRIVATE target (no per-share price)
+  offerPricePerShare: 0, offerValueTotal: 0, cashPercent: 60,   // offerValueTotal ($M): total consideration for a PRIVATE target (no per-share price)
   synergiesY1: 0, synergiesY2: 0, synergiesY3: 0,
   // Stage 2E — min operating cash the pro-forma co retains, as a % of pro-forma LTM revenue (scaled default,
   // user-overridable). Drives the sources-of-funds construction in dealCalc (excess cash funds part of the deal).
@@ -912,15 +885,6 @@ function App() {
     if (inputs.synergiesY1 === 0 && synAuto1 != null && synAuto1 > 0) updates.synergiesY1 = synAuto1;
     if (inputs.synergiesY2 === 0 && synAuto2 != null && synAuto2 > 0) updates.synergiesY2 = synAuto2;
     if (inputs.synergiesY3 === 0 && synAuto3 != null && synAuto3 > 0) updates.synergiesY3 = synAuto3;
-    // Fix 8 (default A): auto-apply the size-tiered suggested advisory fee on build when the user has
-    // not entered one, so the model never silently reports "$0M transaction costs". Uses the effective
-    // (possibly just auto-filled) offer to size the deal.
-    if ((parseFloat(inputs.transactionFees) || 0) === 0) {
-      const offerForFee = updates.offerPricePerShare ?? inputs.offerPricePerShare;
-      const dealSizeM = offerForFee > 0 && inputs.companyBShares > 0 ? offerForFee * inputs.companyBShares : 0;
-      const suggestedFee = calcSuggestedTransactionFees(dealSizeM);
-      if (suggestedFee && suggestedFee > 0) updates.transactionFees = suggestedFee;
-    }
     let effectiveInputs = inputs;
     if (Object.keys(updates).length > 0) {
       effectiveInputs = { ...inputs, ...updates };
@@ -1140,7 +1104,6 @@ function App() {
     // football-field footnote can cite "live market price as of [date]" (explains run-to-run drift).
     offerPriceAsOf: priceStatusB.asOf ? priceStatusB.asOf.toISOString() : null,
     totalPrice:      results ? parseFloat(results.totalPurchasePrice) : 0,
-    transactionFees: inputs.transactionFees,
     synergiesY1: inputs.synergiesY1, synergiesY2: inputs.synergiesY2, synergiesY3: inputs.synergiesY3,
     epsAccretion:    results ? parseFloat(results.epsChangePct) : 0,
     isAccretive:     results ? results.isAccretive : false,
@@ -1149,7 +1112,6 @@ function App() {
     evEBITDA:        results ? results.evEBITDA   : 'N/A',
     peRatio:         results ? results.peRatio    : 'N/A',
     debtEBITDA:      results ? results.debtEBITDA : 'N/A',
-    lehmanFee:       inputs.transactionFees,
     dealSize:        results ? parseFloat(results.totalPurchasePrice) : 0,
     combinedRevenue: results ? parseFloat(results.combinedRevenue) : 0,
     combinedEBITDA:  results ? parseFloat(results.combinedEBITDA) : 0,
@@ -1332,13 +1294,6 @@ function App() {
         tooltip={buildCashPercentTooltip(bankDeal)} dealSize={entryDealSize}
         acquirerSharePrice={acquirerSharePriceForSlider} acquirerSharesOutstanding={inputs.companyAShares} />
       {bPub && <CashFundingBox funding={acquisitionNewDebt(modelInputs(inputs).resolvedWithBank)} targetName={tickerB} />}
-      <div style={{ margin: '16px 0', borderTop: '1px solid #E5E7EB' }} />
-      {(() => {
-        const totalFee = calcSuggestedTransactionFees(entryDealSize);
-        if (!totalFee) return <SuggestionBadge label="Typical M&A fees: advisor (Lehman Formula) + legal" tooltip={buildTransactionFeesTooltip(0, bankDeal)} />;
-        return <SuggestionBadge primary={fmtMoneyDual(totalFee)} tooltip={buildTransactionFeesTooltip(entryDealSize, bankDeal)} onUse={() => setInputs(prev => ({ ...prev, transactionFees: totalFee }))} />;
-      })()}
-      <LargeNumericField label="Transaction Fees ($M)" name="transactionFees" value={inputs.transactionFees} onChange={handleChange} placeholder="e.g., 2,187" />
     </div>
   );
 

@@ -23,7 +23,6 @@ export const ASSUMPTION_FIELDS = new Set([
   'synergiesY1', 'synergiesY2', 'synergiesY3',
   'cashPercent', 'financingMix',
   'dcfRange', 'precedentRange', 'footballRange',
-  'transactionFees',
 ]);
 
 function joinList(arr) {

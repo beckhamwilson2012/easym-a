@@ -172,7 +172,7 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
       label: 'Transaction Assumptions',
       bullets: [
         'Offer price, acquisition premium, and cash/stock consideration mix are user- or model-defined inputs.',
-        'Year 1–Year 3 synergies and transaction fees are user/model assumptions, not negotiated terms.',
+        'Year 1–Year 3 synergies are user/model assumptions, not negotiated terms.',
         'A 21% marginal tax rate and a 5% interest rate on acquisition debt are applied as standing model assumptions.',
       ],
     },

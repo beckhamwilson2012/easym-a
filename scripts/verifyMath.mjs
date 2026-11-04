@@ -35,7 +35,7 @@ const ex = {
   companyARevenue: 41525, companyAEBITDA: 9531, currentSharePriceA: 188,
   companyBShares: 262, companyBEPS: -0.98, companyBNetIncome: -257, companyBCash: 0, companyBDebt: 0,
   companyBRevenue: 5215, companyBEBITDA: -38, currentSharePriceB: 116,
-  offerPricePerShare: 150, cashPercent: 60, transactionFees: 0,
+  offerPricePerShare: 150, cashPercent: 60,
   synergiesY1: 935, synergiesY2: 1636, synergiesY3: 2337,
 };
 const r = calculate(ex);

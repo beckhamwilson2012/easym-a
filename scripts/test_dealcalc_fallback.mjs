@@ -25,7 +25,7 @@ const doNothing = over => ({
   companyARevenue: 41525, companyAEBITDA: 9531, companyADebt: 14439, currentSharePriceA: 265,
   companyBShares: 1, companyBEPS: 0, companyBNetIncome: 0, companyBRevenue: 0, companyBEBITDA: 0,
   companyBCash: 0, companyBDebt: 0, currentSharePriceB: 0,
-  offerPricePerShare: 0, cashPercent: 50, transactionFees: 0,
+  offerPricePerShare: 0, cashPercent: 50,
   synergiesY1: 0, synergiesY2: 0, synergiesY3: 0, ...over,
 });
 
@@ -63,7 +63,7 @@ const crmTeam = (dil, eps) => ({
   companyARevenue: 41525, companyAEBITDA: 9531, companyADebt: 14439, currentSharePriceA: 265,
   companyBShares: 262, companyBEPS: -0.98, companyBNetIncome: -257, companyBRevenue: 5215,
   companyBEBITDA: -38, companyBCash: 2513, companyBDebt: 988, currentSharePriceB: 82.72,
-  offerPricePerShare: 107.54, cashPercent: 50, transactionFees: 85,
+  offerPricePerShare: 107.54, cashPercent: 50,
   synergiesY1: 104, synergiesY2: 183, synergiesY3: 261,
 });
 console.log('\n### TEST 5  full CRM acquires TEAM accretion (unit simulation; live render is yours post-restart)');

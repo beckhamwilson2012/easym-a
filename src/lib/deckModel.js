@@ -37,7 +37,6 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
     synergiesY1:   num(deal.synergiesY1),
     synergiesY2:   num(deal.synergiesY2),
     synergiesY3:   num(deal.synergiesY3),
-    transactionFees: num(deal.transactionFees ?? deal.lehmanFee),
   };
 
   // ── Verified per-company snapshot (live equity value + fundamentals) ────────

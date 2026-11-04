@@ -19,7 +19,7 @@ import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
   explainPTBV, explainCombinedCET1,
   explainEpsChange, explainDealScore,
-  explainDealSize, explainTransactionFees, explainSynergies,
+  explainDealSize, explainSynergies,
   explainCashPercent,
 } from '../../../lib/explanations';
 
@@ -370,7 +370,6 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Cash Portion',         value: fmtMoneyTable(results.cashPortion), explain: () => explainCashPercent({ cashPercent: inputs.cashPercent, dealSize: results.totalPurchasePrice }) },
               { label: 'Stock Portion',        value: fmtMoneyTable(results.stockPortion)      },
               { label: 'New Shares Issued',    value: `${results.newSharesIssued}M`            },
-              { label: 'Transaction Fees (one-time)', value: fmtMoneyTable(results.transactionFees), explain: () => explainTransactionFees({ fees: results.transactionFees, dealSize: results.totalPurchasePrice }) },
               { label: 'Purchase Premium',     value: (() => {
                 const pp = parseFloat(results.purchasePremium);
                 return (!isFinite(pp) || Math.abs(pp) > 200) ? 'N/A' : `${pp >= 0 ? '+' : ''}${pp.toFixed(1)}%`;

@@ -447,9 +447,6 @@ export function buildBankNarrative(results, inputs, target, acquirer, nameA, nam
     text += ` Combined CET1 ratio of ${pct}% is ${threshold} the 10% well-capitalized threshold.`;
   }
 
-  if ((inputs?.synergiesY1 || 0) > 0)
-    text += ` Year 1 cost synergies of ${fmtMoney(inputs.synergiesY1)} offset ${fmtMoney(inputs.transactionFees)} in transaction fees.`;
-
   const dealSize = parseFloat(results?.totalPurchasePrice || 0);
   if (isGSIB(target?.ticker) && isGSIB(acquirer?.ticker) && dealSize > 100000) {
     text += ` Transaction would face near-certain regulatory rejection — Dodd-Frank Act and Federal Reserve concentration limits effectively prohibit mergers between two G-SIBs.`;
