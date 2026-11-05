@@ -163,12 +163,20 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote }) {
 
   // Source note: named only when cost of revenue came from somewhere other than a plain companyfacts tag, or
   // gross profit is calculated. The filing's accession is the trace-back.
+  const ebitdaNote = (() => {
+    const latest = actualsSrc[actualsSrc.length - 1];
+    const parts = [];
+    if (latest && latest.ebitda == null && latest.ebitdaReason) parts.push(`${latest.label} EBITDA is not shown: ${latest.ebitdaReason}.`);
+    if (showLtm && L.ebitda == null && L.ebitdaReason) parts.push(`LTM EBITDA is not shown: ${L.ebitdaReason}.`);
+    return parts.length ? parts.join(' ') : null;
+  })();
   const incomeNote = (() => {
     const latest = actualsSrc[actualsSrc.length - 1];
     if (!latest) return null;
     const parts = [];
     if (latest.costOfRevenueKind && latest.costOfRevenueKind !== 'companyfacts') parts.push(`${latest.label} cost of revenue: ${latest.costOfRevenueSource}.`);
     if (showLtm && L.costOfRevenueSource && /XBRL instance/.test(L.costOfRevenueSource)) parts.push(`LTM cost of revenue: ${L.costOfRevenueSource}.`);
+    if (latest.costOfRevenueFlag) parts.push(`${latest.label}: ${latest.costOfRevenueFlag}.`);
     if (latest.grossProfitBasis === 'calculated') parts.push('Gross profit is calculated: revenue − cost of revenue for the same period, because the filer tags no gross profit.');
     return parts.length ? parts.join(' ') : null;
   })();
@@ -315,6 +323,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote }) {
         Actual years (GAAP) from SEC EDGAR filings; forward years are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>. The step in Operating Income / Net Income / EPS at the actual→estimate boundary reflects the actual→consensus transition, not organic growth. Margins are computed on each column's own basis.
         {showLtm ? <> The <strong>LTM</strong> column is the trailing twelve months (latest annual + interim YTD − prior-year YTD), a GAAP actual as of {asOfShort(L.asOf)}.{ltmDaMissing ? <> <sup>d</sup> LTM EBITDA is shown on an operating-income basis — interim D&amp;A on the same basis as the annual EBITDA is not tagged for this filer (a differently-scoped cash-flow D&amp;A is not mixed in).</> : null}</> : null}
         {incomeNote ? <> <strong style={{ color: NAVY }}>Cost of revenue / gross profit: </strong>{incomeNote}</> : null}
+        {ebitdaNote ? <> {ebitdaNote}</> : null}
         {grossNote ? <> {grossNote}</> : null}
         {noiText ? <> <strong style={{ color: NAVY }}>Non-operating income/(expense)</strong> reconciles operating income to net income. {noiText}</> : null}
         {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}

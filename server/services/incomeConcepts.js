@@ -9,6 +9,12 @@
 //      on ProductOrServiceAxis (IRDM, VSAT, GSAT) has nothing current there: IRDM FY25 is ServiceMember
 //      197,577,000 + ManufacturedProductOtherMember 50,426,000 = 248,003,000, in the 10-K instance only.
 //
+// WHICH CANDIDATE: the income statement decides, when it can (statementCostResolutions). A tag can be a real fact and not the
+// cost line: Sarepta FY25 CostOfRevenue 25.5 is from a note, its statement line is 839.6 under a company-specific tag. That line
+// wins when the statement's lines foot to its own total, from filed numbers only. Tags are never summed to make a cost line.
+// When no line can be confirmed (Crown Castle: 992 and 113 as separate lines, no total), today's pick stays and carries a flag
+// naming the tags and values.
+//
 // GROSS PROFIT: filed GrossProfit, else revenue − cost of revenue for the same period, labeled "calculated".
 // Absent stays null. A filed zero stays zero. Nothing here estimates, carries a value across periods, or
 // reads a provider: the filing wins, and FMP stays a cross-check in /api/verified.
@@ -18,9 +24,12 @@
 
 const { get } = require('../utils/httpGet');
 const { FINANCIAL_SIC } = require('../../src/lib/financialSic');
+const { columnOf, sameFiled, fetchFilingStatements } = require('./filingStatements');
 
 const COMPONENT_SUM_CONCEPT   = 'CostOfRevenueComponentSum';
 const FILING_INSTANCE_CONCEPT = 'CostOfRevenueFilingInstance';
+const STATEMENT_LINE_CONCEPT  = 'CostOfRevenueStatementLine';
+const COST_RESOLUTIONS_KEY    = 'CostOfRevenueResolutions';   // not a concept: { end: resolution }, for the trace-back
 
 const FILED_COST_CONCEPTS = ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfServices'];
 const COST_OF_REVENUE_CONCEPTS = {
@@ -28,6 +37,9 @@ const COST_OF_REVENUE_CONCEPTS = {
   ifrs: ['CostOfSales', 'CostOfGoodsAndServicesSold'],
 };
 const GROSS_PROFIT_CONCEPTS = ['GrossProfit'];
+// A cost line that is not a candidate on its own, because it is partial by definition. Compared, never picked.
+const COST_LINE_COMPARE_ONLY = ['DirectCostsOfLeasedAndRentedPropertyOrEquipment'];
+const STATEMENT_TOTAL_COST_TAGS = ['CostsAndExpenses', 'OperatingExpenses', 'BenefitsLossesAndExpenses'];
 
 // Standard tags that split cost of revenue into goods and services, for filers with no total tag. The
 // unsuffixed CostOfGoodsSold / CostOfServices are single concepts in step 1, so they do not appear here.
@@ -101,6 +113,7 @@ function memberLabel(member) { return String(member).replace(/^.*:/, '').replace
 // Human-readable source of a resolved cost-of-revenue fact, for the slide note and the /api trace.
 function describeCostSource(entry) {
   if (!entry) return null;
+  if (entry.concept === STATEMENT_LINE_CONCEPT) return `${entry.form} ${entry.accn} income statement (${entry.filedConcept})`;
   if (entry.concept === FILING_INSTANCE_CONCEPT) {
     const parts = entry.components
       ? entry.components.map((c) => memberLabel(c.member)).join(' + ')
@@ -121,25 +134,31 @@ function describeLtmCostSource(ns, concept, ends) {
   return `${filings.join(', ')} XBRL instance`;
 }
 
-const costKind = (entry) => (entry.concept === FILING_INSTANCE_CONCEPT ? 'filing-instance'
+const costKind = (entry) => (entry.concept === STATEMENT_LINE_CONCEPT ? 'statement-line'
+  : entry.concept === FILING_INSTANCE_CONCEPT ? 'filing-instance'
   : entry.concept === COMPONENT_SUM_CONCEPT ? 'component-sum' : 'companyfacts');
 
 // Both lines for one annual period. Values are raw dollars. revenue must be for the same `end`.
 function annualIncomeLines(ns, end, revenue, useIfrs = false) {
   const filed = pickAnnualAt(ns, GROSS_PROFIT_CONCEPTS, end);
-  const cost  = pickAnnualAt(ns, useIfrs ? COST_OF_REVENUE_CONCEPTS.ifrs : COST_OF_REVENUE_CONCEPTS.gaap, end);
+  // A confirmed statement line comes first, annual only: a 10-K line has no interim legs, so the LTM lists do not carry it.
+  const cost  = pickAnnualAt(ns, useIfrs ? COST_OF_REVENUE_CONCEPTS.ifrs : [STATEMENT_LINE_CONCEPT, ...COST_OF_REVENUE_CONCEPTS.gaap], end);
   const gross = resolveGrossProfit(filed ? filed.val : null, revenue, cost ? cost.val : null);
 
+  const resolution = ns[COST_RESOLUTIONS_KEY]?.[end] || null;
+  const trace = { status: resolution?.status ?? null, tieOut: resolution?.tieOut ?? null, flag: resolution?.flag ?? null, candidates: resolution?.candidates ?? null };
   let costOfRevenue;
   if (cost) {
-    costOfRevenue = { value: cost.val, kind: costKind(cost), label: describeCostSource(cost), concept: cost.concept,
-      accn: cost.accn || null, form: cost.form || null, components: cost.components || null };
+    costOfRevenue = { value: cost.val, kind: costKind(cost),
+      label: resolution?.flag ? `${describeCostSource(cost)}, not confirmed against the income statement` : describeCostSource(cost),
+      concept: cost.concept === STATEMENT_LINE_CONCEPT ? cost.filedConcept : cost.concept,
+      accn: cost.accn || null, form: cost.form || null, components: cost.components || null, ...trace };
   } else {
     // A filed gross profit with no cost tag: cost is the same-period identity, and it says so.
     const identity = filed ? calculateGrossProfit(revenue, filed.val) : null;
     costOfRevenue = identity != null
-      ? { value: identity, kind: 'calculated', label: 'calculated: revenue − filed gross profit', concept: null, accn: null, form: null, components: null }
-      : { value: null, kind: null, label: null, concept: null, accn: null, form: null, components: null };
+      ? { value: identity, kind: 'calculated', label: 'calculated: revenue − filed gross profit', concept: null, accn: null, form: null, components: null, ...trace }
+      : { value: null, kind: null, label: null, concept: null, accn: null, form: null, components: null, ...trace };
   }
   return {
     costOfRevenue,
@@ -147,6 +166,74 @@ function annualIncomeLines(ns, end, revenue, useIfrs = false) {
       label: gross.basis === 'filed' ? 'SEC EDGAR companyfacts (GrossProfit)'
         : gross.basis === 'calculated' ? `calculated: revenue − cost of revenue, ${costOfRevenue.label}` : null },
   };
+}
+
+// ── Income statement cost line ────────────────────────────────────────────────────────────────────────────
+
+const fmtM = (v) => `$${(v / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })}M`;
+const COST_LINE_LABEL = /^costs? of (sales|revenues?|goods|products?|services)/i;
+const isCompanySpecific = (row) => row.ns !== 'us-gaap' && row.ns !== 'ifrs-full';
+const isCostLine = (row) => FILED_COST_CONCEPTS.includes(row.tag) || COST_LINE_COMPARE_ONLY.includes(row.tag)
+  || (isCompanySpecific(row) && COST_LINE_LABEL.test(row.label));
+
+// Pure tie-out, from filed numbers only: the statement's lines from the cost line down must foot to its own total costs, and
+// revenue − total costs must equal operating income when both are shown. Sarepta FY25: 839.605 + 1,522.066 + 491.716 + 42.009 +
+// 2.622 = 2,898.018, and 2,198.237 − 2,898.018 = −699.781.
+function statementCostTieOut(statement, end, firstCostIndex) {
+  const col = columnOf(statement, end);
+  const totalIndex = statement.rows.findIndex((r, i) => i > firstCostIndex && STATEMENT_TOTAL_COST_TAGS.includes(r.tag) && r.values[col] != null);
+  if (totalIndex < 0) return null;
+  const lines = statement.rows.slice(firstCostIndex, totalIndex).filter((r) => r.values[col] != null);
+  const total = statement.rows[totalIndex].values[col];
+  const sum = lines.reduce((s, r) => s + r.values[col], 0);
+  if (!sameFiled(statement, sum, total)) return null;
+  const revenueRow = statement.rows.slice(0, firstCostIndex).reverse().find((r) => r.values[col] != null);
+  const operating = statement.rows.find((r) => r.tag === 'OperatingIncomeLoss' && r.values[col] != null);
+  if (revenueRow && operating && !sameFiled(statement, revenueRow.values[col] - total, operating.values[col])) return null;
+  return { test: `statement lines foot to ${statement.rows[totalIndex].tag}`, total, residual: sum - total,
+    revenue: revenueRow ? revenueRow.values[col] : null, operatingIncome: operating ? operating.values[col] : null,
+    lines: lines.map((r) => ({ concept: `${r.ns}:${r.tag}`, label: r.label, value: r.values[col] })) };
+}
+
+// Pure: per statement column, what the income statement says about cost of revenue. `byEnd` is the trace-back; `entries` are
+// dated facts to add when a statement line replaces today's pick. A filer whose only candidate is its only cost line gets
+// status 'single' and nothing changes. A period with no candidate at all is left alone.
+function statementCostResolutions(gaap, statement, meta = {}) {
+  const byEnd = {}, entries = [];
+  if (!statement) return { byEnd, entries };
+  for (const end of statement.periods.filter(Boolean)) {
+    const col = columnOf(statement, end);
+    const filed = FILED_COST_CONCEPTS.map((c) => pickAnnualAt(gaap, [c], end)).filter(Boolean);
+    if (!filed.length) continue;
+    const candidates = [...filed, ...COST_LINE_COMPARE_ONLY.map((c) => pickAnnualAt(gaap, [c], end)).filter(Boolean)].map((e) => ({ concept: e.concept, value: e.val }));
+    const lineRows = statement.rows.filter((r) => isCostLine(r) && r.values[col] != null && r.values[col] !== 0);
+    const pick = filed[0];
+    const disagree = candidates.some((c) => Math.abs(c.value - pick.val) > Math.abs(pick.val) * 0.001);
+    const set = (status, tieOut = null, flag = null) => { byEnd[end] = { status, tieOut, flag, candidates }; };
+    const useLine = (row, filedConcept) => entries.push({ start: null, end, val: row.values[col], form: meta.form || null, filed: meta.filed || null,
+      accn: meta.accn || null, concept: STATEMENT_LINE_CONCEPT, filedConcept });
+
+    // The statement can show the total with its own parts beneath it (Apple: products + services; Synopsys: three lines under
+    // CostOfRevenue). The pick is on the statement and its other lines fit inside it, so it is still the one cost line.
+    const totalRow = lineRows.find((r) => r.tag === pick.concept && sameFiled(statement, r.values[col], pick.val));
+    const others = totalRow ? lineRows.filter((r) => r !== totalRow) : [];
+    // Nested parts all under the pick's own tag (MicroStrategy) can add to more than the total, so they count as parts by tag.
+    if (others.length && !disagree && (others.every((r) => r.tag === totalRow.tag)
+      || others.reduce((s, r) => s + Math.abs(r.values[col]), 0) <= Math.abs(pick.val) * 1.001)) { set(candidates.length > 1 ? 'agreed' : 'single'); continue; }
+
+    const only = lineRows.length === 1 ? lineRows[0] : null;
+    // Candidates that agree, and a line with that value: the same number, whichever of the agreeing tags the line carries.
+    if (only && !disagree && sameFiled(statement, only.values[col], pick.val) && filed.some((e) => e.concept === only.tag)) { set(candidates.length > 1 ? 'agreed' : 'single'); continue; }
+    if (only) {
+      const tieOut = statementCostTieOut(statement, end, statement.rows.indexOf(only));
+      const match = filed.find((e) => e.concept === only.tag && sameFiled(statement, only.values[col], e.val));
+      if (tieOut && match) { if (match !== pick) useLine(only, match.concept); set('tie-out', tieOut); continue; }
+      if (tieOut && isCompanySpecific(only)) { useLine(only, `${only.ns}:${only.tag}`); set('tie-out', tieOut); continue; }
+    }
+    const shows = lineRows.length ? lineRows.map((r) => `${r.ns}:${r.tag} ${fmtM(r.values[col])}`).join(', ') : 'no cost line';
+    set('unconfirmed', null, `cost of revenue not confirmed: tags filed ${candidates.map((c) => `${c.concept} ${fmtM(c.value)}`).join(', ')}; the income statement shows ${shows}`);
+  }
+  return { byEnd, entries };
 }
 
 // ── Component sums from companyfacts (step 2) ─────────────────────────────────────────────────────────────
@@ -318,6 +405,24 @@ async function latestAnnualFilingPeriod(cik) {
   }
 }
 
+// The company's latest annual filing, from submissions: { form, accn, filed, reportDate }, or null.
+async function latestAnnualFiling(cik) {
+  try {
+    const recent = (await submissions(cik))?.filings?.recent;
+    if (!recent?.form) return null;
+    let latest = null;
+    recent.form.forEach((form, i) => {
+      if ((form === '10-K' || form === '20-F') && recent.reportDate[i] && (!latest || recent.reportDate[i] > latest.reportDate)) {
+        latest = { form, accn: recent.accessionNumber[i], filed: recent.filingDate[i], reportDate: recent.reportDate[i] };
+      }
+    });
+    return latest;
+  } catch (e) {
+    console.error(`[incomeConcepts] submissions read failed for CIK ${cik}: ${e.message}`);
+    return null;
+  }
+}
+
 // Filings to read: only the latest 10-K / 10-Q whose period companyfacts cannot supply. A filer that tags cost
 // in companyfacts gets no extra request. Banks have no cost of revenue, so their (very large) filings are skipped.
 async function filingsWithCostGap(gaap, cik) {
@@ -336,12 +441,18 @@ async function filingsWithCostGap(gaap, cik) {
   return [annualGap ? find('10-K', annualEnd) : null, interimGap ? find('10-Q', interimEnd) : null].filter(Boolean);
 }
 
-// Returns a copy of companyfacts with steps 2 and 3 added as synthetic us-gaap concepts. The cached original
-// is not modified. Never throws: a failed filing read leaves those periods absent, which render as null.
+// Returns a copy of companyfacts with steps 2 and 3 and any statement cost line added as synthetic us-gaap concepts, and the
+// latest annual filing's own statements as `filingStatements` (null when unreadable). The cached original is not modified.
+// Never throws: a failed filing read leaves those periods absent, which render as null.
 async function prepareIncomeFacts(facts, cik) {
+  const filing = cik ? await latestAnnualFiling(cik) : null;
+  const filingStatements = filing ? await fetchFilingStatements(cik, filing) : null;
   const gaap = facts?.facts?.['us-gaap'];
-  if (!gaap || !Object.keys(gaap).length) return facts;
+  if (!gaap || !Object.keys(gaap).length) return facts ? { ...facts, filingStatements } : facts;
   const extended = { ...gaap };
+  const statementCost = statementCostResolutions(gaap, filingStatements?.income ?? null, filing || {});
+  extended[COST_RESOLUTIONS_KEY] = statementCost.byEnd;
+  if (statementCost.entries.length) extended[STATEMENT_LINE_CONCEPT] = { units: { USD: statementCost.entries } };
   const components = componentSumEntries(gaap).map((e) => ({ ...e, concept: COMPONENT_SUM_CONCEPT }));
   if (components.length) extended[COMPONENT_SUM_CONCEPT] = { units: { USD: components } };
   try {
@@ -351,11 +462,11 @@ async function prepareIncomeFacts(facts, cik) {
   } catch (e) {
     console.error(`[incomeConcepts] cost gap check failed for CIK ${cik}: ${e.message}`);
   }
-  return { ...facts, facts: { ...facts.facts, 'us-gaap': extended } };
+  return { ...facts, filingStatements, facts: { ...facts.facts, 'us-gaap': extended } };
 }
 
 module.exports = {
-  COST_OF_REVENUE_CONCEPTS, FILED_COST_CONCEPTS, GROSS_PROFIT_CONCEPTS, FILING_INSTANCE_CONCEPT, COMPONENT_SUM_CONCEPT,
-  sumComponents, calculateGrossProfit, resolveGrossProfit, grossFromCostOfRevenue,
+  COST_OF_REVENUE_CONCEPTS, FILED_COST_CONCEPTS, GROSS_PROFIT_CONCEPTS, FILING_INSTANCE_CONCEPT, COMPONENT_SUM_CONCEPT, STATEMENT_LINE_CONCEPT,
+  sumComponents, calculateGrossProfit, resolveGrossProfit, grossFromCostOfRevenue, statementCostResolutions, statementCostTieOut,
   pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts, filerSic, latestAnnualFilingPeriod,
 };

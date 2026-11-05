@@ -12,6 +12,7 @@ const os   = require('os');
 const { PEER_OVERRIDES } = require('./peerOverrides');
 const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deckTokens.isFinancial — one SIC source
 const { grossNotMeaningfulReason } = require('./src/lib/insuranceSic'); // utilities and insurers; shared with deckTokens.grossNmReason
+const { resolveDepreciationAt, resolveCapexAt, resolveOperatingCashFlowAt, computeEbitda, computeFreeCashFlow, traceOf } = require('./server/services/cashFlowConcepts'); // shared D&A, capex, EBITDA and FCF (/quote, /api/pnl, LTM, §16 identical)
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
@@ -374,14 +375,14 @@ function pick(namespace, names, unit = 'USD', floorEnd = null) {
 // EXCEPT an absent concept returns null instead of 0 — so a genuinely-missing tag (e.g. banks don't tag
 // us-gaap:OperatingIncomeLoss) becomes first-class N/A (Fix-A discipline) rather than a false $0. Used
 // only for operatingIncome/ebitda; pick() and all its other callers are untouched.
-function pickOrNull(namespace, names, unit = 'USD', floorEnd = null) {
+function pickEntryOrNull(namespace, names, unit = 'USD', floorEnd = null) {
   let best = null;
   for (const name of names) {
     const e = latestAnnualEntry(namespace[name], unit, floorEnd);
     if (!e) continue;
     if (!best || e.end > best.end) best = e;
   }
-  return best ? best.val : null;
+  return best;
 }
 
 // Period-match guard (Fix A). A balance-sheet/income value should come from the SAME fiscal period as
@@ -550,29 +551,21 @@ async function fetchFromEDGAR(symbol, cik) {
 
   // IFRS filers often don't tag operating income separately; ProfitLossBeforeTax
   // is the closest proxy (before finance items + tax → approximates EBIT).
-  const operatingIncome = useIfrs
-    ? pickOrNull(ifrs, ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'], 'USD', lineFloor)
-    : pickOrNull(gaap, ['OperatingIncomeLoss'], 'USD', lineFloor);
+  const operatingIncomeEntry = useIfrs
+    ? pickEntryOrNull(ifrs, ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'], 'USD', lineFloor)
+    : pickEntryOrNull(gaap, ['OperatingIncomeLoss'], 'USD', lineFloor);
+  const operatingIncome = operatingIncomeEntry ? operatingIncomeEntry.val : null;
 
-  const da = useIfrs
-    ? pick(ifrs, [
-        'DepreciationAmortisationAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss',
-        'AdjustmentsForDepreciationAndAmortisationExpenseAndImpairmentLossReversalOfImpairmentLossRecognisedInProfitOrLoss',
-        'DepreciationAndAmortisationExpense',
-        'DepreciationAmortisationAndImpairmentLoss',
-        'DepreciationAndAmortisation',
-      ], 'USD', lineFloor)
-    : pick(gaap, ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'], 'USD', lineFloor);
-
-  // da null: the D&A tag stopped before this year. There is no current D&A, so there is no EBITDA to report.
-  const ebitda = (operatingIncome == null || da == null) ? null : (operatingIncome === 0 ? 0 : operatingIncome + da);
-
-  // Free cash flow = OCF + CapEx (CapEx stored as a negative outflow). Always from us-gaap — IFRS 20-F
-  // filers that don't tag us-gaap cash-flow concepts resolve to null (not fabricated), matching the
-  // verified-data edgarClient exactly so the comps screening table stays consistent with §10.
-  const ocf   = pick(gaap, ['NetCashProvidedByUsedInOperatingActivities'], 'USD', lineFloor);
-  const capex = pick(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment'], 'USD', lineFloor);
-  const freeCashFlow = (ocf != null && capex != null && ocf !== 0 && capex !== 0) ? inM(ocf + capex) : null;
+  // D&A, capex, EBITDA and free cash flow: cashFlowConcepts, at revenue's fiscal year only. Absent stays null, with the reason.
+  // Cash flow is always us-gaap: an IFRS 20-F filer that tags no us-gaap cash flow has no free cash flow here, matching §10.
+  const cashFlowEnd = revenueEntry?.end ?? lineFloor;
+  const cashFlowStatement = facts.filingStatements?.cashFlow ?? null;
+  const depreciation = resolveDepreciationAt(useIfrs ? ifrs : gaap, cashFlowEnd, { useIfrs, statement: cashFlowStatement });
+  const capex = resolveCapexAt(gaap, cashFlowEnd, { statement: cashFlowStatement });
+  const ebitdaResult = computeEbitda({ value: operatingIncome, end: operatingIncomeEntry?.end ?? null, reason: operatingIncomeEntry ? null : `no operating income tag filed for ${cashFlowEnd}` }, depreciation);
+  const ebitda = ebitdaResult.value;
+  const freeCashFlowResult = computeFreeCashFlow(resolveOperatingCashFlowAt(gaap, cashFlowEnd), capex);
+  const freeCashFlow = freeCashFlowResult.value != null ? inM(freeCashFlowResult.value) : null;
 
   // Gross profit — from the filing, at revenue's exact period (incomeConcepts). A tag from any other period
   // cannot match: Oracle froze GrossProfit at FY2018 → paired with FY2026 revenue it gave a nonsense 36.1%;
@@ -791,8 +784,10 @@ async function fetchFromEDGAR(symbol, cik) {
       grossProfit:     grossNotMeaningful ? null : raw.flows.grossProfit.ltmM,
       operatingIncome: raw.flows.operatingIncome.ltmM,
       ebitda:          raw.flows.ebitda.ltmM,
+      ebitdaReason:    raw.flows.ebitda.reason,
       netIncome:       raw.flows.netIncome.ltmM,
       freeCashFlow:    raw.flows.freeCashFlow.ltmM,
+      freeCashFlowReason: raw.flows.freeCashFlow.reason,
       eps:             raw.epsDiluted.ltm,
       dilutedShares:   raw.epsDiluted.dilutedSharesM,
       cash:            raw.balanceSheet.cashM,
@@ -818,6 +813,8 @@ async function fetchFromEDGAR(symbol, cik) {
       fiscalYearEnd: revenueEntry?.end ?? null, latestAnnualFilingPeriod: floorEnd, unavailableReason: null,
     },
     ebitda:         ebitda != null ? inM(ebitda) : null,
+    ebitdaReason:   ebitdaResult.reason,   // why EBITDA is "—", or null
+    depreciationTrace: traceOf(depreciation),   // trace-back: the tag or statement lines used, any flag, or why there is none
     operatingIncome: operatingIncome != null ? inM(operatingIncome) : null, // screening table (matches verified edgarClient); null when the concept is absent (Fix-A discipline)
     grossProfit:    grossProfit != null ? inM(grossProfit) : null, // real GP; null when filer doesn't tag it
     grossProfitSource: grossProfitSource,  // 'sec_edgar' (the filing) | 'fmp' (filing gave nothing) | null
@@ -826,7 +823,11 @@ async function fetchFromEDGAR(symbol, cik) {
     grossProfitNotMeaningful: grossNotMeaningful,
     costOfRevenue:     incomeLines.costOfRevenue.value != null ? inM(incomeLines.costOfRevenue.value) : null,
     costOfRevenueSource: incomeLines.costOfRevenue.label,
-    freeCashFlow,                          // null for IFRS filers with no us-gaap cash-flow tags
+    costOfRevenueTrace: { concept: incomeLines.costOfRevenue.concept, status: incomeLines.costOfRevenue.status, tieOut: incomeLines.costOfRevenue.tieOut,
+      flag: incomeLines.costOfRevenue.flag, candidates: incomeLines.costOfRevenue.candidates },
+    freeCashFlow,                          // operating cash flow − capex, same fiscal year; null with freeCashFlowReason otherwise
+    freeCashFlowReason: freeCashFlowResult.reason,
+    capexTrace: traceOf(capex),
     // Last 4 annual revenues (oldest→newest) for the §6 multi-year revenue-trajectory line chart.
     revenueHistory: annualSeries((useIfrs ? ifrs : gaap)[revenueConcept], 'USD', 4),
     netIncome:      netIncome != null ? inM(netIncome) : null,
@@ -1731,15 +1732,13 @@ const PNL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PNL_GAAP = {
   opInc:   ['OperatingIncomeLoss'],
   netInc:  ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
-  da:      ['DepreciationDepletionAndAmortization', 'DepreciationAndAmortization'],
-  dilSh:   ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic'],
+  dilSh:  ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfSharesOutstandingBasic'],
   eps:     ['EarningsPerShareDiluted', 'EarningsPerShareBasic'],
 };
 const PNL_IFRS = {
   opInc:   ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities', 'ProfitLossBeforeTax'],
   netInc:  ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'],
-  da:      ['DepreciationAndAmortisationExpense', 'DepreciationAmortisationAndImpairmentLoss'],
-  dilSh:   ['WeightedAverageNumberOfDilutedSharesOutstanding'],
+  dilSh:  ['WeightedAverageNumberOfDilutedSharesOutstanding'],
   eps:     ['DilutedEarningsLossPerShare', 'BasicEarningsLossPerShare'],
 };
 async function fetchPnlEstimates(ticker) {
@@ -1777,7 +1776,6 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     const sRev = Object.fromEntries(Object.entries(revenueByEnd).map(([end, r]) => [end, r.value]));
     const sOpInc = pnlLineSeries(ns, C.opInc);
     const sNet = pnlLineSeries(ns, C.netInc);
-    const sDa = pnlLineSeries(ns, C.da);
     const sSh = pnlLineSeries(ns, C.dilSh, 'shares');
     const sEps = pnlLineSeries(ns, C.eps, 'USD/shares');
     const sNoi = pnlLineSeries(ns, ['NonoperatingIncomeExpense']);   // net non-operating income/(expense) — the OI→NI reconciling line (§6/§7 disclosure)
@@ -1799,8 +1797,11 @@ app.get('/api/pnl/:ticker', async (req, res) => {
       const gross   = grossRes.value;
       const opInc   = orNull(sOpInc, end);
       const netInc  = orNull(sNet, end);
-      const da      = sDa[end] != null ? inM(sDa[end]) : 0;            // matches /quote (D&A defaults 0 if untagged)
-      const ebitda  = opInc != null ? opInc + da : null;
+      // $M, so EBITDA foots to the rounded lines beside it. No D&A for this year: EBITDA is "—" with the reason, never operating income.
+      const depreciation = resolveDepreciationAt(ns, end, { useIfrs, statement: facts.filingStatements?.cashFlow ?? null });
+      const ebitdaResult = computeEbitda({ value: opInc, end, reason: `no operating income tag filed for ${end}` },
+        depreciation.value != null ? { value: inM(depreciation.value), end: depreciation.end } : depreciation);
+      const ebitda  = ebitdaResult.value;
       const opEx    = (gross != null && opInc != null) ? gross - opInc : null; // derived (Gross − OpInc), always foots
       const cor     = cogs != null ? cogs : calculateGrossProfit(revenue, gross);
       return {
@@ -1811,6 +1812,8 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         revenueTieOut: revenueByEnd[end].tieOut, revenueFlag: revenueByEnd[end].flag,
         // Provenance, in raw dollars: what the deck rounds and where it came from.
         costOfRevenueSource: lines.costOfRevenue.label, costOfRevenueKind: lines.costOfRevenue.kind,
+        costOfRevenueConcept: lines.costOfRevenue.concept, costOfRevenueStatus: lines.costOfRevenue.status, costOfRevenueTieOut: lines.costOfRevenue.tieOut, costOfRevenueFlag: lines.costOfRevenue.flag,
+        ebitdaReason: ebitdaResult.reason, depreciationTrace: traceOf(depreciation),
         grossProfitBasis: grossRes.basis, grossProfitLabel: lines.grossProfit.label,
         incomeTrace: { revenueUsd: sRev[end] ?? null, costOfRevenueUsd: lines.costOfRevenue.value, grossProfitUsd: lines.grossProfit.value, costComponents: lines.costOfRevenue.components },
         operatingExpense: opEx, operatingExpenseEst: false,
@@ -1877,7 +1880,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         costOfRevenue: lr.flows.costOfRevenue.ltmM, costOfRevenueSource: lr.flows.costOfRevenue.sourceLabel,
         grossProfit: grossNotMeaningful ? null : lr.flows.grossProfit.ltmM, grossProfitDerived: lr.flows.grossProfit.derived,
         operatingIncome: lr.flows.operatingIncome.ltmM, nonOperatingIncome: lr.flows.nonOperatingIncome, netIncome: lr.flows.netIncome.ltmM,
-        ebitda: lr.flows.ebitda.ltmM, ebitdaDaFound: lr.flows.ebitda.daFound,
+        ebitda: lr.flows.ebitda.ltmM, ebitdaDaFound: lr.flows.ebitda.daFound, ebitdaReason: lr.flows.ebitda.reason,
         eps: lr.epsDiluted.ltm, dilutedShares: lr.epsDiluted.dilutedSharesM,
         audit: { window: lr.window, periods: lr.periods, tieOut: lr.tieOut },
       } : { trusted: false, fallback: lr.fallback || 'annual', reason: lr.reason || null };

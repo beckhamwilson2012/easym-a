@@ -19,6 +19,7 @@
 const { get } = require('../utils/httpGet');
 const { COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, grossFromCostOfRevenue, describeLtmCostSource, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./incomeConcepts');
 const { chooseNamespace, ltmRevenueConcepts, isOlderFiscalYear } = require('./revenueConcepts');
+const { DEPRECIATION_CONCEPTS, OPERATING_CASH_FLOW_CONCEPTS, resolveDepreciationAt, resolveCapexAt, computeEbitda, computeFreeCashFlow } = require('./cashFlowConcepts');
 
 const DAY = 86400000;
 const days = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / DAY);
@@ -39,9 +40,7 @@ const NAMES = {
     operatingIncome: ['OperatingIncomeLoss'],
     netIncome: ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
     nonOperating: ['NonoperatingIncomeExpense'],   // net non-operating income/(expense): interest, FX, securities gains — the OI→NI reconciling line
-    da: ['DepreciationDepletionAndAmortization', 'DepreciationAmortizationAndAccretionNet', 'DepreciationAndAmortization'],
-    ocf: ['NetCashProvidedByUsedInOperatingActivities'],
-    capex: ['PaymentsToAcquirePropertyPlantAndEquipment'],
+    ocf: OPERATING_CASH_FLOW_CONCEPTS,
     dilutedShares: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted'],
     cash: ['CashAndCashEquivalentsAtCarryingValue'],
     debt: ['LongTermDebt', 'LongTermDebtNoncurrent', 'LongTermDebtAndCapitalLeaseObligations'],
@@ -55,9 +54,7 @@ const NAMES = {
     operatingIncome: ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities'],
     netIncome: ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'],
     nonOperating: [],   // no clean IFRS non-operating total — renders "—" (no test ticker is IFRS)
-    da: ['DepreciationAndAmortisationExpense'],
     ocf: ['CashFlowsFromUsedInOperatingActivities'],
-    capex: ['PurchaseOfPropertyPlantAndEquipmentClassifiedAsInvestingActivities'],
     dilutedShares: ['WeightedAverageShares'],
     cash: ['CashAndCashEquivalents'],
     debt: ['Borrowings', 'LongtermBorrowings', 'NoncurrentPortionOfLongtermBorrowings'],
@@ -243,11 +240,23 @@ function instantLatest(entries) {
 // (≤15%); a materially different concept (e.g. CRM's DepreciationAndAmortization 3,631 vs deck DDA 1,200)
 // would inflate LTM EBITDA to ~12.5B beside the deck's ~9.5B — so we keep the honest opInc-basis fallback
 // rather than mix D&A definitions. Span-match is enforced per period exactly like the other flows.
-function ltmDA(ns, names, P) {
+// The annual basis comes from cashFlowConcepts. Where that is the statement's own lines (AMD: 750 + 2,254), each line needs all
+// three legs, or there is no LTM D&A: a partial sum is a plausible wrong number.
+function ltmDA(ns, names, P, annual) {
   const uni = (n) => ns[n]?.units?.['USD'] || [];
-  let deckConcept = null, annualDA = null;
-  for (const n of names) { const v = valFullYearAt(uni(n), P.annualEnd); if (v != null) { deckConcept = n; annualDA = v; break; } }
-  if (deckConcept == null) return { ltm: null, concept: null, note: 'opInc(LTM) only — no annual D&A concept tagged' };
+  if (annual.value == null) return { ltm: null, concept: null, note: `no LTM D&A: ${annual.reason}` };
+  if (annual.concepts.length !== 1 || !names.includes(annual.concepts[0])) {
+    const label = annual.components ? annual.components.map((c) => c.concept).join(' + ') : annual.concept;
+    if (!annual.allStandard) return { ltm: null, concept: label, note: `no LTM D&A: the annual figure is the statement's line ${label}, which interim companyfacts does not carry` };
+    let sum = 0;
+    for (const n of annual.concepts) {
+      const a = valFullYearAt(uni(n), P.annualEnd), l = valInterimAt(uni(n), P.iEnd, P.span), p = valInterimAt(uni(n), P.pEnd, P.span);
+      if (a == null || l == null || p == null) return { ltm: null, concept: label, note: `no LTM D&A: ${n} is not tagged for all three LTM legs` };
+      sum += a + l - p;
+    }
+    return { ltm: sum, concept: label, note: `opInc(LTM) + D&A(LTM) — D&A from ${label}` };
+  }
+  const deckConcept = annual.concepts[0], annualDA = annual.value;
   const li = valInterimAt(uni(deckConcept), P.iEnd, P.span), pi = valInterimAt(uni(deckConcept), P.pEnd, P.span);
   if (li != null && pi != null) return { ltm: annualDA + li - pi, concept: deckConcept, note: `opInc(LTM) + D&A(LTM) — D&A from ${deckConcept}` };
   // deck-basis concept lacks interim → try an alternate, accept only if its annual leg reconciles (≤15%)
@@ -258,7 +267,7 @@ function ltmDA(ns, names, P) {
     if (annualDA > 0 && Math.abs(a - annualDA) / annualDA <= 0.15)
       return { ltm: a + l - p, concept: n, note: `opInc(LTM) + D&A(LTM) — interim D&A from cash-flow concept ${n} (annual leg reconciled to the ${deckConcept} basis)` };
   }
-  return { ltm: null, concept: deckConcept, note: `opInc(LTM) only — the deck's EBITDA D&A concept (${deckConcept}) is not tagged at interim, and the only interim-tagged D&A concept is on a materially different basis; LTM EBITDA is kept on an operating-income basis rather than mixing D&A definitions` };
+  return { ltm: null, concept: deckConcept, note: `no LTM D&A: the annual D&A concept (${deckConcept}) is not tagged at interim, and no interim-tagged D&A concept is on the same basis` };
 }
 
 // Pure: takes an already-fetched companyfacts object. Returns an LTM structure or an honest degrade.
@@ -330,12 +339,21 @@ function computeLTM(facts, floorEnd = null) {
   const oi  = ltmFlow(ns, N.operatingIncome, P);
   const niF = ltmFlow(ns, N.netIncome, P);
   const noi = ltmFlow(ns, N.nonOperating, P);   // net non-operating income/(expense) LTM — same P, same selector, disclosure only (does NOT touch NI)
-  const daRes = ltmDA(ns, N.da, P);   // deck-consistent D&A (same concept as annual EBITDA, reconciled-alternate, or honest fallback)
+  const cashFlowStatement = facts.filingStatements?.cashFlow ?? null;
+  const daAnnual = resolveDepreciationAt(ns, P.annualEnd, { useIfrs, statement: cashFlowStatement });
+  const daRes = ltmDA(ns, DEPRECIATION_CONCEPTS[useIfrs ? 'ifrs' : 'gaap'], P, daAnnual);   // same basis as annual EBITDA, a reconciled alternate, or none
   const ocf = ltmFlow(gaap, NAMES.gaap.ocf, P);   // cash flow always us-gaap
-  const cpx = ltmFlow(gaap, NAMES.gaap.capex, P);
+  // Capex legs follow the annual resolution: the same tag, or each of the statement's lines. All three legs or no figure.
+  const capexAnnual = resolveCapexAt(gaap, P.annualEnd, { statement: cashFlowStatement });
+  const cpxLegs = capexAnnual.concepts.map((c) => ltmFlow(gaap, [c], P));
+  const cpx = { ltm: capexAnnual.value != null && cpxLegs.length && cpxLegs.every((l) => l.ltm != null) ? cpxLegs.reduce((s, l) => s + l.ltm, 0) : null,
+    conceptName: capexAnnual.concepts.join(' + ') || null, fellThrough: false };
 
-  const ebitdaLtm = oi.ltm != null ? oi.ltm + (daRes.ltm ?? 0) : null;
-  const fcfLtm    = (ocf.ltm != null && cpx.ltm != null) ? ocf.ltm + cpx.ltm : null;
+  const ebitdaResult = computeEbitda({ value: oi.ltm, reason: 'no LTM operating income' }, { value: daRes.ltm, reason: daRes.note });
+  const ebitdaLtm = ebitdaResult.value;
+  const fcfResult = computeFreeCashFlow({ value: ocf.ltm, reason: 'no LTM operating cash flow' },
+    { value: cpx.ltm, reason: capexAnnual.reason || `no LTM capex: ${cpx.conceptName} is not tagged for all three LTM legs` });
+  const fcfLtm = fcfResult.value;
 
   const cash = instantLatest(entriesFor(ns, N.cash));
   const debt = instantLatest(entriesFor(ns, N.debt));
@@ -370,9 +388,9 @@ function computeLTM(facts, floorEnd = null) {
       grossProfit:     flow(gp),
       operatingIncome: flow(oi),
       nonOperatingIncome: flow(noi),   // disclosure line (§6/§7 LTM column) — reconciles operating income → net income; NEVER an adjustment to NI
-      ebitda:          { ltmM: inM(ebitdaLtm), daFound: daRes.ltm != null, daConcept: daRes.concept, note: daRes.note },
+      ebitda:          { ltmM: inM(ebitdaLtm), daFound: daRes.ltm != null, daConcept: daRes.concept, note: daRes.note, reason: ebitdaResult.reason },
       netIncome:       flow(niF),
-      freeCashFlow:    { ltmM: inM(fcfLtm), note: 'OCF(LTM) + CapEx(LTM)', ocfConcept: ocf.conceptName, ocfFellThrough: ocf.fellThrough, capexConcept: cpx.conceptName, capexFellThrough: cpx.fellThrough },
+      freeCashFlow:    { ltmM: inM(fcfLtm), note: 'OCF(LTM) − CapEx(LTM)', reason: fcfResult.reason, ocfConcept: ocf.conceptName, ocfFellThrough: ocf.fellThrough, capexConcept: cpx.conceptName, capexFellThrough: cpx.fellThrough },
     },
     balanceSheet: {
       cashM: cash ? inM(cash.val) : null, cashAsOf: cash?.end || null,

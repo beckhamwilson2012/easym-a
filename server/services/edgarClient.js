@@ -3,6 +3,7 @@ const { get } = require('../utils/httpGet');
 const { resolveTotalDebt } = require('./debtConcepts'); // shared total-debt resolution (deal EV / comps / §16 identical)
 const { annualIncomeLines, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./incomeConcepts'); // shared cost of revenue / gross profit (/quote, /api/pnl, LTM, §16 identical)
 const { resolveFilerRevenue, isOlderFiscalYear } = require('./revenueConcepts'); // shared revenue and fiscal-year floor (/quote, /api/pnl, LTM, §16 identical)
+const { OPERATING_CASH_FLOW_CONCEPTS, resolveCapexAt, resolveOperatingCashFlowAt, computeFreeCashFlow } = require('./cashFlowConcepts'); // shared capex and FCF
 
 const factsCache = new Map();
 const CACHE_TTL = 6 * 60 * 60 * 1000; // 6 hours — fundamentals change quarterly
@@ -125,11 +126,11 @@ async function fetchFields(cik) {
   const assetsEntry = pickAtEnd(ns, ['Assets'], refEnd);
   const equityEntry = pickAtEnd(ns, useIfrs ? ['Equity', 'EquityAttributableToOwnersOfParent'] : ['StockholdersEquity', 'StockholdersEquityIncludingPortionAttributableToNoncontrollingInterest'], refEnd);
 
-  // OCF and CapEx always from us-gaap (even for IFRS filers that also tag us-gaap). BOTH legs period-matched
-  // to refEnd so FCF = OCF + CapEx stays same-period; if either leg has no fact at refEnd → null → the
-  // `if (ocfEntry && capexEntry)` guard below yields FCF "—", never a half-computed cross-period figure.
-  const ocfEntry   = pickAtEnd(gaap, ['NetCashProvidedByUsedInOperatingActivities'], refEnd);
-  const capexEntry = pickAtEnd(gaap, ['PaymentsToAcquirePropertyPlantAndEquipment'], refEnd);
+  // OCF and capex always from us-gaap (even for IFRS filers that also tag us-gaap), both at refEnd: cashFlowConcepts, the same
+  // resolution and the same calculation as /quote. Either leg missing gives FCF "—" with the reason.
+  const capex = resolveCapexAt(gaap, refEnd, { statement: facts.filingStatements?.cashFlow ?? null });
+  const fcfResult = computeFreeCashFlow(resolveOperatingCashFlowAt(gaap, refEnd), capex);
+  const ocfEntry = pickAtEnd(gaap, OPERATING_CASH_FLOW_CONCEPTS, refEnd);
 
   // Shares: point-in-time balance sheet count preferred over weighted average
   const sharesEntry =
@@ -137,14 +138,15 @@ async function fetchFields(cik) {
     latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares', floorEnd) ??
     latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares', floorEnd);
 
-  // FCF = OCF + CapEx (CapEx is stored as a negative outflow in EDGAR)
   let freeCashFlow = null;
-  if (ocfEntry && capexEntry) {
+  if (fcfResult.value != null) {
     freeCashFlow = {
-      value: inM(ocfEntry.val) + inM(capexEntry.val),
+      value: inM(fcfResult.value),
       asOf:  ocfEntry.end,
       period: { fy: ocfEntry.fy, fp: ocfEntry.fp, form: ocfEntry.form, end: ocfEntry.end },
       source: 'edgar',
+      basis: capex.status, sourceLabel: capex.label,
+      ...(capex.flag ? { flag: capex.flag } : {}),
     };
   }
 
@@ -170,6 +172,7 @@ async function fetchFields(cik) {
     totalAssets:             makeField(assetsEntry),
     totalStockholdersEquity: makeField(equityEntry),
     freeCashFlow,
+    freeCashFlowReason: fcfResult.reason,
     sharesOutstanding: sharesField,
   };
 }
