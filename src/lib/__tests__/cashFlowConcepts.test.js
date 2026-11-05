@@ -224,17 +224,49 @@ describe('cost of revenue tie-out', () => {
     expect(byEnd[END].status).toBe('unconfirmed');
     expect(byEnd[END].flag).toMatch(/CostOfRevenue \$25\.5M/);
   });
-  test('partial tags are never summed: two cost lines and no total keep today\'s pick, flagged with tags and values (CCI FY25)', () => {
-    const st = statement([row('Revenues', 'Net Revenues', 4264e6), row('DirectCostsOfLeasedAndRentedPropertyOrEquipment', 'Site rental', 992e6), row('CostOfGoodsAndServicesSold', 'Services and other', 113e6),
-      row('SellingGeneralAndAdministrativeExpense', 'SG&A', 1084e6), row('CostsAndExpenses', 'Total operating expenses', 2189e6)]);
-    const gaap = ns({ CostOfGoodsAndServicesSold: [fact(113e6)], DirectCostsOfLeasedAndRentedPropertyOrEquipment: [fact(992e6)] });
-    const { byEnd, entries } = statementCostResolutions(gaap, st);
+  // Crown Castle FY25, 10-K 0001051470-26-000016: the statement's own lines, which tie both ways.
+  const CCI_ROWS = [row('Revenues', 'Net Revenues', 4264e6), row('DirectCostsOfLeasedAndRentedPropertyOrEquipment', 'Site rental', 992e6), row('CostOfGoodsAndServicesSold', 'Services and other', 113e6),
+    row('SellingGeneralAndAdministrativeExpense', 'Selling, general and administrative', 383e6), row('AssetImpairmentCharges', 'Asset write-down charges', 11e6),
+    row('DepreciationAmortizationAndAccretionNet', 'Depreciation, amortization and accretion', 690e6), row('CostsAndExpenses', 'Total operating expenses', 2189e6),
+    row('OperatingIncomeLoss', 'Operating income (loss)', 2075e6)];
+  const CCI_GAAP = ns({ CostOfGoodsAndServicesSold: [fact(113e6)], DirectCostsOfLeasedAndRentedPropertyOrEquipment: [fact(992e6)] });
+
+  test('cost lines on the statement that tie are summed, each line on the trace-back (CCI FY25: 992 + 113 = 1,105)', () => {
+    const { byEnd, entries } = statementCostResolutions(CCI_GAAP, statement(CCI_ROWS), { form: '10-K', accn: '0001051470-26-000016' });
+    expect(byEnd[END].status).toBe('statement-sum');
+    expect(byEnd[END].tieOut).toMatchObject({ total: 2189e6, residual: 0, revenue: 4264e6, operatingIncome: 2075e6 });
+    expect(entries[0].val).toBe(1105e6);
+    const lines = annualIncomeLines({ ...CCI_GAAP, [STATEMENT_LINE_CONCEPT]: { units: { USD: entries } }, CostOfRevenueResolutions: byEnd }, END, 4264e6);
+    expect(lines.costOfRevenue.value).toBe(1105e6);
+    expect(lines.costOfRevenue.flag).toBeNull();
+    expect(lines.costOfRevenue.label).toBe('10-K 0001051470-26-000016, sum of income statement cost lines: Site rental (us-gaap:DirectCostsOfLeasedAndRentedPropertyOrEquipment) $992M + Services and other (us-gaap:CostOfGoodsAndServicesSold) $113M');
+    expect(lines.costOfRevenue.components.map((c) => [c.label, c.val])).toEqual([['Site rental', 992e6], ['Services and other', 113e6]]);
+    expect(lines.grossProfit.value).toBe(3159e6);
+  });
+  test('cost lines that do not tie keep today\'s pick, flagged with tags and values', () => {
+    const broken = statement(CCI_ROWS.map((r) => (r.tag === 'AssetImpairmentCharges' ? { ...r, values: [50e6] } : r)));
+    const { byEnd, entries } = statementCostResolutions(CCI_GAAP, broken);
     expect(entries).toEqual([]);
     expect(byEnd[END].status).toBe('unconfirmed');
     expect(byEnd[END].flag).toMatch(/CostOfGoodsAndServicesSold \$113M, DirectCostsOfLeasedAndRentedPropertyOrEquipment \$992M/);
-    const lines = annualIncomeLines({ ...gaap, CostOfRevenueResolutions: byEnd }, END, 4264e6);
+    const lines = annualIncomeLines({ ...CCI_GAAP, CostOfRevenueResolutions: byEnd }, END, 4264e6);
     expect(lines.costOfRevenue.value).toBe(113e6);
     expect(lines.costOfRevenue.flag).toMatch(/not confirmed/);
+  });
+  test('lines that foot but whose revenue − total costs ≠ operating income are not summed', () => {
+    const st = statement(CCI_ROWS.map((r) => (r.tag === 'OperatingIncomeLoss' ? { ...r, values: [2000e6] } : r)));
+    expect(statementCostResolutions(CCI_GAAP, st).byEnd[END].status).toBe('unconfirmed');
+  });
+  test('no operating income on the statement: the second tie cannot be made, so no sum', () => {
+    const st = statement(CCI_ROWS.filter((r) => r.tag !== 'OperatingIncomeLoss'));
+    expect(statementCostResolutions(CCI_GAAP, st).entries).toEqual([]);
+  });
+  test('tags that are not lines on the statement are never summed', () => {
+    const st = statement([row('Revenues', 'Net Revenues', 4264e6), row('CostOfGoodsAndServicesSold', 'Services and other', 113e6),
+      row('SellingGeneralAndAdministrativeExpense', 'SG&A', 2076e6), row('CostsAndExpenses', 'Total operating expenses', 2189e6), row('OperatingIncomeLoss', 'Operating income', 2075e6)]);
+    const { byEnd, entries } = statementCostResolutions(CCI_GAAP, st);   // DirectCosts 992 is filed, but not a line here
+    expect(entries.every((e) => e.val !== 1105e6)).toBe(true);
+    expect(byEnd[END].status).not.toBe('statement-sum');
   });
   test('disagreeing candidates: the one on the statement wins, with the tie-out', () => {
     const st = statement([row('Revenues', 'Revenue', 100e6), row('CostOfGoodsAndServicesSold', 'Cost of sales', 60e6), row('SellingGeneralAndAdministrativeExpense', 'SG&A', 20e6), row('CostsAndExpenses', 'Total costs', 80e6), row('OperatingIncomeLoss', 'Operating income', 20e6)]);

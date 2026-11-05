@@ -11,9 +11,10 @@
 //
 // WHICH CANDIDATE: the income statement decides, when it can (statementCostResolutions). A tag can be a real fact and not the
 // cost line: Sarepta FY25 CostOfRevenue 25.5 is from a note, its statement line is 839.6 under a company-specific tag. That line
-// wins when the statement's lines foot to its own total, from filed numbers only. Tags are never summed to make a cost line.
-// When no line can be confirmed (Crown Castle: 992 and 113 as separate lines, no total), today's pick stays and carries a flag
-// naming the tags and values.
+// wins when the statement's lines foot to its own total, from filed numbers only. Several cost lines on the statement with no
+// total (Crown Castle: site rental 992, services 113) are summed ONLY when the statement ties: lines = total costs, and revenue −
+// total costs = operating income. Tags that are not statement lines are never summed. When nothing can be confirmed, today's
+// pick stays and carries a flag naming the tags and values.
 //
 // GROSS PROFIT: filed GrossProfit, else revenue − cost of revenue for the same period, labeled "calculated".
 // Absent stays null. A filed zero stays zero. Nothing here estimates, carries a value across periods, or
@@ -113,6 +114,9 @@ function memberLabel(member) { return String(member).replace(/^.*:/, '').replace
 // Human-readable source of a resolved cost-of-revenue fact, for the slide note and the /api trace.
 function describeCostSource(entry) {
   if (!entry) return null;
+  if (entry.concept === STATEMENT_LINE_CONCEPT && entry.components) {
+    return `${entry.form} ${entry.accn}, sum of income statement cost lines: ${entry.components.map((c) => `${c.label} (${c.member}) ${fmtM(c.val)}`).join(' + ')}`;
+  }
   if (entry.concept === STATEMENT_LINE_CONCEPT) return `${entry.form} ${entry.accn} income statement (${entry.filedConcept})`;
   if (entry.concept === FILING_INSTANCE_CONCEPT) {
     const parts = entry.components
@@ -229,6 +233,22 @@ function statementCostResolutions(gaap, statement, meta = {}) {
       const match = filed.find((e) => e.concept === only.tag && sameFiled(statement, only.values[col], e.val));
       if (tieOut && match) { if (match !== pick) useLine(only, match.concept); set('tie-out', tieOut); continue; }
       if (tieOut && isCompanySpecific(only)) { useLine(only, `${only.ns}:${only.tag}`); set('tie-out', tieOut); continue; }
+    }
+    // Several cost lines on the statement itself, no total among them: their sum is the cost line, but only when the statement
+    // ties both ways, from its own filed numbers: cost lines + the other expense lines = its total costs, AND revenue − total
+    // costs = operating income. Crown Castle FY25: 992 + 113 + 383 + 11 + 0 + 690 + 0 = 2,189, and 4,264 − 2,189 = 2,075.
+    // Tags that are not lines on the statement are never summed: only rows read from the statement enter this sum.
+    if (lineRows.length > 1) {
+      const first = Math.min(...lineRows.map((r) => statement.rows.indexOf(r)));
+      const tieOut = statementCostTieOut(statement, end, first);
+      const inside = tieOut && lineRows.every((r) => tieOut.lines.some((l) => l.concept === `${r.ns}:${r.tag}` && l.label === r.label && l.value === r.values[col]));
+      if (tieOut && inside && tieOut.revenue != null && tieOut.operatingIncome != null) {
+        const components = lineRows.map((r) => ({ member: `${r.ns}:${r.tag}`, label: r.label, val: r.values[col] }));
+        entries.push({ start: null, end, val: components.reduce((s, c) => s + c.val, 0), form: meta.form || null, filed: meta.filed || null,
+          accn: meta.accn || null, concept: STATEMENT_LINE_CONCEPT, filedConcept: components.map((c) => c.member).join(' + '), components });
+        set('statement-sum', { ...tieOut, test: `${tieOut.test}, and revenue − total costs = operating income` });
+        continue;
+      }
     }
     const shows = lineRows.length ? lineRows.map((r) => `${r.ns}:${r.tag} ${fmtM(r.values[col])}`).join(', ') : 'no cost line';
     set('unconfirmed', null, `cost of revenue not confirmed: tags filed ${candidates.map((c) => `${c.concept} ${fmtM(c.value)}`).join(', ')}; the income statement shows ${shows}`);
