@@ -30,8 +30,11 @@ const REVENUE_CONCEPTS = {
 // not an alternative total.
 const REVENUE_SUB_LINES = {
   gaap: ['InterestAndFeeIncomeLoansAndLeases'],
-  ifrs: ['OtherRevenue', 'RevenueFromSaleOfGoods'],
+  ifrs: [],
 };
+// IFRS tags that are one line of a statement with no total. Never returned as revenue: Novartis FY25 files
+// RevenueFromSaleOfGoods 54,532 and OtherRevenue 2,142, tags no total, and read as revenue 2,142. They only explain why not.
+const IFRS_PARTIAL_REVENUE_LINES = ['RevenueFromSaleOfGoods', 'OtherRevenue'];
 
 // Filed gains that some statements report between total costs and operating income.
 const OPERATING_GAIN_CONCEPTS = ['GainLossOnSaleOfOtherAssets', 'DisposalGroupNotDiscontinuedOperationGainLossOnDisposal', 'GainLossOnDispositionOfAssets1'];
@@ -207,13 +210,18 @@ function resolveFilerRevenue(facts, floorEnd = null, opts = {}) {
     return unavailable(hasIfrs ? IFRS_NO_CURRENT_YEAR
       : `no current-year revenue in SEC filings: latest revenue tag ends ${latest.end}, latest annual filing period is ${floorEnd}`, latest.end);
   }
-  // No candidate, but a current USD sub-line (Novartis): the year is filed, only not as a total, so "no current-year
-  // data" would be untrue. The caller's usual "no revenue tagged" path applies.
-  const subLineCurrent = () => {
-    const sub = resolveLatestRevenue(ns, { useIfrs, subLines: true });
+  // No candidate, but current USD lines with no total (Novartis): the year is filed, only not as a total, so "no current-year
+  // data" would be untrue. EDGAR steps aside with that reason, and the FMP fallback fills revenue, labeled FMP.
+  const gaapSubLineCurrent = () => {
+    const sub = !useIfrs ? resolveLatestRevenue(ns, { useIfrs, subLines: true }) : null;
     return !!sub && !isOlderFiscalYear(sub.end, floorEnd);
   };
-  if (!latest && hasIfrs && !subLineCurrent()) return unavailable(IFRS_NO_CURRENT_YEAR, null);
+  if (!latest && hasIfrs && !gaapSubLineCurrent()) {
+    const lines = fullYearEnds(ns, IFRS_PARTIAL_REVENUE_LINES).pop();
+    const parts = lines && !isOlderFiscalYear(lines, floorEnd) ? candidatesAt(ns, IFRS_PARTIAL_REVENUE_LINES, lines) : [];
+    if (parts.length) return unavailable(`no total revenue tag in SEC filings for ${lines}: ifrs-full files ${parts.map((c) => `${c.concept} ${fmtM(c.value)}`).join(', ')} as separate lines`, lines);
+    return unavailable(IFRS_NO_CURRENT_YEAR, null);
+  }
   return { useIfrs, ns, revenue: latest, floorEnd, latestTaggedEnd: latest ? latest.end : null, unavailableReason: null, unavailableDetail: null };
 }
 

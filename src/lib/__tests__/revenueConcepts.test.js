@@ -82,9 +82,8 @@ describe('tags that agree or stand alone', () => {
     expect(resolveRevenueAt(bank, END, { subLines: true }).status).toBe('single');
     const nvs = ns({ OtherRevenue: [fy(2142e6)], RevenueFromSaleOfGoods: [fy(54532e6)], CostOfSales: [fy(13699e6)], GrossProfit: [fy(42975e6)] });
     expect(resolveRevenueAt(nvs, END, { useIfrs: true })).toBeNull();
-    const r = resolveRevenueAt(nvs, END, { useIfrs: true, subLines: true });
-    expect(r.value).toBe(2142e6);
-    expect(r.flag).toMatch(/^revenue tags disagree: OtherRevenue \$2,142M, RevenueFromSaleOfGoods \$54,532M$/);
+    // One line of an IFRS statement with no total is never revenue, whatever the caller asks for (Novartis read 2,142).
+    expect(resolveRevenueAt(nvs, END, { useIfrs: true, subLines: true })).toBeNull();
     expect(resolveRevenueAt(nvs, END, { useIfrs: true, subLines: 'gaap' })).toBeNull();
   });
   test('a quarter is not a year; latest-filed wins a restatement', () => {
@@ -143,12 +142,18 @@ describe('stale fiscal years', () => {
     expect(r.unavailableReason).toBe(IFRS_NO_CURRENT_YEAR);
   });
 
-  test('a current USD sub-line is not "no current-year data": NVS keeps the usual no-revenue path', () => {
+  test('current USD lines with no total: EDGAR steps aside with the true reason, so the FMP fallback fills it (NVS)', () => {
     const nvs = { facts: { 'ifrs-full': ns({ OtherRevenue: [fy(2142e6)], RevenueFromSaleOfGoods: [fy(54532e6)] }) } };
-    const r = resolveFilerRevenue(nvs, END);
-    expect(r.revenue).toBeNull();
-    expect(r.unavailableReason).toBeNull();
-    expect(resolveFilerRevenue(nvs, END, { subLines: true }).revenue.value).toBe(2142e6);
+    for (const opts of [{}, { subLines: true }, { subLines: 'gaap' }]) {
+      const r = resolveFilerRevenue(nvs, END, opts);
+      expect(r.revenue).toBeNull();
+      expect(r.unavailableReason).toBe('no total revenue tag in SEC filings for 2025-12-31: ifrs-full files RevenueFromSaleOfGoods $54,532M, OtherRevenue $2,142M as separate lines');
+    }
+  });
+
+  test('those same lines, stale: the usual no-current-year reason', () => {
+    const old = { facts: { 'ifrs-full': ns({ OtherRevenue: [fy(2142e6, 2019)] }) } };
+    expect(resolveFilerRevenue(old, END).unavailableReason).toBe(IFRS_NO_CURRENT_YEAR);
   });
 
   test('a stale pure US-GAAP filer: null, and the reason does not claim IFRS', () => {
