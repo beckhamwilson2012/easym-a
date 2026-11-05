@@ -3,8 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, nonGaapFigures, isBankDeal, isRestaurant, isUtility } from '../shared/deckTokens';
-import { UTILITY_GROSS_REASON } from '../../../lib/utilitySic';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, nonGaapFigures, isBankDeal, isRestaurant, isGrossNm, grossNmReason } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 
 // Lighter shade of SF_BLUE used for the target segment of each stacked bar.
@@ -35,7 +34,8 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   // Gross profit from the filing. If either side has none, the row is omitted: a split needs both sides.
   const aGP = parseFloat(acquirer.grossProfit), bGP = parseFloat(target.grossProfit);
   const gpAvailable = Number.isFinite(aGP) && Number.isFinite(bGP);
-  const utilityDeal = isUtility(acquirer) || isUtility(target);
+  const grossNmReasonText = [...new Set([grossNmReason(acquirer), grossNmReason(target)].filter(Boolean))].join('; ');
+  const grossNmDeal = !!grossNmReasonText;
   // Operating income on the DECK'S basis (so §I agrees with §4/§5/§6): reported NON-GAAP operating
   // income when the deal is non-GAAP (same /api/nongaap figures §5 shows — e.g. TEAM +$1,287M), else
   // GAAP operating income. NOT EBITDA (which is negative for loss-making filers → false "n/m").
@@ -103,8 +103,8 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   ] : [
     { label: 'Revenue', isMoney: true, ...splitContribution(aRev, bRev) },
     // Restaurant deals: omit gross profit (false ~74%/65% margin) — never feed it into the split.
-    utilityDeal ? { label: 'Gross Profit', isMoney: true, aVal: Number.isFinite(aGP) ? aGP : null, bVal: Number.isFinite(bGP) ? bGP : null, aPct: null, bPct: null,
-      nm: true, nmReason: `n/m — ${UTILITY_GROSS_REASON}`, aNm: isUtility(acquirer), bNm: isUtility(target) }
+    grossNmDeal ? { label: 'Gross Profit', isMoney: true, aVal: Number.isFinite(aGP) ? aGP : null, bVal: Number.isFinite(bGP) ? bGP : null, aPct: null, bPct: null,
+      nm: true, nmReason: `n/m — ${grossNmReasonText}`, aNm: isGrossNm(acquirer), bNm: isGrossNm(target) }
     : (restaurantDeal || !gpAvailable) ? null : { label: 'Gross Profit', isMoney: true, ...splitContribution(aGP, bGP) },
     { label: `Operating Income (${oiNonGaap ? 'Non-GAAP' : 'GAAP'})`, isMoney: true, ...splitContribution(aOI, bOI) },
     { label: fcfLabel, isMoney: true, ...splitContribution(aFCF, bFCF) },
@@ -124,7 +124,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
     ? `${aName} acquires 100% of ${bName}, which contributes ${Math.round(Math.min(...moneyPcts))}–${Math.round(Math.max(...moneyPcts))}% of pro forma financials, for ${fmtPctFloor(tgtOwnPct, 0)} of combined equity.`
     : null;
 
-  const gpPhrase = utilityDeal ? `gross profit n/m (${UTILITY_GROSS_REASON})`
+  const gpPhrase = grossNmDeal ? `gross profit n/m (${grossNmReasonText})`
     : gpAvailable
     ? 'gross profit from SEC filings'
     : 'gross profit omitted (not available from the filings of both companies)';

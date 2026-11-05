@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
-import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isUtility, UTILITY_GROSS_NOTE, standaloneEPS, nonGaapFigures, fmtAsOf } from '../shared/deckTokens';
+import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isGrossNm, grossNmNote, standaloneEPS, nonGaapFigures, fmtAsOf } from '../shared/deckTokens';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { netCashDebt } from '../../../lib/netDebt';
@@ -72,7 +72,7 @@ function PLRow({ label, value, alt, bold, indent }) {
 // with a Margins & Growth block. Approach (A): basis labeled INLINE on each column header; estimate
 // columns italic + tinted; forward OpEx "—" (basis gap unallocable); forward lines FMP publishes no
 // consensus for are "—" (ⁿ marker). Margins computed PER COLUMN on that column's own basis.
-function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
+function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote }) {
   const cols = pnl.columns || [];
   // $M with accounting parens for negatives; expenses passed as their own sign for parens.
   const fmtM   = (v) => v == null ? '—' : (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString('en-US')})` : `$${Math.round(v).toLocaleString('en-US')}`);
@@ -86,7 +86,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
   const LINES = [
     { label: 'Total Revenue',      get: c => c.revenue,          fmt: fmtM,   bold: true },
     { label: 'Cost of Revenue',    get: c => c.costOfRevenue,    fmt: fmtExp, indent: true, noConsensus: true },
-    { label: 'Gross Profit',       get: c => c.grossProfit,      fmt: fmtM,   bold: true, noConsensus: !utilityMode, nm: utilityMode },
+    { label: 'Gross Profit',       get: c => c.grossProfit,      fmt: fmtM,   bold: true, noConsensus: !grossNmMode, nm: grossNmMode },
     { label: 'Operating Expense',  get: c => c.operatingExpense, fmt: fmtExp, indent: true },
     { label: 'Operating Income',   get: c => c.operatingIncome,  fmt: fmtM,   bold: true },
     { label: 'Non-operating income/(expense)', get: c => c.nonOperatingIncome, fmt: fmtM, indent: true },
@@ -98,7 +98,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
   const MARGINS = [
     { label: 'Revenue Growth %',   val: (c) => c._growth },
     { label: 'Growth compared with', text: (c) => c._growthBase },
-    { label: 'Gross Margin %',     val: (c) => marginOf(c.grossProfit, c), noConsensus: !utilityMode, nm: utilityMode },
+    { label: 'Gross Margin %',     val: (c) => marginOf(c.grossProfit, c), noConsensus: !grossNmMode, nm: grossNmMode },
     { label: 'Operating Margin %', val: (c) => marginOf(c.operatingIncome, c) },
     { label: 'EBITDA Margin %',    val: (c) => marginOf(c.ebitda, c) },
     { label: 'Net Margin %',       val: (c) => marginOf(c.netIncome, c) },
@@ -315,7 +315,7 @@ function MultiYearPL({ pnl, restaurantMode, utilityMode }) {
         Actual years (GAAP) from SEC EDGAR filings; forward years are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>. The step in Operating Income / Net Income / EPS at the actual→estimate boundary reflects the actual→consensus transition, not organic growth. Margins are computed on each column's own basis.
         {showLtm ? <> The <strong>LTM</strong> column is the trailing twelve months (latest annual + interim YTD − prior-year YTD), a GAAP actual as of {asOfShort(L.asOf)}.{ltmDaMissing ? <> <sup>d</sup> LTM EBITDA is shown on an operating-income basis — interim D&amp;A on the same basis as the annual EBITDA is not tagged for this filer (a differently-scoped cash-flow D&amp;A is not mixed in).</> : null}</> : null}
         {incomeNote ? <> <strong style={{ color: NAVY }}>Cost of revenue / gross profit: </strong>{incomeNote}</> : null}
-        {utilityMode ? <> {UTILITY_GROSS_NOTE}</> : null}
+        {grossNote ? <> {grossNote}</> : null}
         {noiText ? <> <strong style={{ color: NAVY }}>Non-operating income/(expense)</strong> reconciles operating income to net income. {noiText}</> : null}
         {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}
         {restaurantMode
@@ -349,7 +349,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
   // Restaurant SICs (5812/5813): gross profit (revenue − food-only COGS) is meaningless — suppress the
   // gross rows and show revenue → operating income directly (Fix B). Single source: isRestaurant.
   const restaurantMode = isRestaurant(target);
-  const utilityMode = isUtility(target);
+  const grossNmMode = isGrossNm(target); // utility or insurer
 
   // Multi-year P&L (slides 5/6) — fetched lazily, non-bank only (banks keep the single-year bank branch).
   const [pnl, setPnl] = useState(null);
@@ -464,7 +464,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
       />
 
       <BasisNote only={target} fixed={target?.basis === 'ltm' ? 'The commentary and the deal model read the LTM column; the fiscal-year columns are for reference.' : null} style={{ padding: '8px 20px 0' }} />
-      {pnl && <MultiYearPL pnl={pnl} restaurantMode={restaurantMode} utilityMode={utilityMode} />}
+      {pnl && <MultiYearPL pnl={pnl} restaurantMode={restaurantMode} grossNmMode={grossNmMode} grossNote={grossNmNote(target)} />}
 
       <div style={{ display: 'flex', gap: 20, padding: pnl ? '4px 20px 30px' : '16px 20px 36px' }}>
         {/* Left: P&L table (single-year). Hidden when the multi-year table above is shown. */}
@@ -495,8 +495,8 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
                 <PLRow label="Revenue"                    value={fmtUSDm(rev)}            />
                 {/* Restaurant SICs: omit gross profit/margin (food-only COGS) AND the gross-relative opex
                     line — go straight Revenue → Operating Income (Fix B). Non-restaurants unchanged. */}
-                {!restaurantMode && <PLRow label="Gross Profit (GAAP)"     value={utilityMode ? 'n/m' : fmtUSDm(grossProfit)} alt indent />}
-                {!restaurantMode && <PLRow label="Gross Margin (GAAP)"     value={utilityMode ? 'n/m' : fmtPct(grossMarginPct)}     indent />}
+                {!restaurantMode && <PLRow label="Gross Profit (GAAP)"     value={grossNmMode ? 'n/m' : fmtUSDm(grossProfit)} alt indent />}
+                {!restaurantMode && <PLRow label="Gross Margin (GAAP)"     value={grossNmMode ? 'n/m' : fmtPct(grossMarginPct)}     indent />}
                 {!restaurantMode && <PLRow label="Operating Expenses (GAAP)" value={opex != null ? fmtUSDmAcct(-opex) : 'N/A'} alt indent />}
                 <PLRow label={`Operating Income (${basisTag(opIncNonGaap)})`}  value={opIncVal != null ? fmtUSDmAcct(opIncVal) : 'N/A'} bold />
                 <PLRow label={`Operating Margin (${basisTag(opIncNonGaap)})`}  value={opMarginPct != null ? fmtPct(opMarginPct) : 'N/A'} indent alt />
@@ -635,7 +635,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
                     : `Non-GAAP figures were not available/reconciled for this filer from the fiscal year-end earnings 8-K, so operating income, net income, EPS and their margins are shown on a GAAP basis (labeled). `))}
           {restaurantMode
             ? 'Restaurant cost structure — gross profit not separately meaningful (food/beverage COGS excludes the dominant labor & occupancy costs); see operating margin. '
-            : utilityMode ? `${UTILITY_GROSS_NOTE} `
+            : grossNmMode ? `${grossNmNote(target)} `
             : 'Gross profit, gross margin and operating expenses are GAAP. '}
           EBITDA and its margin are computed (operating income + D&amp;A). Revenue and share counts are basis-neutral.
         </div>

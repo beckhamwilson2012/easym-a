@@ -1,5 +1,6 @@
 import { FINANCIAL_SIC } from '../../../lib/financialSic'; // shared with server.js — one SIC source of truth
 import { UTILITY_SIC, UTILITY_GROSS_REASON } from '../../../lib/utilitySic'; // same pattern
+import { grossNotMeaningfulReason } from '../../../lib/insuranceSic';
 
 // ── Color tokens ──────────────────────────────────────────────────────────────
 export const NAVY      = '#0F2244';
@@ -222,6 +223,19 @@ export function isUtility(company) {
   return UTILITY_SIC.includes(company?.sic);
 }
 export const UTILITY_GROSS_NOTE = `Gross profit and gross margin: n/m, ${UTILITY_GROSS_REASON}.`;
+
+// Gross profit and gross margin are "n/m" for utilities and insurers. Why, or null when they are meaningful (insuranceSic).
+export function grossNmReason(company) {
+  return grossNotMeaningfulReason(company?.sic);
+}
+export function isGrossNm(company) {
+  return grossNmReason(company) != null;
+}
+// The note for the companies on a slide, or null. One reason per kind of filer, each said once.
+export function grossNmNote(...companies) {
+  const reasons = [...new Set(companies.map(grossNmReason).filter(Boolean))];
+  return reasons.length ? `Gross profit and gross margin: n/m, ${reasons.join('; ')}.` : null;
+}
 
 // Accretion verdict with a NEUTRAL band (Fix #4). A % that DISPLAYS as ±0.0% — i.e. |pct| rounds to 0.0
 // at one decimal, the same rounding §8/§9 show — is breakeven (rounding noise), NOT a direction: return

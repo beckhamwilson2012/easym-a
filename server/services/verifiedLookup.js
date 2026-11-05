@@ -1,7 +1,7 @@
 'use strict';
 const edgarClient   = require('./edgarClient');
 const { filerSic } = require('./incomeConcepts');
-const { UTILITY_SIC, UTILITY_GROSS_REASON } = require('../../src/lib/utilitySic');
+const { grossNotMeaningfulReason } = require('../../src/lib/insuranceSic');
 const fmpClient     = require('./fmpClient');
 const yahooClient   = require('./yahooClient');
 const finnhubClient = require('./finnhubClient');
@@ -137,9 +137,10 @@ async function lookup(ticker, cik) {
     fields[fieldSpec.key] = { ...rec, unit: fieldSpec.unit, sot: fieldSpec.sot, sourceMeta };
   }
 
-  // Utilities: gross profit is not meaningful, so no source supplies a value here, the filing's or FMP's.
-  if (cik && fields.grossProfit && UTILITY_SIC.includes(await filerSic(cik))) {
-    fields.grossProfit = { ...fields.grossProfit, value: null, chosenSource: null, status: 'missing', maxDev: null, sources: {}, sourceMeta: {}, notMeaningful: UTILITY_GROSS_REASON };
+  // Utilities and insurers: gross profit is not meaningful, so no source supplies a value here, the filing's or FMP's.
+  const grossReason = cik && fields.grossProfit ? grossNotMeaningfulReason(await filerSic(cik)) : null;
+  if (grossReason) {
+    fields.grossProfit = { ...fields.grossProfit, value: null, chosenSource: null, status: 'missing', maxDev: null, sources: {}, sourceMeta: {}, notMeaningful: grossReason };
   }
 
   // FX Stage 1 — surface the FMP filer's currency provenance top-level (kept OUT of `fields` so it

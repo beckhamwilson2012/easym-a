@@ -11,7 +11,7 @@ const path = require('path');
 const os   = require('os');
 const { PEER_OVERRIDES } = require('./peerOverrides');
 const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deckTokens.isFinancial — one SIC source
-const { UTILITY_SIC, UTILITY_GROSS_REASON } = require('./src/lib/utilitySic'); // shared with deckTokens.isUtility
+const { grossNotMeaningfulReason } = require('./src/lib/insuranceSic'); // utilities and insurers; shared with deckTokens.grossNmReason
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
@@ -579,8 +579,8 @@ async function fetchFromEDGAR(symbol, cik) {
   // Intuit's only cost tag is a stale FY2017 partial → a fake 98%. FMP's computed gross profit is the last
   // resort when the filing gives nothing (targeted fetch, this path only).
   const incomeLines = annualIncomeLines(useIfrs ? ifrs : gaap, revenueEntry?.end, revenueEntry ? revenue : null, useIfrs);
-  // Utilities: not meaningful, so absent on purpose. No filing value and no FMP fallback (utilitySic).
-  const grossNotMeaningful = UTILITY_SIC.includes(sicData.sic) ? UTILITY_GROSS_REASON : null;
+  // Utilities and insurers: not meaningful, so absent on purpose. No filing value and no FMP fallback (utilitySic, insuranceSic).
+  const grossNotMeaningful = grossNotMeaningfulReason(sicData.sic);
   let grossProfit = grossNotMeaningful ? null : incomeLines.grossProfit.value;
   let grossProfitSource = grossProfit != null ? 'sec_edgar' : null;
   if (grossProfit == null && !grossNotMeaningful) {
@@ -1788,7 +1788,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     const latestEnd = actualEnds[actualEnds.length - 1];
 
     const orNull = (m, end) => (m[end] != null ? inM(m[end]) : null);
-    const grossNotMeaningful = UTILITY_SIC.includes((await fetchSubmissions(cik).catch(() => null))?.sic ?? null) ? UTILITY_GROSS_REASON : null;
+    const grossNotMeaningful = grossNotMeaningfulReason((await fetchSubmissions(cik).catch(() => null))?.sic ?? null);
     const cols = actualEnds.map((end) => {
       const revenue = orNull(sRev, end);
       const lines   = annualIncomeLines(ns, end, sRev[end] ?? null, useIfrs);

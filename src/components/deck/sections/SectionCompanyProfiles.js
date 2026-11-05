@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
-import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, isUtility, UTILITY_GROSS_NOTE, fmtAsOf } from '../shared/deckTokens';
+import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, isGrossNm, grossNmNote, fmtAsOf } from '../shared/deckTokens';
 import { getCompanyProfile, PROFILES_AS_OF } from '../../../lib/companyProfiles';
 import { enterpriseValue, NET_DEBT_BASIS } from '../../../lib/netDebt';
 
@@ -115,7 +115,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
       revBasis, ltmAsOf: T ? T.asOf : null,
       growth,   // forward (NTM consensus) — unchanged
       growthBase: act?.label ?? null,
-      grossNm: isUtility(co),
+      grossNm: isGrossNm(co),
       grossMargin: (gpL != null && revL > 0) ? gpL / revL * 100 : ((gp != null && rev) ? gp / rev * 100 : null),
       opMargin:    (oiL != null && revL > 0) ? oiL / revL * 100 : ((oi != null && rev) ? oi / rev * 100 : null),
       fcf: fcfL != null ? fcfL : fcf,
@@ -306,7 +306,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
         fontStyle: 'italic',
         lineHeight: 1.4,
       }}>
-        {isUtility(acquirerObj) || isUtility(targetObj) ? <>{UTILITY_GROSS_NOTE} </> : null}
+        {grossNmNote(acquirerObj, targetObj) ? <>{grossNmNote(acquirerObj, targetObj)} </> : null}
         {sourceLine}
       </div>
     </PageFrame>
