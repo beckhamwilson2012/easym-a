@@ -17,7 +17,8 @@
 // EDGAR is the sole source for LTM v1 (no FMP).
 
 const { get } = require('../utils/httpGet');
-const { COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, grossFromCostOfRevenue, describeLtmCostSource, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./incomeConcepts');
+const { COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, grossFromCostOfRevenue, describeLtmCostSource, prepareIncomeFacts, latestAnnualFilingPeriod,
+  LTM_COST_DISAGREES_REASON, annualCostCorrectedFromStatement } = require('./incomeConcepts');
 const { chooseNamespace, ltmRevenueConcepts, isOlderFiscalYear } = require('./revenueConcepts');
 const { DEPRECIATION_CONCEPTS, OPERATING_CASH_FLOW_CONCEPTS, resolveDepreciationAt, resolveCapexAt, computeEbitda, computeFreeCashFlow } = require('./cashFlowConcepts');
 
@@ -331,11 +332,16 @@ function computeLTM(facts, floorEnd = null) {
   // 2-alias IFRS operatingIncome / netIncome lists route through the same selector — but no US-GAAP test
   // ticker (all 17; NSRGY has no companyfacts) exercises the IFRS path.
   const rev = { annual: annual.val, latestYTD: latestYTD.val, priorYTD: priorYTD.val, ltm: annual.val + latestYTD.val - priorYTD.val, conceptName: revConcept, fellThrough: false };
-  const cogs = ltmFlow(ns, N.costOfRevenue, P);
+  // Annual cost corrected from the income statement (incomeConcepts): the tags behind the LTM legs are the ones the statement
+  // contradicted, so LTM cost and gross profit are null with the reason, never the tag-based figure.
+  const costCorrected = annualCostCorrectedFromStatement(ns, P.annualEnd);
+  const noLtm = (o) => ({ annual: null, latestYTD: null, priorYTD: null, ltm: null, conceptName: o.conceptName ?? null, fellThrough: false, derived: false });
+  const cogsTagged = ltmFlow(ns, N.costOfRevenue, P);
+  const cogs = costCorrected ? noLtm(cogsTagged) : cogsTagged;
   const gpTagged = ltmFlow(ns, N.grossProfit, P);
   // Tagged GrossProfit wins whenever it can supply the window (byte-identical to before for those filers,
   // a real 0 included); only a NON-supplying tag falls back to the revenue − COGS identity.
-  const gp = gpTagged.ltm != null ? gpTagged : (grossFromCostOfRevenue(rev, cogs) || gpTagged);
+  const gp = costCorrected ? noLtm(gpTagged) : (gpTagged.ltm != null ? gpTagged : (grossFromCostOfRevenue(rev, cogs) || gpTagged));
   const oi  = ltmFlow(ns, N.operatingIncome, P);
   const niF = ltmFlow(ns, N.netIncome, P);
   const noi = ltmFlow(ns, N.nonOperating, P);   // net non-operating income/(expense) LTM — same P, same selector, disclosure only (does NOT touch NI)
@@ -384,8 +390,9 @@ function computeLTM(facts, floorEnd = null) {
     tieOut,
     flows: {
       revenue:         flow(rev),
-      costOfRevenue:   { ...flow(cogs), sourceLabel: describeLtmCostSource(ns, cogs.conceptName, [P.annualEnd, P.iEnd, P.pEnd]) },   // the subtracted leg — exposed so the LTM column can FOOT (rev − COGS = GP)
-      grossProfit:     flow(gp),
+      // sourceLabel carries the reason when there is no figure: it is the field /quote and /api/pnl already pass through.
+      costOfRevenue:   { ...flow(cogs), sourceLabel: costCorrected ? LTM_COST_DISAGREES_REASON : describeLtmCostSource(ns, cogs.conceptName, [P.annualEnd, P.iEnd, P.pEnd]), reason: costCorrected ? LTM_COST_DISAGREES_REASON : null },   // the subtracted leg — exposed so the LTM column can FOOT (rev − COGS = GP)
+      grossProfit:     { ...flow(gp), reason: costCorrected ? LTM_COST_DISAGREES_REASON : null },
       operatingIncome: flow(oi),
       nonOperatingIncome: flow(noi),   // disclosure line (§6/§7 LTM column) — reconciles operating income → net income; NEVER an adjustment to NI
       ebitda:          { ltmM: inM(ebitdaLtm), daFound: daRes.ltm != null, daConcept: daRes.concept, note: daRes.note, reason: ebitdaResult.reason },

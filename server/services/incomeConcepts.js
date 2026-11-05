@@ -174,6 +174,15 @@ function annualIncomeLines(ns, end, revenue, useIfrs = false) {
 
 // ── Income statement cost line ────────────────────────────────────────────────────────────────────────────
 
+// The LTM legs come from tags. When the annual cost was corrected from the income statement because the tags disagree with it,
+// those same tags would rebuild the wrong figure for the LTM, so the LTM has none: Crown Castle's tag-based LTM read 97.9%.
+const LTM_COST_DISAGREES_REASON = 'LTM cost tags disagree with the income statement; annual figure corrected from the statement';
+
+// True when the annual cost of revenue for `end` is a statement line (or a sum of them) that replaced the tags.
+function annualCostCorrectedFromStatement(ns, end) {
+  return !!end && (ns?.[STATEMENT_LINE_CONCEPT]?.units?.USD || []).some((e) => e.end === end);
+}
+
 const fmtM = (v) => `$${(v / 1e6).toLocaleString('en-US', { maximumFractionDigits: 1 })}M`;
 const COST_LINE_LABEL = /^costs? of (sales|revenues?|goods|products?|services)/i;
 const isCompanySpecific = (row) => row.ns !== 'us-gaap' && row.ns !== 'ifrs-full';
@@ -488,5 +497,6 @@ async function prepareIncomeFacts(facts, cik) {
 module.exports = {
   COST_OF_REVENUE_CONCEPTS, FILED_COST_CONCEPTS, GROSS_PROFIT_CONCEPTS, FILING_INSTANCE_CONCEPT, COMPONENT_SUM_CONCEPT, STATEMENT_LINE_CONCEPT,
   sumComponents, calculateGrossProfit, resolveGrossProfit, grossFromCostOfRevenue, statementCostResolutions, statementCostTieOut,
+  LTM_COST_DISAGREES_REASON, annualCostCorrectedFromStatement,
   pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts, filerSic, latestAnnualFilingPeriod,
 };
