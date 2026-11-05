@@ -88,7 +88,8 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   const gpLtm  = ltmT && ltmT.grossProfit != null ? parseFloat(ltmT.grossProfit) : null;
   const revActual = revLtm != null ? revLtm : rev;                 // LTM if trusted, else FY annual
   const revBasis  = revLtm != null ? 'LTM' : 'FY';
-  const grossMarginLtm = (gpLtm != null && revLtm > 0) ? (gpLtm / revLtm * 100) : grossMargin; // LTM margin, else the FY grossMargin computed above
+  const gmFromLtm = gpLtm != null && revLtm > 0;
+  const grossMarginLtm = gmFromLtm ? (gpLtm / revLtm * 100) : grossMargin; // LTM margin, else the FY grossMargin computed above
   const evRevLtm  = (mktCapSane && ev != null && revActual > 0) ? ev / revActual : null; // trailing EV ÷ (LTM|FY) rev
 
   // ── P/E (LTM basis — same as revBasis): live price ÷ LTM diluted EPS. n/m when EPS ≤ 0 or out of a
@@ -118,6 +119,16 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   // free filer at $0 — SHOP; consistent with the EV row and EV/Revenue), cash null-aware (a bank hides cash → "—").
   const netDebtLtm = netCashDebt(parseFloat(data.debt) || 0, cashVal, stiVal);
 
+  // Which LTM-labeled cells fell back to a fiscal-year figure, so each is marked "FY<yy>" in its own cell. The values above are
+  // unchanged; this only says which basis each one is on. CCI: LTM cost tags disagree with its statement, so its margin is FY.
+  const fyBasis = {
+    revenue:     revLtm == null && rev != null,
+    grossMargin: !gmFromLtm && grossMargin != null,
+    evRevLtm:    revLtm == null && evRevLtm != null,
+    peCell:      !(ltmT && ltmT.eps != null) && data.eps != null,
+    evEbitCell:  !(ltmT && ltmT.ebitda != null) && data.ebitda != null,
+  };
+
   return {
     ticker, name: displayName || shortName(data.name, ticker), isTarget,
     revenue: revActual, revBasis, ltmAsOf: ltmT ? ltmT.asOf : null, evRevLtm, stiUsed,
@@ -136,7 +147,32 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     netIncome: data.netIncome != null ? parseFloat(data.netIncome) : null,
     netIncomeLtm: niLtm, growthBaseFy: latestAct?.label ?? null,
     shares, eps: data.eps != null ? parseFloat(data.eps) : null, livePrice: live,
+    fyBasis, fyLabel: fiscalYearLabel(data),
   };
+}
+
+// "FY25" from the fiscal year END's calendar year, the deck's convention (CRM FYE Jan-2026 → FY26). Unknown year → "FY".
+export function fiscalYearLabel(data) {
+  const end = data?.fiscalYearEnd || data?.revenueTrace?.fiscalYearEnd || data?.fmpPeriodEnd || null;
+  return /^\d{4}/.test(end || '') ? `FY${end.slice(2, 4)}` : 'FY';
+}
+
+export const FY_FALLBACK_NOTE = 'FY figure shown where LTM is unavailable';
+
+// The text of one comparables cell. One place, so the slide and its tests read cells the same way. A figure that fell back from
+// LTM to the fiscal year carries its marker ("74.1% FY25"); "—", "n/m" and "⚠" are not figures and carry none.
+export function comparablesCellText(m, c) {
+  if (c.loading) return '…';
+  if (m.flagged && m.flagged(c)) return '⚠';
+  if (m.nm?.(c)) return 'n/m';
+  const text = m.fmt(m.get(c));
+  const isFigure = text !== '—' && !/^n\/m/.test(text);
+  return isFigure && m.fyKey && c.fyBasis?.[m.fyKey] ? `${text} ${c.fyLabel}` : text;
+}
+
+// True when any loaded column shows a fiscal-year fallback in a row on the slide, which is when the footnote is printed.
+export function anyFyFallback(metrics, cols) {
+  return metrics.some((m) => m.fyKey && cols.some((c) => !c.loading && / FY\d{0,2}$/.test(comparablesCellText(m, c))));
 }
 
 // ── Edit Peers Modal ──────────────────────────────────────────────────────────
@@ -335,9 +371,9 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   const growthBases = [...new Set(ordered.map(c => c.growthBaseFy).filter(Boolean))];
   const growthUnit = growthBases.length === 1 ? `next-FY est. vs ${growthBases[0]}` : 'next-FY est. vs last FY';
   const STD_METRICS = [
-    { label: 'Revenue',              unit: '$M LTM',    get: c => c.revenue,       fmt: fmtIntParens },
+    { label: 'Revenue',              unit: '$M LTM',    get: c => c.revenue,       fmt: fmtIntParens, fyKey: 'revenue' },
     { label: 'Revenue Growth',       unit: growthUnit, get: c => c.revGrowthProj, fmt: fmtPct1Signed },
-    { label: 'Gross Margin',         unit: 'LTM %',     get: c => c.grossMargin,   fmt: fmtPct1, nm: c => c.grossNm },
+    { label: 'Gross Margin',         unit: 'LTM %',     get: c => c.grossMargin,   fmt: fmtPct1, nm: c => c.grossNm, fyKey: 'grossMargin' },
     { label: 'Op Margin',            unit: 'NTM',       get: c => c.opMarginNG,    fmt: fmtPct1 },
     { label: 'Op Income',            unit: '$M NTM',    get: c => c.opIncomeNG,    fmt: fmtIntParens },
     // Equity value → net debt → enterprise value bridge (reads top-to-bottom; foots per company).
@@ -346,9 +382,9 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
     { label: 'Enterprise Value',     unit: '$M current',get: c => c.ev,            fmt: fmtIntParens, flagged: c => c.mktCapFlagged },
     { label: 'Cash & Equiv.',        unit: '$M as-of',  get: c => c.cash,          fmt: fmtIntParens },
     { label: 'Employees',            unit: '',          get: c => c.employees,     fmt: fmtIntPlain },
-    { label: 'EV / Revenue',         unit: 'LTM',       get: c => c.evRevLtm,      fmt: fmtEvRev, flagged: c => c.mktCapFlagged },
-    { label: 'EV / EBITDA',          unit: 'LTM',       get: c => c.evEbitCell,    fmt: v => (v == null ? '—' : v) },
-    { label: 'P / E',                unit: 'LTM',       get: c => c.peCell,        fmt: v => (v == null ? '—' : v) },
+    { label: 'EV / Revenue',         unit: 'LTM',       get: c => c.evRevLtm,      fmt: fmtEvRev, flagged: c => c.mktCapFlagged, fyKey: 'evRevLtm' },
+    { label: 'EV / EBITDA',          unit: 'LTM',       get: c => c.evEbitCell,    fmt: v => (v == null ? '—' : v), fyKey: 'evEbitCell' },
+    { label: 'P / E',                unit: 'LTM',       get: c => c.peCell,        fmt: v => (v == null ? '—' : v), fyKey: 'peCell' },
     { label: 'EPS Impact if Acquired', unit: 'pre-syn.', get: c => c.epsImpact,     fmt: fmtPct1Signed, impact: true, alwaysShow: true },
   ];
   const BANK_METRICS = [
@@ -461,7 +497,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
                 {ordered.map(c => {
                   const flagged = c.loading ? false : (m.flagged ? m.flagged(c) : false);
                   const raw = c.loading ? null : m.get(c);
-                  const val = c.loading ? '…' : (flagged ? '⚠' : (m.nm?.(c) ? 'n/m' : m.fmt(raw)));
+                  const val = comparablesCellText(m, c);
                   const negative = typeof raw === 'number' && raw < 0;
                   // EPS-impact row: accretive (+) green, dilutive (−) red, like the deck's verdict colors.
                   const impactColor = m.impact && typeof raw === 'number' ? (raw >= 0 ? '#166534' : '#DC2626') : null;
@@ -494,6 +530,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
         <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}
           {loadedCols.some(c => c.grossNm) ? <>{grossNmNote(...loadedCols)} </> : null}
+          {anyFyFallback(metrics, loadedCols) ? <><strong>{FY_FALLBACK_NOTE}</strong> (marked “FY” and the fiscal year in the cell). </> : null}
           Revenue growth and Op Margin/Income (NTM) are forward analyst consensus from FMP (a single provider series whose basis is not designated as GAAP or non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile ({exhibitLabelOf('targetprofile')}) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§{pageNumOf('plAcquirer')}/§{pageNumOf('plTarget')}). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
         </div>
       )}
