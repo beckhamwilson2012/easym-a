@@ -9,19 +9,19 @@
 // Components). kind: 'exhibit' → lettered; 'appendix' → romaned; 'title' → no label (cover + Deal Summary).
 
 export const DECK_ORDER = [
-  // Screen-only lead slide (showInPdf:false, like the Dashboard) — the PDF still starts at `title`
-  // and stays 17 pages, so adding this changed no exported page and no rendered figure.
-  { id: 'execsummary',   kind: 'title',    showInPdf: false, label: 'Executive Summary' },
+  // Deal Summary leads, then the Title and the Executive Summary. Both summaries are screen-only (showInPdf:false),
+  // so the PDF still starts at `title`. Shareholder Analysis sits directly after Transaction Structure.
   { id: 'dashboard',     kind: 'title',    showInPdf: false, label: 'Deal Summary' },
   { id: 'title',         kind: 'title',    showInPdf: true,  label: 'Title' },
+  { id: 'execsummary',   kind: 'title',    showInPdf: false, label: 'Executive Summary' },
   { id: 'comparables',   kind: 'exhibit',  showInPdf: true,  label: 'Comparables' },
   { id: 'profiles',      kind: 'exhibit',  showInPdf: true,  label: 'Company Profiles' },
   { id: 'targetprofile', kind: 'exhibit',  showInPdf: true,  label: 'Target Profile' },
-  { id: 'shareholders',  kind: 'exhibit',  showInPdf: true,  label: 'Shareholder Analysis' },
   { id: 'plAcquirer',    kind: 'exhibit',  showInPdf: true,  label: 'Standalone P&L — Acquirer' },
   { id: 'plTarget',      kind: 'exhibit',  showInPdf: true,  label: 'Standalone P&L — Target' },
   { id: 'proforma',      kind: 'exhibit',  showInPdf: true,  label: 'Pro Forma & Accretion' },
   { id: 'txnstructure',  kind: 'exhibit',  showInPdf: true,  label: 'Transaction Structure' },
+  { id: 'shareholders',  kind: 'exhibit',  showInPdf: true,  label: 'Shareholder Analysis' },
   { id: 'privatevaluation', kind: 'exhibit', showInPdf: true, label: 'Private Company Valuation' }, // Phase 9 — shown for private deals only (DeckShell)
   { id: 'creditstats',   kind: 'exhibit',  showInPdf: true,  label: 'Pro-Forma Credit Stats' },   // Phase 8 — shown for private deals only (DeckShell)
   { id: 'exchange',      kind: 'exhibit',  showInPdf: true,  label: 'Exchange Ratio & Deal Terms' },
