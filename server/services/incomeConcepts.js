@@ -195,6 +195,21 @@ const isCompanySpecific = (row) => row.ns !== 'us-gaap' && row.ns !== 'ifrs-full
 const isCostLine = (row) => FILED_COST_CONCEPTS.includes(row.tag) || COST_LINE_COMPARE_ONLY.includes(row.tag)
   || (isCompanySpecific(row) && COST_LINE_LABEL.test(row.label));
 
+// Why a filer that is not a utility or insurer has no gross profit from its filing, read from its own income statement. Gross
+// profit is then "n/m" with this reason; FMP's figure is kept in the trace-back only. Each reason says only what was checked:
+//   - the statement for that year shows no cost-of-revenue line (Delta: costs by nature; banks): NO_COST_LINE_REASON
+//   - it shows one or more, but no total the app reads (American Tower: property + services, no total): names them
+//   - the statement could not be read for that year: says so
+const NO_COST_LINE_REASON = 'no cost-of-revenue line in the filing';
+function grossProfitAbsentReason(statement, end) {
+  const col = statement && end ? columnOf(statement, end) : -1;
+  if (col < 0) return `no cost-of-revenue figure in the filing could be read for ${end || 'this year'}`;
+  const isIfrsCost = (r) => r.ns === 'ifrs-full' && COST_OF_REVENUE_CONCEPTS.ifrs.includes(r.tag);
+  const lines = statement.rows.filter((r) => (isCostLine(r) || isIfrsCost(r)) && r.values[col] != null && r.values[col] !== 0);
+  if (!lines.length) return NO_COST_LINE_REASON;
+  return `no total cost of revenue in the filing for ${end}; cost lines on its income statement include ${lines.map((r) => `${r.ns}:${r.tag} "${r.label}" ${fmtM(Math.abs(r.values[col]))}`).join(', ')}`;
+}
+
 // Pure tie-out, from filed numbers only: the statement's lines from the cost line down must foot to its own total costs, and
 // revenue − total costs must equal operating income when both are shown. Sarepta FY25: 839.605 + 1,522.066 + 491.716 + 42.009 +
 // 2.622 = 2,898.018, and 2,198.237 − 2,898.018 = −699.781.
@@ -504,6 +519,6 @@ async function prepareIncomeFacts(facts, cik) {
 module.exports = {
   COST_OF_REVENUE_CONCEPTS, FILED_COST_CONCEPTS, GROSS_PROFIT_CONCEPTS, FILING_INSTANCE_CONCEPT, COMPONENT_SUM_CONCEPT, STATEMENT_LINE_CONCEPT,
   sumComponents, calculateGrossProfit, resolveGrossProfit, grossFromCostOfRevenue, statementCostResolutions, statementCostTieOut,
-  LTM_COST_DISAGREES_REASON, annualCostCorrectedFromStatement,
+  LTM_COST_DISAGREES_REASON, annualCostCorrectedFromStatement, NO_COST_LINE_REASON, grossProfitAbsentReason,
   pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts, filerSic, latestAnnualFilingPeriod,
 };

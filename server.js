@@ -16,7 +16,7 @@ const { resolveDepreciationAt, resolveCapexAt, resolveOperatingCashFlowAt, compu
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
-const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
+const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod, grossProfitAbsentReason } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts'); // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
@@ -580,13 +580,16 @@ async function fetchFromEDGAR(symbol, cik) {
   // resort when the filing gives nothing (targeted fetch, this path only).
   const incomeLines = annualIncomeLines(useIfrs ? ifrs : gaap, revenueEntry?.end, revenueEntry ? revenue : null, useIfrs);
   // Utilities and insurers: not meaningful, so absent on purpose. No filing value and no FMP fallback (utilitySic, insuranceSic).
-  const grossNotMeaningful = grossNotMeaningfulReason(sicData.sic);
-  let grossProfit = grossNotMeaningful ? null : incomeLines.grossProfit.value;
-  let grossProfitSource = grossProfit != null ? 'sec_edgar' : null;
-  if (grossProfit == null && !grossNotMeaningful) {
-    const fmpGp = await fetchFmpGrossProfit(symbol);
-    if (fmpGp != null) { grossProfit = fmpGp; grossProfitSource = 'fmp'; }
-  }
+  // No gross profit from the filing: "n/m" with the reason from the filing's own income statement (incomeConcepts). FMP's figure
+  // is fetched for the trace-back only and never shown: Delta's FMP gross profit 14,475 has no line in its 10-K behind it.
+  const grossSicReason = grossNotMeaningfulReason(sicData.sic);
+  const grossFromFiling = grossSicReason ? null : incomeLines.grossProfit.value;
+  const grossAbsentReason = !grossSicReason && grossFromFiling == null
+    ? grossProfitAbsentReason(facts.filingStatements?.income ?? null, revenueEntry?.end ?? null) : null;
+  const grossNotMeaningful = grossSicReason || grossAbsentReason;
+  const grossProfit = grossFromFiling;
+  const grossProfitSource = grossProfit != null ? 'sec_edgar' : null;
+  const grossProfitFmpTrace = grossAbsentReason ? { fmpGrossProfit: await fetchFmpGrossProfit(symbol), used: false, reason: grossAbsentReason } : null;
 
   // companyType now derives from SIC — the SAME set isFinancial uses (src/lib/financialSic, single source),
   // NOT from which revenue concept won the pick. JPM/BAC tag the generic 'Revenues' (wins the pick at
@@ -788,7 +791,7 @@ async function fetchFromEDGAR(symbol, cik) {
       revenue:         raw.flows.revenue.ltmM,
       costOfRevenue:   raw.flows.costOfRevenue.ltmM,
       costOfRevenueSource: raw.flows.costOfRevenue.sourceLabel,
-      grossProfit:     grossNotMeaningful ? null : raw.flows.grossProfit.ltmM,
+      grossProfit:     grossSicReason ? null : raw.flows.grossProfit.ltmM,   // the LTM's own legs; an absent FY gross profit does not null it
       operatingIncome: raw.flows.operatingIncome.ltmM,
       ebitda:          raw.flows.ebitda.ltmM,
       ebitdaReason:    raw.flows.ebitda.reason,
@@ -839,7 +842,8 @@ async function fetchFromEDGAR(symbol, cik) {
     grossProfitSource: grossProfitSource,  // 'sec_edgar' (the filing) | 'fmp' (filing gave nothing) | null
     grossProfitBasis:  grossProfitSource === 'sec_edgar' ? incomeLines.grossProfit.basis : null, // 'filed' | 'calculated' | null
     grossProfitLabel:  grossProfitSource === 'sec_edgar' ? incomeLines.grossProfit.label : null,
-    grossProfitNotMeaningful: grossNotMeaningful,
+    grossProfitNotMeaningful: grossNotMeaningful,   // utility / insurer, or why the filing gives no gross profit
+    grossProfitTrace: grossProfitFmpTrace,          // FMP's gross profit (raw $), trace-back only: never the figure shown
     costOfRevenue:     incomeLines.costOfRevenue.value != null ? inM(incomeLines.costOfRevenue.value) : null,
     costOfRevenueSource: incomeLines.costOfRevenue.label,
     costOfRevenueTrace: { concept: incomeLines.costOfRevenue.concept, status: incomeLines.costOfRevenue.status, tieOut: incomeLines.costOfRevenue.tieOut,

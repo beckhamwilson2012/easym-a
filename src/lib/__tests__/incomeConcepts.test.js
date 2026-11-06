@@ -163,3 +163,26 @@ describe('utility SIC list', () => {
     expect(UTILITY_GROSS_NOTE).toContain('n/m, not meaningful for utilities');
   });
 });
+
+describe('fix 3 task 5: why the filing gives no gross profit', () => {
+  const { grossProfitAbsentReason, NO_COST_LINE_REASON } = require('../../../server/services/incomeConcepts');
+  const row = (tag, label, value, ns = 'us-gaap') => ({ ns, tag, label, values: [value] });
+  const st = (rows) => ({ scale: 1e6, periods: ['2025-12-31'], form: '10-K', rows });
+  test('no cost-of-revenue line on the statement (DAL: costs by nature): the stated reason, exactly', () => {
+    const s = st([row('Revenues', 'Total operating revenue', 63364e6), row('LaborAndRelatedExpense', 'Salaries and related costs', 15000e6),
+      row('FuelCosts', 'Aircraft fuel and related taxes', 10000e6), row('OperatingIncomeLoss', 'Operating income', 6000e6)]);
+    expect(NO_COST_LINE_REASON).toBe('no cost-of-revenue line in the filing');
+    expect(grossProfitAbsentReason(s, '2025-12-31')).toBe(NO_COST_LINE_REASON);
+  });
+  test('cost lines shown but no total read (AMT): names them, never claims there is no line', () => {
+    const s = st([row('Revenues', 'Total operating revenues', 10645e6), row('DirectCostsOfLeasedAndRentedPropertyOrEquipment', 'Property', 2574.1e6),
+      row('CostOfServices', 'Services', 174e6, 'amt'), row('CostsAndExpenses', 'Total operating expenses', 6000e6)]);
+    const r = grossProfitAbsentReason(s, '2025-12-31');
+    expect(r).not.toBe(NO_COST_LINE_REASON);
+    expect(r).toMatch(/^no total cost of revenue in the filing for 2025-12-31; cost lines on its income statement include us-gaap:DirectCostsOfLeasedAndRentedPropertyOrEquipment "Property" \$2,574.1M/);
+  });
+  test('statement unreadable, or the year not on it: says so', () => {
+    expect(grossProfitAbsentReason(null, '2025-12-31')).toBe('no cost-of-revenue figure in the filing could be read for 2025-12-31');
+    expect(grossProfitAbsentReason(st([]), '2024-12-31')).toBe('no cost-of-revenue figure in the filing could be read for 2024-12-31');
+  });
+});

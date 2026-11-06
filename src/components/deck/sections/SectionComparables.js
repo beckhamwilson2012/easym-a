@@ -91,6 +91,7 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   const gmFromLtm = gpLtm != null && revLtm > 0;
   const grossMarginLtm = gmFromLtm ? (gpLtm / revLtm * 100) : grossMargin; // LTM margin, else the FY grossMargin computed above
   const evRevLtm  = (mktCapSane && ev != null && revActual > 0) ? ev / revActual : null; // trailing EV ÷ (LTM|FY) rev
+  const grossFilingReason = !isGrossNm(data) && !gmFromLtm && grossProfit == null && data.grossProfitNotMeaningful ? data.grossProfitNotMeaningful : null;
 
   // ── P/E (LTM basis — same as revBasis): live price ÷ LTM diluted EPS. n/m when EPS ≤ 0 or out of a
   // meaningful range (> 100 → near-zero earnings, e.g. SHOP ~130x). GOOGL carries marker ᵃ: its LTM net income
@@ -139,7 +140,9 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     totalAssets: data.totalAssets != null ? parseFloat(data.totalAssets) : null,
     effRatio, ptbv, cet1: data.cet1Ratio != null ? parseFloat(data.cet1Ratio) : null,
     // screen fields
-    grossMargin: grossMarginLtm, grossNm: isGrossNm(data), sic: data.sic, opMarginNG, opIncomeNG, revGrowthProj, evRevProj, employees,
+    // n/m for a utility or insurer (SIC), or when the filing gives no gross profit and there is no LTM one: the reason from /quote
+    // ("no cost-of-revenue line in the filing"). FMP's gross profit is never shown.
+    grossMargin: grossMarginLtm, grossNm: isGrossNm(data) || grossFilingReason != null, grossFilingReason, sic: data.sic, opMarginNG, opIncomeNG, revGrowthProj, evRevProj, employees,
     ev: mktCapSane ? ev : null,
     // valuation multiples + net-debt bridge (Stage 7A) — pre-formatted cells (n/m / footnote markers baked in)
     peCell, peNonOp, evEbitCell, evEbitApprox, netDebt: netDebtLtm,
@@ -151,6 +154,13 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     // LTM that is the latest 10-K because no later 10-Q exists yet (AAPL): the slide says so in its footnote.
     ltmLabel: ltmT && ltmT.basis === 'latest-10-K' ? ltmT.label : null,
   };
+}
+
+// "Gross margin: n/m for DAL, BAC: no cost-of-revenue line in the filing." One sentence per reason, or null.
+export function grossFilingNote(cols) {
+  const byReason = new Map();
+  cols.filter((c) => !c.loading && c.grossFilingReason).forEach((c) => byReason.set(c.grossFilingReason, [...(byReason.get(c.grossFilingReason) || []), c.ticker]));
+  return byReason.size ? [...byReason].map(([reason, tickers]) => `Gross margin: n/m for ${tickers.join(', ')}: ${reason}.`).join(' ') : null;
 }
 
 // "AAPL: LTM to 2026-09-26 (latest 10-K; no later 10-Q yet)" for each such column, or null.
@@ -538,7 +548,8 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
         <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}
           {loadedCols.some(c => c.grossNm) ? <>{grossNmNote(...loadedCols)} </> : null}
-          {latestTenKLtmNote(loadedCols) ? <>{latestTenKLtmNote(loadedCols)} </> : null}
+          {grossFilingNote(loadedCols) ? <>{grossFilingNote(loadedCols)} </> : null}
+          {latestTenKLtmNote(loadedCols) ?<>{latestTenKLtmNote(loadedCols)} </> : null}
           {anyFyFallback(metrics, loadedCols) ?<><strong>{FY_FALLBACK_NOTE}</strong> (marked “FY” and the fiscal year in the cell). </> : null}
           Revenue growth and Op Margin/Income (NTM) are forward analyst consensus from FMP (a single provider series whose basis is not designated as GAAP or non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile ({exhibitLabelOf('targetprofile')}) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§{pageNumOf('plAcquirer')}/§{pageNumOf('plTarget')}). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
         </div>

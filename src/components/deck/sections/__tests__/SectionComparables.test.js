@@ -1,5 +1,5 @@
 // Comparables never mix FY and LTM in one column unmarked: a cell that fell back from LTM to the fiscal year says so.
-import { buildCompany, comparablesCellText, anyFyFallback, fiscalYearLabel, FY_FALLBACK_NOTE, latestTenKLtmNote } from '../SectionComparables';
+import { buildCompany, comparablesCellText, anyFyFallback, fiscalYearLabel, FY_FALLBACK_NOTE, latestTenKLtmNote, grossFilingNote } from '../SectionComparables';
 
 const pct = (v) => (v == null ? '—' : `${v.toFixed(1)}%`);
 const passthru = (v) => (v == null ? '—' : v);
@@ -74,5 +74,24 @@ describe('fix 3 task 2: LTM that is the latest 10-K', () => {
   });
   test('an ordinary LTM column adds no such note', () => {
     expect(latestTenKLtmNote([buildCompany('CCI', cci(), true)])).toBeNull();
+  });
+});
+
+describe('fix 3 task 5: no FMP-only gross margin', () => {
+  const dal = (over = {}) => cci({ name: 'Delta', grossProfit: null, grossProfitNotMeaningful: 'no cost-of-revenue line in the filing', sic: '4512',
+    ltm: { trusted: true, asOf: '2026-09-30', revenue: 64000, grossProfit: null, operatingIncome: 6000, ebitda: 8000, eps: 5, netIncome: 3000 }, ...over });
+  test('no gross profit from the filing: "n/m" (never a number, never 0, no FY marker), and the footnote gives the reason', () => {
+    const c = buildCompany('DAL', dal(), false);
+    expect(comparablesCellText(GM, c)).toBe('n/m');
+    expect(grossFilingNote([c])).toBe('Gross margin: n/m for DAL: no cost-of-revenue line in the filing.');
+  });
+  test('an LTM gross profit from the filing still shows', () => {
+    const c = buildCompany('X', dal({ ltm: { trusted: true, asOf: '2026-09-30', revenue: 4000, grossProfit: 1000, operatingIncome: 600, ebitda: 800, eps: 5 } }), false);
+    expect(comparablesCellText(GM, c)).toBe('25.0%');
+    expect(grossFilingNote([c])).toBeNull();
+  });
+  test('an FMP-sourced company (no filing read) is unchanged', () => {
+    const c = buildCompany('BNTX', cci({ ltm: { trusted: false } }), false);
+    expect(c.grossFilingReason).toBeNull();
   });
 });
