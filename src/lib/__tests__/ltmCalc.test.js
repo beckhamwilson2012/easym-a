@@ -90,3 +90,21 @@ describe('fix 3 task 2: no 10-Q after the latest 10-K', () => {
     expect(computeLTM({ facts: { 'us-gaap': { Revenues: { units: { USD: [tenK, before] } } } } }, '2026-09-26').fyAsLtm).toBeUndefined();
   });
 });
+
+describe('fix 3 task 3: 6-K quarters are interim periods, with the same checks as a 10-Q', () => {
+  const arm = (h1Start) => ({ facts: { 'us-gaap': {
+    RevenueFromContractWithCustomerExcludingAssessedTax: { units: { USD: [leg('2025-04-01', '2026-03-31', 4920e6, '20-F'),
+      leg(h1Start, '2026-09-30', 2732e6, '6-K'), leg(h1Start.replace('2026', '2025'), '2025-09-30', 2188e6, '6-K')] } },
+  } } });
+  test('ARM: 20-F year + 6-K half-year − prior 6-K half-year is a trusted LTM', () => {
+    const r = computeLTM(arm('2026-04-01'), '2026-03-31');
+    expect(r.ltm).toBe(true);
+    expect(r.flows.revenue.ltmM).toBe(5464);
+    expect(r.tieOut.trusted).toBe(true);
+  });
+  test('3-month 6-K quarters (not year-to-date) fail the same stub check a 10-Q would', () => {
+    const r = computeLTM(arm('2026-07-01'), '2026-03-31');
+    expect(r.ltm).toBe(false);
+    expect(r.reason).toBe('tie-out gate failed');
+  });
+});

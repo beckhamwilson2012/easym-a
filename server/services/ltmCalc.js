@@ -66,7 +66,9 @@ const NAMES = {
 };
 
 const isAnnualForm  = (f) => f === '10-K' || f === '20-F';
-const isInterimForm = (f) => f === '10-Q';
+// A foreign private issuer files its quarters on 6-K (ARM: 2026-04-01→2026-09-30 and 2025-04-01→2025-09-30). Those facts pass
+// exactly the same span, window, stub and anchor checks as a 10-Q; nothing else about them is treated differently.
+const isInterimForm = (f) => f === '10-Q' || f === '6-K';
 
 function entriesFor(space, names, unit = 'USD') {
   for (const n of names) {
