@@ -20,7 +20,7 @@ import { SynergyInputs } from './components/shared/SynergyInputs';
 import { CompanyBasisToggle } from './components/shared/CompanyBasisToggle';
 import { synergySchedule } from './lib/synergies';
 import { BASIS_FY, BASIS_LTM, ltmAvailability, companyInputs, combination } from './lib/companyBasis';
-import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium } from './lib/offerPremium';
+import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium, premiumReference, PRICE_BASIS_TODAY } from './lib/offerPremium';
 import './App.css';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -689,7 +689,7 @@ function App() {
     (P === 'A' ? setSectorSicA : setSectorSicB)(sic || null);
   };
 
-  const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); handleChange(e); };
+  const handleOfferPriceChange = (e) => { setOfferPriceTouched(true); setPremiumAnchor(null); handleChange(e); };
   // The one basis switch: the card's figures are rewritten from its /quote payload. Edits made under "Edit financials" do not survive a switch.
   const handleBasisChange = (P) => (basis) => {
     const quote = P === 'A' ? quoteA : quoteB;
@@ -700,16 +700,9 @@ function App() {
 
   // One source of truth: inputs.offerPricePerShare. The slider writes it; the premium is derived from it.
   const spotB = liveSpot(inputs.currentSharePriceB);
-  // The offer box may still hold focus (Safari keeps it on a slider or button click), and a focused box does
-  // not resync. Release it so the box always shows the stored offer.
-  const setOfferFromPremium = (pct) => {
-    const offer = offerFromPremium(spotB, pct);
-    if (offer == null) return;
-    if (document.activeElement && document.activeElement.name === 'offerPricePerShare') document.activeElement.blur();
-    setOfferPriceTouched(true);
-    setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
-  };
-  // Unaffected price: an optional date, read through to that day's close. Display only on this page.
+  // Price basis: "Today's price" (default) or "Price before deal news", read through to that day's close. A
+  // weekend or holiday resolves to the previous trading day's close, which carries its own date.
+  const [priceBasis, setPriceBasis] = useState(PRICE_BASIS_TODAY);
   const [unaffectedDate, setUnaffectedDate] = useState('');
   const [unaffected, setUnaffected] = useState({ close: null, date: null, reason: null, loading: false });
   useEffect(() => {
@@ -719,6 +712,28 @@ function App() {
     fetchCloseOn(tickerB, unaffectedDate).then(r => { if (!cancelled) setUnaffected({ ...r, loading: false }); });
     return () => { cancelled = true; };
   }, [unaffectedDate, tickerB]);
+  // The one reference price: the slider, the offer, the implied premium, the tiles and the deck all read it.
+  const reference = premiumReference({ basis: priceBasis, spot: spotB, beforeClose: unaffected.close });
+  const refB = reference.price;
+  // The premium last set with the slider or a preset. While it stands, a new reference price re-strikes the offer
+  // at the same premium; a typed offer clears it, and the offer then stays as typed.
+  const [premiumAnchor, setPremiumAnchor] = useState(null);
+  // The offer box may still hold focus (Safari keeps it on a slider or button click), and a focused box does
+  // not resync. Release it so the box always shows the stored offer.
+  const setOfferFromPremium = (pct) => {
+    const offer = offerFromPremium(refB, pct);
+    if (offer == null) return;
+    if (document.activeElement && document.activeElement.name === 'offerPricePerShare') document.activeElement.blur();
+    setOfferPriceTouched(true);
+    setPremiumAnchor(pct);
+    setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
+  };
+  useEffect(() => {
+    if (!offerPriceTouched || premiumAnchor == null) return;
+    const offer = offerFromPremium(refB, premiumAnchor);
+    if (offer != null) setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refB]);
   // Forward consensus for the Year 2 premium solve, from the same cached /api/pnl fetch slide 8 reads.
   const [fwdPnl, setFwdPnl] = useState({ a: null, b: null, loading: false });
   useEffect(() => {
@@ -732,10 +747,10 @@ function App() {
   // the offer stays empty and manual. A price is never defaulted from anything else.
   useEffect(() => {
     if (dealType !== 'pubpub' || offerPriceTouched) return;
-    const offer = offerFromPremium(spotB, DEFAULT_PREMIUM_PCT);
+    const offer = offerFromPremium(refB, DEFAULT_PREMIUM_PCT);
     if (offer != null) setInputs(prev => ({ ...prev, offerPricePerShare: offer }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [dealType, spotB, offerPriceTouched]);
+  }, [dealType, refB, offerPriceTouched]);
 
   // Auto-set cash% default when bank mode activates/deactivates
   useEffect(() => {
@@ -790,8 +805,8 @@ function App() {
   const handleSelectB = (symbol) => {
     setLoadingB(true); setErrorB(''); setBankFactsB(null); setNonGaapB(null); setNonGaapLoadingB(true);
     setPriceStatusB({ loading: true, price: null, source: null, attempts: [] });
-    setOfferPriceTouched(false);   // a new target starts over: its offer must not carry the last target's price
-    setUnaffectedDate('');
+    setOfferPriceTouched(false); setPremiumAnchor(null);   // a new target starts over: its offer must not carry the last target's price
+    setUnaffectedDate(''); setPriceBasis(PRICE_BASIS_TODAY);
     // Clear the stale price (the live fetch resets it) and the synergies: their presets were struck on the old target.
     setInputs(prev => ({ ...prev, currentSharePriceB: 0, offerPricePerShare: 0, ...CLEAR_SYNERGIES }));
     fetchCompanyData(symbol).then(data => {
@@ -844,7 +859,10 @@ function App() {
     const bankDeal = isBankDeal({ companyType: companyTypeB, sic: sicB }, { companyType: companyTypeA, sic: sicA });
     // applySourcesOfFunds opts THIS deal into the sources-of-funds construction; §2's peer-impact column resets
     // it to false (no per-peer balance sheet), so only the main deal (§8/§9/§10/§11) nets combined cash.
-    return { resolvedWithBank: { ...calcInputs, bankDeal, applySourcesOfFunds: true }, basis };
+    // A chosen price before deal news is the premium reference for the deal model (dealCalc.targetMarketPrice).
+    // On today's price nothing is added, so the inputs are exactly what they were.
+    const ref = reference.beforeNews ? { premiumReferencePrice: reference.price, premiumReferenceDate: unaffected.date } : {};
+    return { resolvedWithBank: { ...calcInputs, bankDeal, applySourcesOfFunds: true, ...ref }, basis };
   };
 
   const runBuild = (effectiveInputs) => {
@@ -933,7 +951,7 @@ function App() {
     setBankFactsA(null); setBankFactsB(null);
     setPriceStatusA({ loading: false, price: null, source: null, attempts: [] });
     setPriceStatusB({ loading: false, price: null, source: null, attempts: [] });
-    setOfferPriceTouched(false); setCashPercentTouched(false); setUnaffectedDate('');
+    setOfferPriceTouched(false); setCashPercentTouched(false); setUnaffectedDate(''); setPriceBasis(PRICE_BASIS_TODAY); setPremiumAnchor(null);
     setExpandedA(false); setExpandedB(false);
     setFiscalYearA(null); setFiscalYearEndA(null); setQuoteA(null); setQuoteB(null);
     setFiscalYearB(null); setFiscalYearEndB(null);
@@ -1278,15 +1296,16 @@ function App() {
       <h2 style={sectionTitle}>Deal Terms</h2>
       {bPub ? (
         <>
-          <SuggestedPremiumBox spot={spotB} solve={highestAccretivePremium({
-              calcInputs: modelInputs(inputs).resolvedWithBank, spot: spotB,
+          <SuggestedPremiumBox spot={refB} solve={highestAccretivePremium({
+              calcInputs: modelInputs(inputs).resolvedWithBank, spot: refB,
               synergyY1: synergySchedule(inputs).years[0].ebitda,   // what the build will use
               acquirerFwd: firstForwardColumn(fwdPnl.a), targetFwd: firstForwardColumn(fwdPnl.b), pnlLoading: fwdPnl.loading,
               acquirerName: tickerA, targetName: tickerB,
             })} onUse={setOfferFromPremium} />
           <PriceTiles spot={spotB} quoteAsOf={priceStatusB.quoteAsOf} retrievedAt={priceStatusB.retrievedAt} offer={inputs.offerPricePerShare}
-            unaffected={unaffected} unaffectedDate={unaffectedDate} onUnaffectedDate={setUnaffectedDate} />
-          <PremiumSlider spot={spotB} offer={inputs.offerPricePerShare} loadingPrice={priceStatusB.loading} onPremiumChange={setOfferFromPremium} />
+            basis={priceBasis} onBasis={setPriceBasis} referenceDate={unaffectedDate} onReferenceDate={setUnaffectedDate}
+            beforeClose={unaffected} referencePrice={refB} />
+          <PremiumSlider spot={refB} beforeNews={reference.beforeNews} offer={inputs.offerPricePerShare} loadingPrice={priceStatusB.loading} onPremiumChange={setOfferFromPremium} />
           <InputField label="Offer Price Per Share ($)" name="offerPricePerShare" value={inputs.offerPricePerShare} onChange={handleOfferPriceChange}
             format={formatOfferInput} userEntered={offerPriceTouched} placeholder="$ per share" />
         </>

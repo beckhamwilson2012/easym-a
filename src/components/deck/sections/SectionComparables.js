@@ -378,7 +378,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
     const onLtm = baseInputs.companyABasis === 'ltm';
     const peerNi = onLtm ? c.netIncomeLtm : c.netIncome;
     if (peerNi == null) return null;
-    const peerInputs = { ...baseInputs, companyBBasis: baseInputs.companyABasis, companyBShares: c.shares, companyBNetIncome: peerNi, companyBEPS: c.eps, currentSharePriceB: c.livePrice, applySourcesOfFunds: false };
+    const peerInputs = { ...baseInputs, companyBBasis: baseInputs.companyABasis, companyBShares: c.shares, companyBNetIncome: peerNi, companyBEPS: c.eps, currentSharePriceB: c.livePrice, premiumReferencePrice: null, applySourcesOfFunds: false };
     const peerOffer = c.livePrice * (1 + dealPremium);
     const pct = epsAccretionPct(peerOffer, 0, peerInputs); // 0 synergies → pre-synergy structural impact
     return Number.isFinite(pct) ? pct : null;

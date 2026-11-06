@@ -38,3 +38,19 @@ describe('offer and premium', () => {
     expect(formatOfferInput(null)).toBe('');
   });
 });
+
+describe('premium reference price', () => {
+  const { premiumReference, PRICE_BASIS_TODAY, PRICE_BASIS_BEFORE } = require('../offerPremium');
+  test("today's price is the spot, whatever close is loaded", () => {
+    expect(premiumReference({ basis: PRICE_BASIS_TODAY, spot: 42.02, beforeClose: 30 })).toEqual({ price: 42.02, beforeNews: false });
+  });
+  test('before deal news uses that close, and the offer is that close × (1 + premium) exactly', () => {
+    const ref = premiumReference({ basis: PRICE_BASIS_BEFORE, spot: 42.02, beforeClose: 31.5 });
+    expect(ref).toEqual({ price: 31.5, beforeNews: true });
+    expect(offerFromPremium(ref.price, 30)).toBe(31.5 * 1.3);
+  });
+  test('no historical close: the reference stays on today, never a default', () => {
+    expect(premiumReference({ basis: PRICE_BASIS_BEFORE, spot: 42.02, beforeClose: null })).toEqual({ price: 42.02, beforeNews: false });
+    expect(premiumReference({ basis: PRICE_BASIS_BEFORE, spot: null, beforeClose: null })).toEqual({ price: null, beforeNews: false });
+  });
+});

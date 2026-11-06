@@ -125,7 +125,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     { label: 'Acquirer', value: A.name ? `${A.name}${aTk ? ` (${aTk})` : ''}` : DASH },
     { label: 'Target',   value: T.name ? `${T.name}${bTk ? ` (${bTk})` : ''}` : DASH },
     { label: 'Offer price / share', value: ps(pos(d.offerPrice)) },
-    { label: 'Premium to market',   value: pc(d.premiumPct) },
+    { label: pos(deal?._inputs?.premiumReferencePrice) != null ? 'Premium to price before deal news' : 'Premium to market', value: pc(d.premiumPct) },
     { label: 'Equity value (offer × target shares)', value: money(d.totalConsideration), bold: true },
     { label: 'Enterprise value (acquisition basis)', value: money(d.transactionEV) },
     { label: 'Consideration mix', value: mix },
@@ -160,7 +160,10 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     rationale.push(`Dilution: the ${fmtPct(da.stockPercent, 0)} stock component issues ${sh(d.newShares)} new shares, ${fmtPct(pct)} of the acquirer's ${sh(pos(d.preDealShares))} pre-deal shares.`);
   }
   if (num(d.premiumPct) != null && pos(d.currentPriceTarget) != null && pos(d.offerPrice) != null) {
-    rationale.push(`Price: the ${ps(d.offerPrice)} offer is a ${pc(d.premiumPct)} premium to the target's ${ps(d.currentPriceTarget)} market price.`);
+    const refPx = pos(deal?._inputs?.premiumReferencePrice);
+    rationale.push(refPx != null
+      ? `Price: the ${ps(d.offerPrice)} offer is a ${pc(d.premiumPct)} premium to the target's ${ps(refPx)} close before deal news${deal._inputs.premiumReferenceDate ? ` (${deal._inputs.premiumReferenceDate})` : ''}; it trades at ${ps(d.currentPriceTarget)} today.`
+      : `Price: the ${ps(d.offerPrice)} offer is a ${pc(d.premiumPct)} premium to the target's ${ps(d.currentPriceTarget)} market price.`);
   }
   rationale.push(R.basesDiffer
     ? `Earnings: Year-1 accretion / (dilution) is not shown — ${DIFFERENT_BASES}.`

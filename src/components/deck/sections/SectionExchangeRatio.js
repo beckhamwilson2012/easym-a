@@ -120,7 +120,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
     { k: 'Structure', v: 'Cash-and-stock acquisition' },
     { k: 'Consideration mix', v: cashPct != null ? `${fmtPct(cashPct, 0)} cash / ${fmtPct(stockPct, 0)} stock` : '—' },
     { k: 'Offer price', v: dash(offer, v => `${fmtPerShare(v)} / share`) },
-    { k: 'Premium to current', v: dash(d.premiumPct, v => fmtPct(v, 1)) },
+    { k: deal?._inputs?.premiumReferencePrice > 0 ? `Premium to ${fmtPerShare(deal._inputs.premiumReferencePrice)} close before deal news${deal._inputs.premiumReferenceDate ? ` (${deal._inputs.premiumReferenceDate})` : ''}` : 'Premium to current', v: dash(d.premiumPct, v => fmtPct(v, 1)) },
     { k: 'Total equity value', v: dash(d.totalConsideration, fmtMoneyTable) },
     // Cash + stock portions merged (they sum to the total consideration — natural pairing, saves a row).
     { k: 'Cash / stock split', v: (cashPortion != null && stockPortion != null) ? `${fmtMoneyTable(cashPortion)} (debt-fin.) / ${fmtMoneyTable(stockPortion)}` : '—' },

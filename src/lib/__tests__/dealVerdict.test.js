@@ -55,6 +55,12 @@ describe('deal verdict ladder', () => {
     expect(v.breakeven).toBeCloseTo(250 / (10 * 0.79), 12);
   });
 
+  test('step 3 uses the premium reference price when one is chosen', () => {
+    const inp = inputs({ companyANetIncome: -100, companyAEPS: -1, premiumReferencePrice: 20 });
+    const v = dealVerdict({ deal: deal(inp, [10, 20, 30]), model: model(), acquirerFwd: [], targetFwd: [] });
+    expect(v.premiumDollars).toBe((30 - 20) * 50);
+  });
+
   test('nothing computable: a dash naming the missing inputs, never a default', () => {
     const inp = inputs({ companyANetIncome: -100, companyAEPS: -1 });
     const v = dealVerdict({ deal: deal(inp), model: model({ acquirer: { ebitda: -5 } }), acquirerFwd: [], targetFwd: [] });

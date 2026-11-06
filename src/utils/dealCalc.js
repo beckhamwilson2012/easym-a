@@ -65,7 +65,11 @@ export function acquirerDilutedShares(inputs) {
 // EPS×15 proxy is meaningless (it produced the nonsensical "−34.5% premium" when the live price was
 // missing). Returns 0 when there is no live price, so the premium is reported as N/A rather than a
 // fabricated discount.
+// With "Price before deal news" chosen on the input page, that close (inputs.premiumReferencePrice) is the reference;
+// it is absent otherwise, so today's price is used exactly as before.
 export function targetMarketPrice(inputs) {
+  const ref = parseFloat(inputs.premiumReferencePrice);
+  if (Number.isFinite(ref) && ref > 0) return ref;
   return parseFloat(inputs.currentSharePriceB) || 0;
 }
 

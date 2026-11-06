@@ -104,7 +104,7 @@ export function SectionScreening({ onBack }) {
         const peerInputs = {
           ...baseInputs,
           companyBShares: co.shares, companyBNetIncome: co.netIncome, companyBEPS: co.eps,
-          currentSharePriceB: co.livePrice, applySourcesOfFunds: false,   // peer screen keeps the simple 100%-debt convention
+          currentSharePriceB: co.livePrice, premiumReferencePrice: null, applySourcesOfFunds: false,   // peer screen keeps the simple 100%-debt convention
         };
         const pct = epsAccretionPct(co.livePrice * (1 + SCREEN_PREMIUM), 0, peerInputs); // 0 synergies → pre-synergy
         acc = Number.isFinite(pct) ? pct : null;
