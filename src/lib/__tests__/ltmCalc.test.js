@@ -41,3 +41,32 @@ describe('LTM gross margin when the annual cost was corrected from the income st
     expect(computeLTM(facts(older)).flows.grossProfit.ltmM).toBe(3970);
   });
 });
+
+describe('fix 3 task 1: the LTM revenue tag uses the fiscal-year floor', () => {
+  const nvdaLike = (stale) => ({ facts: { 'us-gaap': {
+    RevenueFromContractWithCustomerExcludingAssessedTax: { units: { USD: stale } },
+    Revenues: { units: { USD: legs(4264e6, 2050e6, 2230e6) } },
+    OperatingIncomeLoss: { units: { USD: legs(2075e6, 1000e6, 1050e6) } },
+  } } });
+  const oldAnnual = [leg('2021-01-01', '2021-12-31', 900e6, '10-K')];
+  test('a first-listed tag that stopped years ago does not block the current one (NVDA, T, UBER, HOOD)', () => {
+    const r = computeLTM(nvdaLike(oldAnnual), '2025-12-31');
+    expect(r.ltm).toBe(true);
+    expect(r.conceptName).toBe('Revenues');
+    expect(r.flows.revenue.ltmM).toBe(4084);
+  });
+  test('a tag whose annual is current but whose last 10-Q is old does not block one that has every leg (JPM)', () => {
+    const jpm = { facts: { 'us-gaap': {
+      Revenues: { units: { USD: [leg('2025-01-01', '2025-12-31', 4264e6, '10-K'), leg('2014-01-01', '2014-09-30', 700e6, '10-Q')] } },
+      RevenuesNetOfInterestExpense: { units: { USD: legs(4264e6, 2050e6, 2230e6) } },
+    } } };
+    const r = computeLTM(jpm, '2025-12-31');
+    expect(r.ltm).toBe(true);
+    expect(r.conceptName).toBe('RevenuesNetOfInterestExpense');
+  });
+  test('without a floor, or when no tag is current and complete, the degrade is unchanged', () => {
+    expect(computeLTM(nvdaLike(oldAnnual)).ltm).toBe(false);
+    const allStale = { facts: { 'us-gaap': { Revenues: { units: { USD: [leg('2025-01-01', '2025-12-31', 4264e6, '10-K'), leg('2025-01-01', '2025-09-30', 3100e6, '10-Q')] } } } } };
+    expect(computeLTM(allStale, '2025-12-31').reason).toBe('no interim period past the latest fiscal year-end (LTM == annual)');
+  });
+});

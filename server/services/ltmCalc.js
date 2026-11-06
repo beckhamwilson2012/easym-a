@@ -165,9 +165,24 @@ function fresherCompleteAlias(space, names, chosenConcept) {
   return present.find(p => p.idx > chosen.idx && p.maxEnd > chosen.maxEnd && p.complete) || null;
 }
 
-function selectConcept(space, names) {
-  const present = presentConcepts(space, names);
-  if (!present.length) return null;
+// The fiscal-year floor revenueConcepts applies to annual figures (isOlderFiscalYear), applied to each LTM leg: a tag whose latest
+// full-year fact, or whose latest interim fact, is older than the latest annual filing period cannot supply an LTM past it.
+// NVDA FY26: RevenueFromContractWithCustomerExcludingAssessedTax stops at FY2022, Revenues has every leg. JPM: Revenues' annual
+// is current but its last 10-Q fact is 2014; RevenuesNetOfInterestExpense agrees with it at FY2025 (182,447) and has every leg.
+function staleForFloor(entries, floorEnd) {
+  if (!floorEnd) return false;
+  const annual = fullYear(entries);
+  const interim = latestCumInterim(entries);
+  return !annual || isOlderFiscalYear(annual.end, floorEnd) || !interim || isOlderFiscalYear(interim.end, floorEnd);
+}
+
+function selectConcept(space, names, floorEnd = null) {
+  const all = presentConcepts(space, names);
+  if (!all.length) return null;
+  // A stale tag never blocks a current one: when some listed tag is complete and not stale, the stale ones are not candidates.
+  // With no current complete tag the list is unchanged, so an honest degrade stays a degrade (AAPL before its next 10-Q).
+  const current = all.filter((p) => !staleForFloor(p.entries, floorEnd));
+  const present = current.some((p) => p.complete) ? current : all;
   for (const cur of present) {                       // list order (first-with-data preserved)
     // Skip ONLY a stale-COMPUTED concept: it can itself build an LTM (complete) AND a later-listed alias
     // is strictly fresher and also complete. A non-complete first concept (an honest degrade) is NEVER
@@ -282,7 +297,7 @@ function computeLTM(facts, floorEnd = null) {
   const degrade = (reason, extra) => ({ ltm: false, fallback: 'annual', reason, ...(extra || {}) });
 
   // B2 — revenue anchor via staleness-triggered selection (single source for ALL THREE legs below).
-  const sel = selectConcept(ns, revenueNames);
+  const sel = selectConcept(ns, revenueNames, floorEnd);
   if (!sel) return degrade('no revenue concept in companyfacts');
   const revE = sel.entries;
   const revConcept = sel.conceptName;
