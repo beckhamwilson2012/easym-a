@@ -70,3 +70,23 @@ describe('fix 3 task 1: the LTM revenue tag uses the fiscal-year floor', () => {
     expect(computeLTM(allStale, '2025-12-31').reason).toBe('no interim period past the latest fiscal year-end (LTM == annual)');
   });
 });
+
+describe('fix 3 task 2: no 10-Q after the latest 10-K', () => {
+  const tenK = leg('2024-09-29', '2025-09-27', 4264e6, '10-K');
+  const before = leg('2024-09-29', '2025-06-28', 3100e6, '10-Q');
+  test('the fiscal year is the LTM: flagged with its label, no figure computed (AAPL, COST, V, TEAM)', () => {
+    const r = computeLTM({ facts: { 'us-gaap': { Revenues: { units: { USD: [tenK, before] } } } } }, '2025-09-27');
+    expect(r.ltm).toBe(false);
+    expect(r.fyAsLtm).toEqual({ asOf: '2025-09-27', label: 'LTM to 2025-09-27 (latest 10-K; no later 10-Q yet)', annual: { start: '2024-09-29', end: '2025-09-27', form: '10-K', filed: '2026-02-20' } });
+    expect(r.flows).toBeUndefined();
+  });
+  test('any 10-Q flow after the year end, under any tag, means it is not this case', () => {
+    const later = { NetIncomeLoss: { units: { USD: [leg('2025-09-28', '2025-12-27', 1e6, '10-Q')] } } };
+    expect(computeLTM({ facts: { 'us-gaap': { Revenues: { units: { USD: [tenK, before] } }, ...later } } }, '2025-09-27').fyAsLtm).toBeUndefined();
+  });
+  test('a 20-F, or a 10-K older than the latest annual filing, is never this case', () => {
+    const twentyF = { ...tenK, form: '20-F' };
+    expect(computeLTM({ facts: { 'us-gaap': { Revenues: { units: { USD: [twentyF, { ...before, form: '6-K' }] } } } } }, '2025-09-27').fyAsLtm).toBeUndefined();
+    expect(computeLTM({ facts: { 'us-gaap': { Revenues: { units: { USD: [tenK, before] } } } } }, '2026-09-26').fyAsLtm).toBeUndefined();
+  });
+});

@@ -1,5 +1,5 @@
 // Comparables never mix FY and LTM in one column unmarked: a cell that fell back from LTM to the fiscal year says so.
-import { buildCompany, comparablesCellText, anyFyFallback, fiscalYearLabel, FY_FALLBACK_NOTE } from '../SectionComparables';
+import { buildCompany, comparablesCellText, anyFyFallback, fiscalYearLabel, FY_FALLBACK_NOTE, latestTenKLtmNote } from '../SectionComparables';
 
 const pct = (v) => (v == null ? '—' : `${v.toFixed(1)}%`);
 const passthru = (v) => (v == null ? '—' : v);
@@ -60,5 +60,19 @@ describe('FY fallback markers', () => {
     expect(anyFyFallback([GM], [clean])).toBe(false);
     expect(anyFyFallback([GROWTH], [marked])).toBe(false);
     expect(FY_FALLBACK_NOTE).toBe('FY figure shown where LTM is unavailable');
+  });
+});
+
+describe('fix 3 task 2: LTM that is the latest 10-K', () => {
+  const aapl = () => cci({ fiscalYearEnd: '2026-09-26', ltm: { trusted: true, basis: 'latest-10-K', asOf: '2026-09-26', label: 'LTM to 2026-09-26 (latest 10-K; no later 10-Q yet)',
+    revenue: 4264, grossProfit: 3159, operatingIncome: 2075, ebitda: 2765, eps: 2.5, netIncome: 1000 } });
+  test('cells carry no FY marker, and the footnote names the column and its label', () => {
+    const c = buildCompany('AAPL', aapl(), false);
+    [GM, REV, PE, EBITDA].forEach((m) => expect(comparablesCellText(m, c)).not.toMatch(/FY/));
+    expect(comparablesCellText(GM, c)).toBe('74.1%');
+    expect(latestTenKLtmNote([c])).toBe('AAPL: LTM to 2026-09-26 (latest 10-K; no later 10-Q yet).');
+  });
+  test('an ordinary LTM column adds no such note', () => {
+    expect(latestTenKLtmNote([buildCompany('CCI', cci(), true)])).toBeNull();
   });
 });

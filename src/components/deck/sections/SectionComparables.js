@@ -148,7 +148,15 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     netIncomeLtm: niLtm, growthBaseFy: latestAct?.label ?? null,
     shares, eps: data.eps != null ? parseFloat(data.eps) : null, livePrice: live,
     fyBasis, fyLabel: fiscalYearLabel(data),
+    // LTM that is the latest 10-K because no later 10-Q exists yet (AAPL): the slide says so in its footnote.
+    ltmLabel: ltmT && ltmT.basis === 'latest-10-K' ? ltmT.label : null,
   };
+}
+
+// "AAPL: LTM to 2026-09-26 (latest 10-K; no later 10-Q yet)" for each such column, or null.
+export function latestTenKLtmNote(cols) {
+  const labeled = cols.filter((c) => !c.loading && c.ltmLabel);
+  return labeled.length ? labeled.map((c) => `${c.ticker}: ${c.ltmLabel}`).join('; ') + '.' : null;
 }
 
 // "FY25" from the fiscal year END's calendar year, the deck's convention (CRM FYE Jan-2026 → FY26). Unknown year → "FY".
@@ -530,7 +538,8 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
         <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}
           {loadedCols.some(c => c.grossNm) ? <>{grossNmNote(...loadedCols)} </> : null}
-          {anyFyFallback(metrics, loadedCols) ? <><strong>{FY_FALLBACK_NOTE}</strong> (marked “FY” and the fiscal year in the cell). </> : null}
+          {latestTenKLtmNote(loadedCols) ? <>{latestTenKLtmNote(loadedCols)} </> : null}
+          {anyFyFallback(metrics, loadedCols) ?<><strong>{FY_FALLBACK_NOTE}</strong> (marked “FY” and the fiscal year in the cell). </> : null}
           Revenue growth and Op Margin/Income (NTM) are forward analyst consensus from FMP (a single provider series whose basis is not designated as GAAP or non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile ({exhibitLabelOf('targetprofile')}) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§{pageNumOf('plAcquirer')}/§{pageNumOf('plTarget')}). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
         </div>
       )}

@@ -428,6 +428,13 @@ function inM(val) {
   return Math.round((val || 0) / 1e6);
 }
 
+// The LTM block when the latest 10-K is the newest filing (ltmCalc fyAsLtm): that fiscal year's own figures, passed in by the
+// caller, under the label "LTM to <date> (latest 10-K; no later 10-Q yet)". Nothing is computed here. /quote and /api/pnl share it.
+function latestTenKAsLtm(fyAsLtm, figures) {
+  return { trusted: true, asOf: fyAsLtm.asOf, fallback: null, basis: 'latest-10-K', label: fyAsLtm.label, ...figures,
+    audit: { periods: { annual: fyAsLtm.annual }, note: fyAsLtm.label } };
+}
+
 // Null-honest dollars→$M (Stage 14/15). Deliberately NOT inM (whose zero-coercion fabricates 0 from an
 // absent value and would defeat the wrapped shape). A real reported 0 survives as 0. Shared by the
 // Yahoo AND FMP builders — one copy, so an edit for one cannot silently diverge the other.
@@ -797,7 +804,19 @@ async function fetchFromEDGAR(symbol, cik) {
                breakdown: { revenue: raw.flows.revenue, operatingIncome: raw.flows.operatingIncome,
                             netIncome: raw.flows.netIncome, grossProfit: raw.flows.grossProfit },
                epsConvention: raw.epsDiluted.convention, ebitdaNote: raw.flows.ebitda.note },
-    } : { trusted: false, fallback: raw.fallback || 'annual', reason: raw.reason || null, asOf: null, tieOut: raw.tieOut || null };
+    } : (raw.fyAsLtm && raw.fyAsLtm.asOf === revenueEntry?.end) ? latestTenKAsLtm(raw.fyAsLtm, {
+      revenue: revenueM,
+      costOfRevenue: incomeLines.costOfRevenue.value != null ? inM(incomeLines.costOfRevenue.value) : null,
+      costOfRevenueSource: incomeLines.costOfRevenue.label,
+      grossProfit: grossProfitSource === 'sec_edgar' ? inM(grossProfit) : null,   // the filing's own figure only, never FMP's
+      operatingIncome: operatingIncome != null ? inM(operatingIncome) : null,
+      ebitda: ebitda != null ? inM(ebitda) : null, ebitdaReason: ebitdaResult.reason,
+      netIncome: netIncome != null ? inM(netIncome) : null,
+      freeCashFlow, freeCashFlowReason: freeCashFlowResult.reason,
+      // currentEps, not eps: eps keeps a 0 for a filer with no EPS tag at all, and that 0 is not carried into LTM.
+      eps: currentEps != null ? parseFloat(currentEps.toFixed(2)) : null, dilutedShares: dilutedShares != null ? inM(dilutedShares) : null,
+      cash: cash != null ? inM(cash) : null, debt: debt != null ? inM(debt) : null,
+    }) : { trusted: false, fallback: raw.fallback || 'annual', reason: raw.reason || null, asOf: null, tieOut: raw.tieOut || null };
   } catch (e) {
     ltm = { trusted: false, fallback: 'annual', reason: 'computeLTM error: ' + e.message, asOf: null };
   }
@@ -1883,7 +1902,16 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         ebitda: lr.flows.ebitda.ltmM, ebitdaDaFound: lr.flows.ebitda.daFound, ebitdaReason: lr.flows.ebitda.reason,
         eps: lr.epsDiluted.ltm, dilutedShares: lr.epsDiluted.dilutedSharesM,
         audit: { window: lr.window, periods: lr.periods, tieOut: lr.tieOut },
-      } : { trusted: false, fallback: lr.fallback || 'annual', reason: lr.reason || null };
+      } : (lr.fyAsLtm && cols.some((c) => c.end === lr.fyAsLtm.asOf)) ? (() => {
+        const fy = cols.find((c) => c.end === lr.fyAsLtm.asOf);   // that fiscal year's own column, figure for figure
+        return latestTenKAsLtm(lr.fyAsLtm, { label: 'LTM', actual: true, ltm: true,
+          revenue: fy.revenue, costOfRevenue: fy.costOfRevenue, costOfRevenueSource: fy.costOfRevenueSource,
+          grossProfit: fy.grossProfit, grossProfitDerived: fy.grossProfitBasis === 'calculated',
+          // nonOperatingIncome keeps the LTM block's shape ({ ltmM }), which the P&L slide reads.
+          operatingIncome: fy.operatingIncome, nonOperatingIncome: { ltmM: fy.nonOperatingIncome }, netIncome: fy.netIncome,
+          ebitda: fy.ebitda, ebitdaDaFound: fy.ebitda != null, ebitdaReason: fy.ebitdaReason,
+          eps: fy.eps, dilutedShares: fy.dilutedShares, ltmLabel: lr.fyAsLtm.label });
+      })() : { trusted: false, fallback: lr.fallback || 'annual', reason: lr.reason || null };
     } catch (e) { ltmBlock = { trusted: false, fallback: 'annual', reason: 'computeLTM error: ' + e.message }; }
 
     const payload = {

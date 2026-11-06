@@ -117,15 +117,32 @@ function priorInterim(entries, latestEnd, span) {
 // a prior-year same-span comparative. SOLE author of the four degrade-reason strings. Both the selection
 // path (conceptComplete → is a concept usable?) and the computed path (computeLTM) call this, so the
 // "can an LTM be built?" rule can never drift between choosing a concept and actually using it.
+const NO_INTERIM_PAST_FYE = 'no interim period past the latest fiscal year-end (LTM == annual)';
 function deriveRevenueLegs(entries) {
   const annual = fullYear(entries);
   if (!annual) return { degradeReason: 'no annual (10-K/20-F) revenue full-year frame' };
   const latestYTD = latestCumInterim(entries);
   if (!latestYTD) return { degradeReason: 'no interim (10-Q) revenue frames — annual-only filer (foreign 20-F/6-K or no quarterly XBRL)' };
-  if (latestYTD.end <= annual.end) return { degradeReason: 'no interim period past the latest fiscal year-end (LTM == annual)' };
+  if (latestYTD.end <= annual.end) return { degradeReason: NO_INTERIM_PAST_FYE };
   const priorYTD = priorInterim(entries, latestYTD.end, latestYTD.span);
   if (!priorYTD) return { degradeReason: 'no prior-year same-span interim to subtract' };
   return { annual, latestYTD, priorYTD };
+}
+
+// When the latest 10-K is the newest filing, its fiscal year IS the last twelve months: AAPL's FY ended 2026-09-26 and its 10-K
+// was filed 2026-11-03, before any FY27 10-Q. Only then: the revenue leg is a 10-K at the latest annual filing period, and no
+// 10-Q flow fact of ANY tag ends after it (a stale tag with an old 10-Q, JPM's, is not this case). No figure is computed here:
+// the caller shows the fiscal year's own figures under the label. A 20-F filer is never this case (its quarters are not 10-Qs).
+function latestTenKLabel(end) { return `LTM to ${end} (latest 10-K; no later 10-Q yet)`; }
+function latestTenKWithNoLaterInterim(ns, revE, floorEnd) {
+  const annual = fullYear(revE);
+  if (!annual || annual.form !== '10-K' || !floorEnd || isOlderFiscalYear(annual.end, floorEnd)) return null;
+  for (const concept of Object.values(ns)) {
+    for (const entries of Object.values(concept?.units || {})) {
+      if (entries.some((e) => isInterimForm(e.form) && e.start && e.end > annual.end)) return null;
+    }
+  }
+  return { asOf: annual.end, label: latestTenKLabel(annual.end), annual: { start: annual.start, end: annual.end, form: annual.form, filed: annual.filed } };
 }
 
 // ── B1: revenue-anchor concept selection with STALENESS-TRIGGERED FALLTHROUGH ────────────────────────
@@ -304,6 +321,10 @@ function computeLTM(facts, floorEnd = null) {
   // Same predicate the selector's conceptComplete() uses — one source of truth for the leg sequence.
   // degradeReason is passed through UNMODIFIED (deriveRevenueLegs is its sole author; no local rewording).
   const legs = deriveRevenueLegs(revE);
+  if (legs.degradeReason === NO_INTERIM_PAST_FYE) {
+    const latestTenK = latestTenKWithNoLaterInterim(ns, revE, floorEnd);
+    if (latestTenK) return degrade(legs.degradeReason, { fyAsLtm: latestTenK });
+  }
   if (legs.degradeReason) return degrade(legs.degradeReason);
   const { annual, latestYTD, priorYTD } = legs;
   if (isOlderFiscalYear(annual.end, floorEnd)) return degrade(`annual revenue leg ends ${annual.end}, older than the latest annual filing period ${floorEnd}`);
