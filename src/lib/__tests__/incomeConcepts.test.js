@@ -43,8 +43,9 @@ describe('resolveGrossProfit', () => {
 
 describe('concept order', () => {
   test('the list is the agreed order, with sums and the filing last', () => {
-    expect(COST_OF_REVENUE_CONCEPTS.gaap.slice(0, 4)).toEqual(['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfServices']);
-    expect(COST_OF_REVENUE_CONCEPTS.gaap[5]).toBe(FILING_INSTANCE_CONCEPT);
+    expect(COST_OF_REVENUE_CONCEPTS.gaap.slice(0, 5)).toEqual(['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfServices',
+      'CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization']);   // fix 3: the standard "excluding D&A" line, listed last
+    expect(COST_OF_REVENUE_CONCEPTS.gaap[6]).toBe(FILING_INSTANCE_CONCEPT);
   });
   test('earlier concept wins for the same period', () => {
     const g = ns({ CostOfGoodsSold: [fact(1, ...FY25)], CostOfRevenue: [fact(2, ...FY25)] });

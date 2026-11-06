@@ -302,6 +302,21 @@ function ltmDA(ns, names, P, annual) {
     if (annualDA > 0 && Math.abs(a - annualDA) / annualDA <= 0.15)
       return { ltm: a + l - p, concept: n, note: `opInc(LTM) + D&A(LTM) — interim D&A from cash-flow concept ${n} (annual leg reconciled to the ${deckConcept} basis)` };
   }
+  // The annual total was confirmed by the statement's own lines adding to it (cashFlowConcepts): follow those lines, the approved
+  // statement-line sum. SPGI FY25 DDA 1,179 = Depreciation 110 + AmortizationOfIntangibleAssets 1,069, each tagged at every leg.
+  // Every line needs all three legs, the lines' annual legs must add to the annual total, and only standard tags: else no figure.
+  const lines = annual.confirmingLines;
+  if (lines && lines.length > 1 && lines.every((r) => r.ns === 'us-gaap' || r.ns === 'ifrs-full')) {
+    const legsOf = lines.map((r) => ({ concept: r.concept, a: valFullYearAt(uni(r.concept), P.annualEnd), l: valInterimAt(uni(r.concept), P.iEnd, P.span), p: valInterimAt(uni(r.concept), P.pEnd, P.span) }));
+    const label = legsOf.map((x) => x.concept).join(' + ');
+    if (legsOf.every((x) => x.a != null && x.l != null && x.p != null)) {
+      const annualSum = legsOf.reduce((s, x) => s + x.a, 0);
+      if (Math.abs(annualSum - annualDA) <= Math.abs(annualDA) * 0.001) {
+        return { ltm: legsOf.reduce((s, x) => s + x.a + x.l - x.p, 0), concept: label,
+          note: `opInc(LTM) + D&A(LTM) — D&A from the cash flow statement's lines ${label}, which add to the annual ${deckConcept}` };
+      }
+    }
+  }
   return { ltm: null, concept: deckConcept, note: `no LTM D&A: the annual D&A concept (${deckConcept}) is not tagged at interim, and no interim-tagged D&A concept is on the same basis` };
 }
 

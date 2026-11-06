@@ -65,7 +65,9 @@ function checkAgainstStatement(statement, end, concept, value, lineRows, what) {
       flag: beside.length ? `${what} ${concept} ${fmtM(value)} is on the cash flow statement, which also shows ${beside.map((r) => `${rowName(r)} ${fmtM(Math.abs(r.values[col]))}`).join(', ')}` : null };
   }
   const sum = lines.reduce((s, r) => s + Math.abs(r.values[col]), 0);
-  if (lines.length && sameFiled(statement, sum, value)) return { status: 'confirmed', flag: null, statementLine: lines.map((r) => r.label).join(' + ') };
+  // The lines that confirmed it are kept: they are the statement's own lines for this figure, which the LTM can follow (SPGI).
+  if (lines.length && sameFiled(statement, sum, value)) return { status: 'confirmed', flag: null, statementLine: lines.map((r) => r.label).join(' + '),
+    confirmingLines: lines.map((r) => ({ ns: r.ns, concept: r.tag, label: r.label, value: Math.abs(r.values[col]) })) };
   const shows = lines.length ? lines.map((r) => `${rowName(r)} ${fmtM(Math.abs(r.values[col]))}`).join(', ') : 'no such line';
   return { status: 'unconfirmed', flag: `${what} ${concept} ${fmtM(value)} does not match the cash flow statement, which shows ${shows}` };
 }
@@ -85,7 +87,7 @@ function resolveDepreciationAt(ns, end, { useIfrs = false, statement = null } = 
   if (filed) {
     const check = checkAgainstStatement(statement, end, filed.concept, filed.val, daLines, 'D&A');
     return resolved({ value: filed.val, end, concept: filed.concept, concepts: [filed.concept], status: check.status, flag: check.flag, statementLine: check.statementLine ?? null,
-      label: `SEC EDGAR companyfacts (${filed.concept})` });
+      confirmingLines: check.confirmingLines ?? null, label: `SEC EDGAR companyfacts (${filed.concept})` });
   }
   const noTag = `no D&A total tag filed for ${end}`;
   if (!statement) return resolved({ end, reason: `${noTag}, and the cash flow statement could not be read` });

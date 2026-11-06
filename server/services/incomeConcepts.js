@@ -3,7 +3,8 @@
 // /api/pnl, the LTM legs and the §16 verification (edgarClient) all resolve identically.
 //
 // COST OF REVENUE, per period, first hit wins:
-//   1. CostOfRevenue, CostOfGoodsAndServicesSold, CostOfGoodsSold, CostOfServices (companyfacts)
+//   1. CostOfRevenue, CostOfGoodsAndServicesSold, CostOfGoodsSold, CostOfServices,
+//      CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization (companyfacts)
 //   2. a component sum, ONLY when every component is filed for that exact period (sumComponents)
 //   3. the filing's own XBRL instance. companyfacts leaves out dimensional facts, so a filer that tags cost only
 //      on ProductOrServiceAxis (IRDM, VSAT, GSAT) has nothing current there: IRDM FY25 is ServiceMember
@@ -33,8 +34,13 @@ const STATEMENT_LINE_CONCEPT  = 'CostOfRevenueStatementLine';
 const COST_RESOLUTIONS_KEY    = 'CostOfRevenueResolutions';   // not a concept: { end: resolution }, for the trace-back
 
 const FILED_COST_CONCEPTS = ['CostOfRevenue', 'CostOfGoodsAndServicesSold', 'CostOfGoodsSold', 'CostOfServices'];
+// The standard us-gaap tag for a statement line "Cost of revenue (exclusive of depreciation and amortization)": DoorDash FY25
+// 6,738, Expedia 1,456, MSCI 550.4, each filed at all three LTM legs. A pick candidate after the four above, so a filer that also
+// tags one of them keeps today's pick. It is not added to FILED_COST_CONCEPTS: the statement cross-check, the revenue tie-out and
+// the decision which filings to read stay exactly as they were (AMD files both it and CostOfGoodsAndServicesSold, total and part).
+const COST_EXCLUDING_DA_CONCEPT = 'CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization';
 const COST_OF_REVENUE_CONCEPTS = {
-  gaap: [...FILED_COST_CONCEPTS, COMPONENT_SUM_CONCEPT, FILING_INSTANCE_CONCEPT],
+  gaap: [...FILED_COST_CONCEPTS, COST_EXCLUDING_DA_CONCEPT, COMPONENT_SUM_CONCEPT, FILING_INSTANCE_CONCEPT],
   ifrs: ['CostOfSales', 'CostOfGoodsAndServicesSold'],
 };
 const GROSS_PROFIT_CONCEPTS = ['GrossProfit'];
@@ -400,7 +406,8 @@ function latestPeriodEnds(gaap) {
 }
 
 function hasCostAt(gaap, end, form) {
-  return COST_OF_REVENUE_CONCEPTS.gaap.some((c) => (gaap[c]?.units?.USD || []).some((e) => e.end === end && e.form === form && e.start));
+  return COST_OF_REVENUE_CONCEPTS.gaap.filter((c) => c !== COST_EXCLUDING_DA_CONCEPT)
+    .some((c) => (gaap[c]?.units?.USD || []).some((e) => e.end === end && e.form === form && e.start));
 }
 
 const submissionsCache = new Map();

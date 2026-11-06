@@ -108,3 +108,43 @@ describe('fix 3 task 3: 6-K quarters are interim periods, with the same checks a
     expect(r.reason).toBe('tie-out gate failed');
   });
 });
+
+describe('fix 3 task 4: the standard "excluding D&A" cost tag, and SPGI\'s two D&A lines', () => {
+  const { annualIncomeLines } = require('../../../server/services/incomeConcepts');
+  const EXCL = 'CostOfGoodsAndServiceExcludingDepreciationDepletionAndAmortization';
+  test('DASH: cost of revenue (excl. D&A) is read at every leg, so LTM gross profit exists (6,738 + 6,270 − 4,803 = 8,205)', () => {
+    const r = computeLTM(facts({ CostOfGoodsAndServicesSold: undefined, [EXCL]: { units: { USD: legs(6738e6, 6270e6, 4803e6) } } }));
+    expect(r.flows.costOfRevenue.ltmM).toBe(8205);
+    expect(r.flows.costOfRevenue.conceptName).toBe(EXCL);
+    expect(r.flows.grossProfit.ltmM).toBe(4084 - 8205);
+  });
+  test('the annual cost reads it too, labeled with the tag', () => {
+    const ns = { [EXCL]: { units: { USD: [leg('2025-01-01', '2025-12-31', 6738e6, '10-K')] } } };
+    const lines = annualIncomeLines(ns, '2025-12-31', 13717e6);
+    expect(lines.costOfRevenue.value).toBe(6738e6);
+    expect(lines.costOfRevenue.label).toBe(`SEC EDGAR companyfacts (${EXCL})`);
+    expect(lines.grossProfit.value).toBe(13717e6 - 6738e6);
+  });
+  test('listed last: a filer that also tags CostOfRevenue keeps it', () => {
+    const r = computeLTM(facts({ CostOfGoodsAndServicesSold: undefined, CostOfRevenue: { units: { USD: legs(100e6, 50e6, 40e6) } }, [EXCL]: { units: { USD: legs(90e6, 45e6, 35e6) } } }));
+    expect(r.flows.costOfRevenue.conceptName).toBe('CostOfRevenue');
+  });
+
+  // SPGI: DDA 1,179 annual only; the cash flow statement shows Depreciation 110 + Amortization of intangibles 1,069.
+  const row = (tag, label, value) => ({ ns: 'us-gaap', tag, label, values: [value] });
+  const cashFlow = { scale: 1e6, periods: ['2025-12-31'], form: '10-K', rows: [row('Depreciation', 'Depreciation', 110e6),
+    row('AmortizationOfIntangibleAssets', 'Amortization of intangibles', 1069e6), row('NetCashProvidedByUsedInOperatingActivities', 'Net cash provided by operating activities', 5000e6)] };
+  const spgi = (amortLegs) => ({ ...facts({ DepreciationDepletionAndAmortization: { units: { USD: [leg('2025-01-01', '2025-12-31', 1179e6, '10-K')] } },
+    Depreciation: { units: { USD: legs(110e6, 86e6, 68e6) } }, AmortizationOfIntangibleAssets: { units: { USD: amortLegs } } }), filingStatements: { cashFlow } });
+  test('SPGI: the statement lines that confirm the annual total are followed at every leg (1,179 + 684 − 644 = 1,219)', () => {
+    const r = computeLTM(spgi(legs(1069e6, 598e6, 576e6)));
+    expect(r.flows.ebitda.ltmM).toBe(1000 + 1050 > 0 ? 2075 + 1000 - 1050 + 1219 : null);
+    expect(r.flows.ebitda.daConcept).toBe('Depreciation + AmortizationOfIntangibleAssets');
+    expect(r.flows.ebitda.reason).toBeNull();
+  });
+  test('one line missing a leg: no LTM D&A, never a partial sum', () => {
+    const r = computeLTM(spgi([leg('2025-01-01', '2025-12-31', 1069e6, '10-K')]));
+    expect(r.flows.ebitda.ltmM).toBeNull();
+    expect(r.flows.ebitda.reason).toMatch(/^no LTM D&A/);
+  });
+});
