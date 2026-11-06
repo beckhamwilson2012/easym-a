@@ -4,7 +4,7 @@ import { VerifiedValue, StatusDot } from '../../shared/VerifiedValue';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
-  computeFlags, computeDealScore, buildNarrative,
+  computeFlags, buildNarrative,
   calcProFormaEPS, SYN_MULTS, SYN_LABELS,
   acquirerSharePrice, targetMarketPrice, acquirerStandaloneEPS,
 } from '../../../utils/dealCalc';
@@ -19,10 +19,11 @@ import { SynergyLines } from '../shared/SynergyLines';
 import { BasisNote } from '../shared/BasisNote';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
+import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
   explainPTBV, explainCombinedCET1,
-  explainEpsChange, explainDealScore,
+  explainEpsChange,
   explainDealSize, explainSynergies,
   explainCashPercent,
 } from '../../../lib/explanations';
@@ -36,6 +37,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const isMobile = windowWidth < 768;
 
   const { data: verifiedTarget } = useVerifiedData(target?.ticker ?? null);
+  const verdict = useDealVerdict({ deal, acquirer, target });
 
   if (!results || !inputs) return null;
 
@@ -43,17 +45,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const flags     = bankMode
     ? computeBankFlags(results, inputs, target, acquirer)
     : computeFlags(results, inputs);
-  const dealScore  = computeDealScore(results, flags);
   const narrative  = bankMode
     ? buildBankNarrative(results, inputs, target, acquirer, nameA, nameB)
     : buildNarrative(results, inputs, nameA, nameB, flags);
-  const scoreColor   = dealScore >= 7 ? '#16A34A' : dealScore >= 4 ? '#D97706' : '#DC2626';
-  const scoreBg      = dealScore >= 7 ? '#DCFCE7'  : dealScore >= 4 ? '#FEF3C7' : '#FEE2E2';
   // Third state for undefined accretion: a non-positive EPS base makes accretive/(dilutive) meaningless.
   // Drive the verdict off accretionMeaningful (NOT isAccretive being falsy) so an EPS IMPROVEMENT off a
   // negative base (e.g. -$0.37 → -$0.18) never reads "Dilutive". Positive-base deals are unchanged.
   const accOK       = results.accretionMeaningful;
-  const verdictTxt  = !accOK ? 'n/m' : results.isAccretive ? '✓ Accretive' : '✗ Dilutive';
   const accColor    = !accOK ? '#6B7280' : results.isAccretive ? '#16A34A' : '#DC2626'; // dark green / red
   const accColorL   = !accOK ? '#9CA3AF' : results.isAccretive ? '#4ADE80' : '#F87171'; // light (on navy)
   const cardStyle    = { background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #E5E7EB' };
@@ -179,9 +177,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ color: '#A8C4DC', fontSize: 13 }}>Deal verdict</div>
-            <div style={{ color: '#fff', fontSize: isMobile ? 22 : 28, fontWeight: 'bold' }}>
-              {verdictTxt}
-            </div>
+            <VerdictBlock verdict={verdict} dark size={isMobile ? 22 : 28} />
             {bankMode && (
               <div style={{ marginTop: 6, display: 'inline-block', background: '#1B4B8A', border: '1px solid #3B82F6', borderRadius: 4, padding: '2px 8px', fontSize: 11, fontWeight: 700, color: '#93C5FD', letterSpacing: 0.3 }}>
                 Bank M&A Mode
@@ -197,13 +193,6 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               <div style={{ color: accColorL, fontSize: 22, fontWeight: 'bold' }}>
                 {accOK ? fmtPctSigned(parseFloat(results.epsChangePct)) : 'n/m'}
               </div>
-            </div>
-            <div style={{ background: scoreBg, borderRadius: 10, padding: '10px 16px', textAlign: 'center' }}>
-              <div style={{ fontSize: 11, color: '#6B7280', marginBottom: 2, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4 }}>
-                Deal Score
-                <ExplainButton explain={() => explainDealScore({ score: dealScore, results })} />
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 'bold', color: results.basesDiffer ? '#6B7280' : scoreColor }}>{results.basesDiffer ? '—' : `${dealScore}/10`}</div>
             </div>
           </div>
         </div>

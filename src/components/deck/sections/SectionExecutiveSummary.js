@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
+import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { NAVY, SF_BLUE, GRAY_BORDER, LIGHT_BLUE, fmtMoney, fmtPct, fmtPctSigned, fmtPctFloor, fmtShares } from '../shared/deckTokens';
@@ -96,6 +97,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   const bTk = T.ticker || target?.ticker || null;
   const notesKey = `${STORAGE_PREFIX}${aTk || 'A'}_${bTk || 'B'}`;
 
+  const verdict = useDealVerdict({ deal, acquirer, target, model });
   const [notes, setNotes] = useState(() => loadNotes(notesKey));
   // Re-read when the pair changes so one deal's notes never bleed into another's.
   useEffect(() => { setNotes(loadNotes(notesKey)); }, [notesKey]);
@@ -188,6 +190,10 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
       />
       <div style={{ padding: '12px 22px 40px' }}>
         <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ marginBottom: 8 }} />
+        <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 4, padding: '8px 10px', marginBottom: 10 }}>
+          <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.8, color: SF_BLUE, textTransform: 'uppercase', marginBottom: 3 }}>Deal verdict</div>
+          <VerdictBlock verdict={verdict} size={16} />
+        </div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18 }}>
 
           {/* ── Left: snapshot ── */}

@@ -331,26 +331,6 @@ export function computeFlags(results, inputs) {
   return flags;
 }
 
-// ── Deal score ────────────────────────────────────────────────────────────────
-
-export function computeDealScore(results, flags) {
-  let score = 5;
-  const epsChangePct   = parseFloat(results.epsChangePct);
-  const debtEBITDA     = results.debtEBITDA !== 'N/A' ? parseFloat(results.debtEBITDA) : null;
-  const purchasePremium = parseFloat(results.purchasePremium);
-
-  if (results.isAccretive) score += 2; else score -= 2;
-  if (epsChangePct > 10) score += 1;
-  if (epsChangePct < 0) score -= 1;
-  if (debtEBITDA !== null && debtEBITDA < 3) score += 1;
-  if (debtEBITDA !== null && debtEBITDA > 5) score -= 1;
-  if (purchasePremium < 30) score += 1;
-  if (purchasePremium > 50) score -= 1;
-  if (parseFloat(results.totalPurchasePrice) > 500000) score -= 2;
-
-  return Math.max(1, Math.min(10, score));
-}
-
 // ── Formatters ────────────────────────────────────────────────────────────────
 
 export function formatDollars(m) {

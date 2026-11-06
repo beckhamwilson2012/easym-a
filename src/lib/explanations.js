@@ -170,30 +170,6 @@ export function explainProFormaEPS({ combinedNetIncome, synergiesY1, totalShares
   };
 }
 
-// ── Deal score ────────────────────────────────────────────────────────────────
-
-export function explainDealScore({ score, results }) {
-  const epsChange = parseFloat(results?.epsChangePct) || 0;
-  const premium = parseFloat(results?.purchasePremium) || 0;
-  const debtEBITDA = results?.debtEBITDA !== 'N/A' ? parseFloat(results?.debtEBITDA) : null;
-  const dealSize = parseFloat(results?.totalPurchasePrice) || 0;
-
-  const inputs = [
-    { label: 'Base score', value: '5 / 10' },
-    { label: 'EPS accretive?', value: epsChange >= 0 ? `Yes (+2) — ${epsChange.toFixed(1)}%` : `No (−2) — ${epsChange.toFixed(1)}%` },
-    { label: 'Purchase premium', value: `${premium.toFixed(1)}%${premium < 30 ? ' (+1)' : premium > 50 ? ' (−1)' : ''}` },
-    ...(debtEBITDA !== null ? [{ label: 'Debt/EBITDA', value: `${debtEBITDA.toFixed(1)}x${debtEBITDA < 3 ? ' (+1)' : debtEBITDA > 5 ? ' (−1)' : ''}` }] : []),
-    ...(dealSize > 500000 ? [{ label: 'Deal size > $500B', value: '−2 antitrust risk' }] : []),
-  ];
-
-  return {
-    formula: 'Deal Score = base 5 + EPS accretion bonus + leverage adjustment + premium adjustment + size penalty',
-    inputs,
-    result: `${score} / 10`,
-    notes: 'Scores 8–10: strong economics. Scores 5–7: neutral — may be strategic but not financially compelling. Below 5: significant financial risk. This model scores seven quantitative factors; real deal committees assess dozens more.',
-  };
-}
-
 // ── Bank-specific ─────────────────────────────────────────────────────────────
 
 export function explainPTBV({ marketCap, tangibleBookValue, ratio, companyName }) {
