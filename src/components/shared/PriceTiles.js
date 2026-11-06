@@ -51,8 +51,8 @@ export function PriceTiles({ spot, quoteAsOf, retrievedAt, offer, basis, onBasis
         <Tile testId="tile-spot" label="Spot price" value={spot != null ? fmtPerShare(spot) : '—'} sub={spotSub} />
         {before ? (
           <>
-            <Tile testId="tile-reference" label="Price before deal news" value={beforeClose.close != null ? fmtPerShare(beforeClose.close) : '—'} sub={beforeSub} />
-            <Tile testId="tile-premium" label="Premium vs price before deal news" value={fmtPremium(impliedPremiumPct(offer, beforeClose.close))} sub={beforeClose.close != null ? 'offer ÷ close − 1' : beforeSub} />
+            <Tile testId="tile-reference" label="Price on a date" value={beforeClose.close != null ? fmtPerShare(beforeClose.close) : '—'} sub={beforeSub} />
+            <Tile testId="tile-premium" label="Premium vs price on a date" value={fmtPremium(impliedPremiumPct(offer, beforeClose.close))} sub={beforeClose.close != null ? 'offer ÷ close − 1' : beforeSub} />
           </>
         ) : (
           <Tile testId="tile-premium" label="Premium today vs spot" value={fmtPremium(impliedPremiumPct(offer, referencePrice))} sub={spot != null ? 'offer ÷ spot − 1' : 'no live price'} />
@@ -61,7 +61,7 @@ export function PriceTiles({ spot, quoteAsOf, retrievedAt, offer, basis, onBasis
       <div style={{ fontSize: 12, color: '#6B7280', marginBottom: 4 }}>Premium measured against</div>
       <div role="group" aria-label="Premium measured against" style={{ display: 'flex', borderRadius: 6, overflow: 'hidden', marginBottom: before ? 8 : 0 }}>
         <BasisButton active={!before} onClick={() => onBasis(PRICE_BASIS_TODAY)}>Today's price</BasisButton>
-        <BasisButton active={before} onClick={() => onBasis(PRICE_BASIS_BEFORE)}>Price before deal news</BasisButton>
+        <BasisButton active={before} onClick={() => onBasis(PRICE_BASIS_BEFORE)}>Price on a date</BasisButton>
       </div>
       {before && (
         <>

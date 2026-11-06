@@ -44,7 +44,7 @@ describe('premium reference price', () => {
   test("today's price is the spot, whatever close is loaded", () => {
     expect(premiumReference({ basis: PRICE_BASIS_TODAY, spot: 42.02, beforeClose: 30 })).toEqual({ price: 42.02, beforeNews: false });
   });
-  test('before deal news uses that close, and the offer is that close × (1 + premium) exactly', () => {
+  test('price on a date uses that close, and the offer is that close × (1 + premium) exactly', () => {
     const ref = premiumReference({ basis: PRICE_BASIS_BEFORE, spot: 42.02, beforeClose: 31.5 });
     expect(ref).toEqual({ price: 31.5, beforeNews: true });
     expect(offerFromPremium(ref.price, 30)).toBe(31.5 * 1.3);

@@ -15,7 +15,7 @@ const positive = (v) => {
 // The live spot price, or null when there is none. A 0 in inputs means "no price", never a $0 stock.
 export const liveSpot = (v) => positive(v);
 
-// The price the premium is measured against. Today's price by default; with "Price before deal news" it is that
+// The price the premium is measured against. Today's price by default; with "Price on a date" it is that
 // day's close, but only once a close exists. Without one the reference stays on today's price, never a default.
 export const PRICE_BASIS_TODAY = 'today';
 export const PRICE_BASIS_BEFORE = 'before';

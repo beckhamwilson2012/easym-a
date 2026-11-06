@@ -1,6 +1,6 @@
 import { PREMIUM_MIN, PREMIUM_MAX, impliedPremiumPct, sliderThumb } from '../../lib/offerPremium';
 
-// Premium slider. Holds no state: the premium comes from the stored offer and the reference price (spot, or the close before deal news). A range
+// Premium slider. Holds no state: the premium comes from the stored offer and the reference price (spot, or the close on the chosen date). A range
 // input with step 1 can only sit on whole percents, so the readout carries the exact implied premium.
 export function PremiumSlider({ spot, beforeNews, offer, loadingPrice, onPremiumChange }) {
   const premium = impliedPremiumPct(offer, spot);
@@ -10,7 +10,7 @@ export function PremiumSlider({ spot, beforeNews, offer, loadingPrice, onPremium
   return (
     <div style={{ marginBottom: 12 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
-        <label htmlFor="premiumSlider" style={{ fontSize: 12, color: noSpot ? '#9CA3AF' : '#6B7280' }}>{beforeNews ? 'Premium to price before deal news' : 'Premium to spot'}</label>
+        <label htmlFor="premiumSlider" style={{ fontSize: 12, color: noSpot ? '#9CA3AF' : '#6B7280' }}>{beforeNews ? 'Premium to price on a date' : 'Premium to spot'}</label>
         <span data-testid="premium-readout" style={{ fontSize: 13, fontWeight: 700, color: noSpot ? '#9CA3AF' : '#0F2244' }}>
           {premium != null ? `${premium.toFixed(1)}%` : '—'}
         </span>

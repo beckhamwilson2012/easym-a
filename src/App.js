@@ -700,7 +700,7 @@ function App() {
 
   // One source of truth: inputs.offerPricePerShare. The slider writes it; the premium is derived from it.
   const spotB = liveSpot(inputs.currentSharePriceB);
-  // Price basis: "Today's price" (default) or "Price before deal news", read through to that day's close. A
+  // Price basis: "Today's price" (default) or "Price on a date", read through to that day's close. A
   // weekend or holiday resolves to the previous trading day's close, which carries its own date.
   const [priceBasis, setPriceBasis] = useState(PRICE_BASIS_TODAY);
   const [unaffectedDate, setUnaffectedDate] = useState('');
@@ -859,7 +859,7 @@ function App() {
     const bankDeal = isBankDeal({ companyType: companyTypeB, sic: sicB }, { companyType: companyTypeA, sic: sicA });
     // applySourcesOfFunds opts THIS deal into the sources-of-funds construction; §2's peer-impact column resets
     // it to false (no per-peer balance sheet), so only the main deal (§8/§9/§10/§11) nets combined cash.
-    // A chosen price before deal news is the premium reference for the deal model (dealCalc.targetMarketPrice).
+    // A chosen price on a date is the premium reference for the deal model (dealCalc.targetMarketPrice).
     // On today's price nothing is added, so the inputs are exactly what they were.
     const ref = reference.beforeNews ? { premiumReferencePrice: reference.price, premiumReferenceDate: unaffected.date } : {};
     return { resolvedWithBank: { ...calcInputs, bankDeal, applySourcesOfFunds: true, ...ref }, basis };
