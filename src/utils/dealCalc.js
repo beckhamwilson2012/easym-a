@@ -73,6 +73,16 @@ export function targetMarketPrice(inputs) {
   return parseFloat(inputs.currentSharePriceB) || 0;
 }
 
+// ── Purchase price of a PRIVATE target ────────────────────────────────────────
+// A private target has no per-share price or share count, so its total consideration is entered directly ($M) as
+// offerValueTotal. This is the one read of that field: calculate(), acquisitionNewDebt() and calcProFormaEPS() all
+// take it from here, so the cash part of a private offer is funded exactly like a public one (excess cash first,
+// then new debt). Returns null when it is not set (> 0); callers then use offer × shares, unchanged for public deals.
+export function privateConsideration(inputs) {
+  const v = parseFloat(inputs.offerValueTotal);
+  return Number.isFinite(v) && v > 0 ? v : null;
+}
+
 // ── Sources of funds: acquisition new debt ────────────────────────────────────
 // Faculty's construction: combined cash is a real funding source (subject to a retained minimum) and target
 // debt is assumed repaid on change of control, so
@@ -85,12 +95,16 @@ export function targetMarketPrice(inputs) {
 //      as EXCESS CASH USED in Sources & Uses.
 //  (3) MIN CASH SCALES with pro-forma LTM revenue (never a flat dollar), user-overridable via inputs.minCashPct.
 // offerOverride lets the sensitivity grid (calcProFormaEPS) vary the offer while sharing this one construction.
+// A private target's total consideration (privateConsideration) is the purchase price whenever it is set, exactly as
+// in calculate(): a private target has no per-share offer to vary.
 export function acquisitionNewDebt(inputs, offerOverride) {
   const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
   const offer  = offerOverride != null ? offerOverride : (num(inputs.offerPricePerShare) || 0);
   const shares = num(inputs.companyBShares) || 0;
   const cashPct = num(inputs.cashPercent) || 0;
-  const cashConsideration = offer * shares * (cashPct / 100);
+  const privateTotal = privateConsideration(inputs);
+  const purchasePrice = privateTotal != null ? privateTotal : offer * shares;
+  const cashConsideration = purchasePrice * (cashPct / 100);
   // Opt-in + Guard 1. Only the MAIN deal threads combined cash / target debt / pro-forma LTM revenue and sets
   // applySourcesOfFunds; peer-screen impacts (§2, which carry no per-peer balance sheet) and BANK deals keep
   // today's simple 100%-debt convention — newDebt = full cash consideration (no cash netting, no debt repaid).
@@ -134,11 +148,10 @@ export function calculate(inputs) {
   const synergiesY1        = synergyY1.ebitda;
 
   const stockPercent       = 100 - cashPercent;
-  // Purchase price: a PRIVATE target has no per-share price or share count, so the total consideration is
-  // entered directly ($M) as offerValueTotal; a public target uses offer price × shares. offerValueTotal
-  // wins only when > 0, so every existing public deal is byte-identical.
-  const _offerValueTotal   = Number.isFinite(parseFloat(inputs.offerValueTotal)) ? parseFloat(inputs.offerValueTotal) : 0;
-  const totalPurchasePrice = _offerValueTotal > 0 ? _offerValueTotal : offerPricePerShare * companyBShares;
+  // Purchase price: a PRIVATE target's total consideration (privateConsideration, the same read acquisitionNewDebt
+  // uses); a public target uses offer price × shares.
+  const _privateTotal      = privateConsideration(inputs);
+  const totalPurchasePrice = _privateTotal != null ? _privateTotal : offerPricePerShare * companyBShares;
   const cashPortion        = totalPurchasePrice * (cashPercent / 100);
   const stockPortion       = totalPurchasePrice * (stockPercent / 100);
 
@@ -276,7 +289,8 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   if (companyANetIncome == null || companyBNetIncome == null) return null; // partial input → null (→ '—'), never a 0-coerced EPS
   if (basesDiffer(inputs)) return null; // one on LTM, one on FY: not added
   const stockPercent = 100 - cashPercent;
-  const totalPP      = offerPrice * companyBShares;
+  const _privateTotal = privateConsideration(inputs);   // same purchase price as calculate() for a private target
+  const totalPP      = _privateTotal != null ? _privateTotal : offerPrice * companyBShares;
   const stockPortion = totalPP * (stockPercent / 100);
   const newShares    = stockPortion / acqPrice;
   const totalShares  = acquirerDilutedShares(inputs).shares + newShares; // effective diluted base (matches calculate())
