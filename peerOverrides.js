@@ -3,7 +3,7 @@
 /**
  * Hand-curated peer sets for major tickers.
  * Key: target ticker (uppercase). Value: array of peer tickers.
- * These override the SIC-based fallback when a ticker is present.
+ * An entry wins over the automatic FMP peer screen (server/services/peerSelect.js) and skips its filters.
  */
 const PEER_OVERRIDES = {
   // Major investment banks / broker-dealers (SIC 6211)
@@ -51,9 +51,9 @@ const PEER_OVERRIDES = {
   JNJ:  ['PFE', 'MRK', 'LLY', 'ABBV', 'ABT'],
   LLY:  ['PFE', 'MRK', 'JNJ', 'ABBV', 'BMY'],
 
-  // Satellite communications (SIC 4899). Without this entry IRDM's peers depended on whether the SIC
-  // cache had warmed: GSAT/VSAT when it had, the suppressed broad-default mega-caps when it had not.
-  IRDM: ['GSAT', 'VSAT'],
+  // Digital musculoskeletal care. Hinge (SIC 7374), Omada (8000), Teladoc (8011) and Progyny (8090) sit in
+  // four SIC codes and two FMP industries, so no automatic screen pairs them (CHECK5). Set by hand.
+  HNGE: ['OMDA', 'TDOC', 'PGNY'],
 };
 
 module.exports = { PEER_OVERRIDES };

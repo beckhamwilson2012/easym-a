@@ -194,6 +194,23 @@ export function anyFyFallback(metrics, cols) {
   return metrics.some((m) => m.fyKey && cols.some((c) => !c.loading && / FY\d{0,2}$/.test(comparablesCellText(m, c))));
 }
 
+// Footnote label for each auto-selected peer on the slide, grouped by where it came from (/api/peers
+// `peerSources`): "FMP peers", "FMP industry + SIC 737", or "set by hand". Only the peers actually shown.
+const PEER_SOURCE_TEXT = { 'fmp-peers': 'FMP peers', override: 'set by hand' };
+export function peerSourceNote(shownPeers, peerSources, sic3) {
+  if (!shownPeers || !shownPeers.length || !peerSources) return null;
+  const groups = [];
+  for (const t of shownPeers) {
+    const src = peerSources[t];
+    if (!src) continue;
+    const label = src === 'fmp-industry-sic' ? `FMP industry + SIC ${sic3 || '—'}` : (PEER_SOURCE_TEXT[src] || src);
+    let g = groups.find((x) => x.label === label);
+    if (!g) { g = { label, tickers: [] }; groups.push(g); }
+    g.tickers.push(t);
+  }
+  return groups.length ? `Peers: ${groups.map((g) => `${g.tickers.join(', ')} (${g.label})`).join('; ')}` : null;
+}
+
 // ── Edit Peers Modal ──────────────────────────────────────────────────────────
 function EditPeersModal({ autoPeers, customPeers, onSave, onClose }) {
   const [tickers, setTickers] = useState(customPeers ?? autoPeers);
@@ -248,6 +265,9 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   const [autoPeers, setAutoPeers]     = useState([]);
   const [peerSource, setPeerSource]   = useState(null); // coverage tier from /api/peers (provenance only)
   const [peerTrust, setPeerTrust]     = useState(null); // 'trusted' | 'untrusted' — untrusted → suppress peer cols
+  const [peerSources, setPeerSources] = useState(null); // per-peer source from /api/peers (footnote label)
+  const [peerSic3, setPeerSic3]       = useState(null); // target's 3-digit SIC used for screener backfill
+  const [peerReason, setPeerReason]   = useState(null); // why no peer set survived the screen
   const [customPeers, setCustomPeers] = useState(() => {
     if (!targetTicker) return null;
     try { return JSON.parse(localStorage.getItem(`peers_${targetTicker}`)); } catch { return null; }
@@ -262,12 +282,12 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   useEffect(() => {
     if (!targetTicker) { setPeersLoading(false); return; }
     setPeersLoading(true);
-    fetch(apiUrl(`/api/peers/${targetTicker}`))
+    fetch(apiUrl(`/api/peers/${targetTicker}${acquirerTicker ? `?acquirer=${encodeURIComponent(acquirerTicker)}` : ''}`))
       .then(r => r.json())
-      .then(d => { setAutoPeers(d.peers || []); setPeerSource(d.source || null); setPeerTrust(d.trust || null); })
-      .catch(() => { setAutoPeers([]); setPeerSource(null); setPeerTrust(null); })
+      .then(d => { setAutoPeers(d.peers || []); setPeerSource(d.source || null); setPeerTrust(d.trust || null); setPeerSources(d.peerSources || null); setPeerSic3(d.sic3 || null); setPeerReason(d.reason || null); })
+      .catch(() => { setAutoPeers([]); setPeerSource(null); setPeerTrust(null); setPeerSources(null); setPeerSic3(null); setPeerReason(null); })
       .finally(() => setPeersLoading(false));
-  }, [targetTicker]);
+  }, [targetTicker, acquirerTicker]);
 
   // Fetch /quote (revenue, opInc, fcf, shares, cash, debt, name) + live price for a ticker.
   const fetchOne = useCallback((ticker) => {
@@ -429,19 +449,13 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   const bsDates = ordered.map(c => c.bsAsOf).filter(Boolean).sort();
   const bsRange = bsDates.length ? (bsDates[0] === bsDates[bsDates.length - 1] ? bsDates[0] : `${bsDates[0]} – ${bsDates[bsDates.length - 1]}`) : null;
   const methodLabel = customPeers ? 'Custom set' : 'Auto-selected';
-  // Honest, understated provenance of the auto peer set (from /api/peers `source`). Reads like a source
-  // citation — confidence level, not a warning. Custom (user-edited) sets carry their own note instead.
-  const PEER_SOURCE_LABEL = {
-    curated: 'Peer set: curated',
-    sic: 'Peers selected by industry classification (SIC)',
-    'sector-default': 'Peers selected by sector (approximated)',
-    'broad-default': 'Limited peer coverage — broad-market proxies shown',
-  };
+  // Provenance of the auto peer set: each shown peer labeled with its source (/api/peers `peerSources`).
+  // Custom (user-edited) sets carry their own note instead.
   const peerProvenance = customPeers
     ? 'Peer set: custom (user-edited)'
     : (peersSuppressed
-        ? 'No comparable public peers identified — peer screen omitted (broad-market / cross-sector proxies withheld rather than shown as false comps); sector-median EV/Revenue likewise suppressed from valuation'
-        : (peerSource ? PEER_SOURCE_LABEL[peerSource] : null));
+        ? `No peer set: ${peerReason || 'the automatic peer screen returned no peers'} — peer screen omitted rather than filled with a default list; sector-median EV/Revenue likewise suppressed from valuation`
+        : (peerSource ? peerSourceNote(screenPeers, peerSources, peerSic3) : null));
   const subtitle = `Acquirer + target + peer screen · ${nCols} ${nCols === 1 ? 'company' : 'companies'} · ${methodLabel} · actuals on LTM basis (columns marked "· FY" lack interim data) · target shaded`;
   // Surface each subject's LTM period-end so the near-alignment is transparent (not hidden): the LTM basis
   // aligns the companies' measurement windows to within ~1 month, vs a multi-month fiscal-year-end offset.
@@ -470,9 +484,10 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
             No comparable public peers identified — comparables omitted
           </div>
           <div style={{ fontSize: 10, color: '#78350F', lineHeight: 1.45 }}>
-            The automatic screen resolved only broad-market / cross-sector proxies (no true same-industry public
-            peers), which are not meaningful comparables. Rather than present them as comps, the peer columns are
-            withheld; only {acquirerTicker ? 'the acquirer and target' : 'the target'} — real, deal-specific — are
+            {peerReason || 'The automatic peer screen returned no peers'}. The screen takes FMP's peer list, keeps US
+            SEC filers with a 10-K or 10-Q in the past year, a market cap 0.1×–10× the target's and reported revenue,
+            and backfills only from same-industry companies sharing the target's 3-digit SIC; it needs at least 3.
+            Rather than fill the slot with a default list, the peer columns are withheld; only {acquirerTicker ? 'the acquirer and target' : 'the target'} — real, deal-specific — are
             shown, and the sector-median EV/Revenue is likewise suppressed from the valuation. Use “Edit Peers” to
             set a custom comparable set, or see the target's latest 10-K for its stated peer group.
           </div>

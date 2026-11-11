@@ -187,12 +187,9 @@ function debouncedSicWrite() {
   }, 500);
 }
 
-// Curated sector representatives (large-caps), keyed by 4-digit SIC. Serves TWO roles, so SIC peer
-// resolution never returns a blank slide:
-//   (1) the SIC-cache WARM SEED — these tickers' SICs are pre-warmed (background, bounded) so the lazy
-//       same-SIC lookup resolves cold (e.g. KO finds PEP, F finds GM), and
-//   (2) the HARD FALLBACK — when the same-SIC cache still misses, the target's SIC (exact, then 2-digit
-//       major group) maps straight to these real sector peers. Targeted (~50 tickers), NOT the universe.
+// Curated sector representatives (large-caps), keyed by 4-digit SIC. Used ONLY by the private-target
+// valuation (/api/private-comps, via sectorPoolForSic). Public peer selection no longer reads it: that is
+// server/services/peerSelect.js (FMP stock-peers + filters), which never falls back to a default list.
 const SECTOR_PEERS = {
   '2080': ['KO', 'PEP', 'KDP', 'MNST', 'STZ', 'TAP'],        // beverages
   '2000': ['MDLZ', 'GIS', 'K', 'HSY', 'KHC', 'CPB'],         // food
@@ -204,36 +201,12 @@ const SECTOR_PEERS = {
   '5734': ['GME', 'BBY', 'WSM'],                             // retail — computer/specialty (sparse SIC)
   '6022': ['JPM', 'BAC', 'WFC', 'C', 'USB', 'PNC'],          // state commercial banks
   '7372': ['MSFT', 'CRM', 'ADBE', 'ORCL', 'NOW', 'INTU'],    // prepackaged software
-  // Restaurants — all confirmed SIC 5812 "Retail-Eating Places". Populates Tier-3 sector-default AND seeds
-  // these into the Tier-2 warm cache (warmSicSeed reads SECTOR_PEERS.flat()), so a restaurant target now
-  // resolves real 5812 neighbours instead of only the loaded deal subjects. (Fix #3; SIC matches Fix B.)
+  // Restaurants — all confirmed SIC 5812 "Retail-Eating Places". (Fix #3; SIC matches Fix B.)
   '5812': ['MCD', 'DRI', 'TXRH', 'CAKE', 'EAT', 'BLMN'],     // eating places (restaurants)
   '5813': ['MCD', 'DRI', 'TXRH', 'CAKE', 'EAT', 'BLMN'],     // drinking places — same restaurant pool
 };
-const BROAD_DEFAULT = ['AAPL', 'MSFT', 'AMZN', 'GOOGL', 'JPM', 'JNJ', 'WMT']; // last resort (e.g. foreign, no CIK)
 
-// Foreign-issuer SIC stand-in. A foreign private issuer / OTC ADR (e.g. NSRGY, Nestlé S.A.) has no entry in
-// SEC company_tickers.json → no CIK → no EDGAR SIC, so peer resolution used to fall straight to BROAD_DEFAULT
-// (then suppressed as untrusted). For those tickers ONLY, the FMP profile `industry` is mapped to the SIC
-// whose SECTOR_PEERS pool is the same industry, and that SIC goes through the SAME sectorPoolForSic tier.
-// Only unambiguous, exact-pool industries are listed — an unmapped industry stays null (→ broad default,
-// suppressed), never a guessed neighbour. Never consulted when a CIK exists (EDGAR SIC stays authoritative).
-const FMP_INDUSTRY_TO_SIC = {
-  'Beverages - Non-Alcoholic': '2080',
-  'Beverages - Brewers': '2080',
-  'Beverages - Wineries & Distilleries': '2080',
-  'Packaged Foods': '2000',
-  'Confectioners': '2000',
-  'Drug Manufacturers - General': '2834',
-  'Oil & Gas Integrated': '2911',
-  'Oil & Gas Refining & Marketing': '2911',
-  'Semiconductors': '3674',
-  'Auto - Manufacturers': '3711',
-  'Discount Stores': '5331',
-  'Software - Application': '7372',
-  'Software - Infrastructure': '7372',
-  'Restaurants': '5812',
-};
+// FMP profile industry for a ticker — the peer picker's same-industry screener key.
 const fmpIndustryCache = new Map(); // ticker → raw FMP industry string | null
 async function fmpIndustryFor(ticker) {
   if (fmpIndustryCache.has(ticker)) return fmpIndustryCache.get(ticker);
@@ -259,28 +232,6 @@ function sectorPoolForSic(sic) {
   const grp = String(sic).slice(0, 2);
   const key = Object.keys(SECTOR_PEERS).find(k => k.slice(0, 2) === grp);
   return key ? { pool: SECTOR_PEERS[key], exact: false } : null;
-}
-
-// Pre-warm the seed tickers' SICs into the cache (background, bounded, persisted). Idempotent + run-once:
-// skips tickers already cached (so persisted boots barely re-fetch) and stays well under SEC's rate limit.
-let sicSeedWarmed = false;
-async function warmSicSeed() {
-  if (sicSeedWarmed) return;
-  sicSeedWarmed = true;
-  try {
-    await loadTickers();
-    const seed = [...new Set([...Object.values(SECTOR_PEERS).flat(), ...BROAD_DEFAULT])];
-    let warmed = 0;
-    for (const sym of seed) {
-      const cik = cikBySymbol[sym];
-      if (!cik || sicCache.has(cik)) continue; // unknown ticker or already cached (persisted) → skip
-      try { await fetchSubmissions(cik); warmed++; } catch (_) { /* leave uncached; fallback still covers it */ }
-      await new Promise(r => setTimeout(r, 120)); // gentle on data.sec.gov (~8/s, well under the 10/s cap)
-    }
-    console.log(`[SIC warm] seeded ${warmed} new SIC(s); ${sicCache.size} cached total`);
-  } catch (e) {
-    console.log('[SIC warm] skipped:', e.message);
-  }
 }
 
 async function loadTickers() {
@@ -1070,9 +1021,9 @@ async function tryAlphaVantage(ticker) {
 
 // ── Quote endpoint ────────────────────────────────────────────────────────────
 
-app.get('/quote', async (req, res) => {
-  const symbol = (req.query.symbol || '').toUpperCase();
-  try {
+// The /quote payload for one ticker. Shared by the /quote route and the peer picker (target market cap,
+// candidate revenue), so both read the SAME fundamentals pipeline. Throws on an unexpected error.
+async function quotePayload(symbol) {
     await loadTickers();
 
     let result = null;
@@ -1135,7 +1086,7 @@ app.get('/quote', async (req, res) => {
       // ONE line per request at default log level, naming what each fundamentals source did.
       console.warn(`[${symbol}] fundamentals unavailable: edgar=${edgarStatus} fmp=${fmpStatus}`);
       const absent = () => field(null, { source: 'none' });
-      return res.json(unwrapCompany({
+      return unwrapCompany({
         name: symbol, dataSource: 'none', companyType: 'standard',
         revenue: absent(), ebitda: absent(), netIncome: absent(), shares: absent(),
         eps: absent(), cash: absent(), debt: absent(),
@@ -1143,7 +1094,7 @@ app.get('/quote', async (req, res) => {
         revenueTrace: { source: null, concept: null, label: null, status: null, tieOut: null, flag: null, candidates: [],
           fiscalYearEnd: null, latestAnnualFilingPeriod: edgarGap?.latestAnnualFilingPeriod ?? null,
           unavailableReason: edgarGap?.noCurrentYear ?? null, unavailableDetail: edgarGap?.detail ?? null },
-      }));
+      });
     }
 
     // The FMP fallback's revenue is labeled as FMP, with why EDGAR did not supply it when that is known.
@@ -1163,7 +1114,13 @@ app.get('/quote', async (req, res) => {
     tlog(`[${symbol}] ✓ Final result from ${result.dataSource}`);
     // Stage 14 boundary: unwrap the canonical wrapped shape → bare number-or-null for the client's
     // bare-value read sites. Strict no-op on all-bare EDGAR/FMP results (isWrapper false per field).
-    res.json(unwrapCompany(result));
+    return unwrapCompany(result);
+}
+
+app.get('/quote', async (req, res) => {
+  const symbol = (req.query.symbol || '').toUpperCase();
+  try {
+    res.json(await quotePayload(symbol));
   } catch (err) {
     console.error('Quote error:', err);
     res.status(500).json({ error: 'Failed to fetch company data' });
@@ -1234,12 +1191,11 @@ app.get('/api/bank-facts/:ticker', async (req, res) => {
 
 // ── Live price endpoint ───────────────────────────────────────────────────────
 
-app.get('/api/price/:ticker', async (req, res) => {
-  const ticker = req.params.ticker.toUpperCase();
-
+// The /api/price payload for one ticker. Shared by the route and the peer picker (target market cap).
+async function livePricePayload(ticker) {
   const cached = priceCache.get(ticker);
   if (cached && Date.now() - cached.ts < CACHE_TTL_MS) {
-    return res.json(cached.payload);
+    return cached.payload;
   }
 
   const sources = [
@@ -1278,7 +1234,11 @@ app.get('/api/price/:ticker', async (req, res) => {
 
   // Only cache SUCCESSFUL prices. Caching a failure would pin a transient 429 for the whole TTL.
   if (price !== null) priceCache.set(ticker, { ts: Date.now(), payload });
-  res.json(payload);
+  return payload;
+}
+
+app.get('/api/price/:ticker', async (req, res) => {
+  res.json(await livePricePayload(req.params.ticker.toUpperCase()));
 });
 
 // ── Segment revenue endpoint ──────────────────────────────────────────────────
@@ -1538,88 +1498,61 @@ app.get('/api/prices/:ticker', async (req, res) => {
 });
 
 // ── Peer resolution ───────────────────────────────────────────────────────────
+// ONE path: server/services/peerSelect.js (FMP stock-peers + filters, SIC-matched screener backfill, hand-set
+// overrides first). Used by /api/peers (Comparables slide) and /api/sector-multiple. No SIC-cache matching, no
+// SECTOR_PEERS, no mega-cap default: fewer than 3 survivors → no peer set (trust 'untrusted'), with the reason.
+const { createPeerSelector } = require('./server/services/peerSelect');
+const peerSelector = createPeerSelector({
+  overrides: PEER_OVERRIDES,
+  cikFor: (t) => cikBySymbol[t] || null,
+  fetchSubmissions: (cik) => get(`https://data.sec.gov/submissions/CIK${cik}.json`),
+  fmpStockPeers: async (t) => {
+    if (!FMP_KEY) throw new Error('no FMP key');
+    const r = await get(`https://financialmodelingprep.com/stable/stock-peers?symbol=${encodeURIComponent(t)}&apikey=${FMP_KEY}`);
+    if (!Array.isArray(r)) throw new Error('unexpected stock-peers response');
+    return r;
+  },
+  fmpIndustry: (t) => fmpIndustryFor(t),
+  fmpScreener: async (industry) => {
+    if (!FMP_KEY) throw new Error('no FMP key');
+    const r = await get(`https://financialmodelingprep.com/stable/company-screener?industry=${encodeURIComponent(industry)}&country=US&isEtf=false&isFund=false&limit=5000&apikey=${FMP_KEY}`);
+    if (!Array.isArray(r)) throw new Error('unexpected screener response');
+    return r;
+  },
+  // The app's own market cap for the target: live price (/api/price) × /quote shares ($M → $). The same two
+  // inputs the Comparables slide multiplies for the target column. Absent either → null, never estimated.
+  targetMarketCap: async (t) => {
+    const [q, p] = await Promise.all([quotePayload(t), livePricePayload(t)]);
+    const shares = q && Number.isFinite(q.shares) && q.shares > 0 ? q.shares : null;
+    const price = p && Number.isFinite(p.price) && p.price > 0 ? p.price : null;
+    const value = shares != null && price != null ? price * shares * 1e6 : null;
+    return { value, detail: { price, priceSource: p?.source ?? null, sharesM: shares, sharesSource: q?.dataSource ?? null } };
+  },
+  // Revenue the slide would show for this ticker (fiscal-year, or trusted LTM).
+  revenueAvailable: async (t) => {
+    const q = await quotePayload(t);
+    const fy = q && Number.isFinite(q.revenue);
+    const ltm = q && q.ltm && q.ltm.trusted === true && Number.isFinite(q.ltm.revenue);
+    return !!(fy || ltm);
+  },
+});
 
-// Returns { peers, source }. source ∈ 'curated' | 'sic' | 'sector-default' | 'broad-default'. NEVER
-// returns an empty list — a blank comps slide is the worst outcome, so the last two tiers always supply
-// a sensible peer set (with the source surfaced so the slide can note limited coverage honestly).
-async function resolvePeers(targetTicker) {
-  const upper = targetTicker.toUpperCase();
-  warmSicSeed(); // fire-and-forget: ensure the seed is warming (idempotent, non-blocking)
-
-  // Trust classification (Phase-2 safety floor), computed ONCE here and consumed by all three peer
-  // consumers (§2 comps, /api/sector-multiple, and — transitively via sector.ok — buildMethodologyRows):
-  //   trusted   = curated | exact-SIC (sic-cache neighbours OR exact SECTOR_PEERS hit)
-  //   untrusted = 2-digit-group sector fallback (cross-industry) | broad-default mega-caps
-  // Untrusted peer sets are real tickers but NOT valid comps — they get suppressed, never shown as comps
-  // and never allowed to produce a sector-median.
-
-  // 1. Hand-curated override map (most precise).
-  if (PEER_OVERRIDES[upper]) {
-    console.log(`[resolvePeers] ${upper} → curated override`);
-    return { peers: PEER_OVERRIDES[upper], source: 'curated', trust: 'trusted' };
-  }
-
-  // Resolve the target's SIC (cached/warmed). Foreign filers with no CIK skip straight to broad default.
-  const cik = cikBySymbol[upper];
-  let targetSic = null;
-  if (cik) { try { targetSic = (await fetchSubmissions(cik))?.sic ?? null; } catch (_) { targetSic = null; } }
-
-  // 2. Same-SIC neighbours already in the (warmed) cache.
-  if (cik && targetSic) {
-    const peers = [];
-    for (const [peerCik, entry] of sicCache.entries()) {
-      if (entry.sic !== targetSic || peerCik === cik) continue;
-      const found = tickerCache?.find((e) => e.cik === peerCik);
-      if (found && found.symbol !== upper && !peers.includes(found.symbol)) peers.push(found.symbol);
-      if (peers.length >= 7) break;
-    }
-    if (peers.length) {
-      console.log(`[resolvePeers] ${upper} → SIC cache (sic=${targetSic}):`, peers);
-      return { peers, source: 'sic', trust: 'trusted' }; // exact-SIC neighbours
-    }
-  }
-
-  // 2b. Foreign issuer (no CIK → no EDGAR SIC): stand in the SIC mapped from the FMP profile industry, so
-  //     peer resolution is not gated solely on a domestic SIC. Exact-pool industries only (FMP_INDUSTRY_TO_SIC).
-  let sicBasis = 'edgar';
-  if (!cik) {
-    const industry = await fmpIndustryFor(upper);
-    const mapped = industry ? FMP_INDUSTRY_TO_SIC[industry] || null : null;
-    if (mapped) { targetSic = mapped; sicBasis = 'fmp-industry'; }
-    console.log(`[resolvePeers] ${upper} → no CIK (foreign issuer); FMP industry=${industry || 'none'} → sic=${mapped || 'unmapped'}`);
-  }
-
-  // 3. Curated sector default keyed by the target's SIC. exact:true → a real same-industry pool (trusted);
-  //    exact:false → the 2-digit-group fallback (cross-industry, e.g. space→autos) → untrusted.
-  const sp = sectorPoolForSic(targetSic);
-  if (sp && sp.pool) {
-    const peers = sp.pool.filter((t) => t !== upper).slice(0, 7);
-    if (peers.length) {
-      console.log(`[resolvePeers] ${upper} → sector default (sic=${targetSic}, basis=${sicBasis}, exact=${sp.exact}):`, peers);
-      return { peers, source: 'sector-default', trust: sp.exact ? 'trusted' : 'untrusted', sicBasis };
-    }
-  }
-
-  // 4. Broad large-cap default (last resort: foreign/no-CIK or an unmapped SIC) — never a valid comp set.
-  const peers = BROAD_DEFAULT.filter((t) => t !== upper).slice(0, 7);
-  console.log(`[resolvePeers] ${upper} → broad default (sic=${targetSic || 'none'}):`, peers);
-  return { peers, source: 'broad-default', trust: 'untrusted' };
+async function resolvePeers(targetTicker, { acquirer = null } = {}) {
+  await loadTickers();
+  const r = await peerSelector.selectPeers(targetTicker, { acquirer });
+  console.log(`[resolvePeers] ${r.target}${r.acquirer ? ` (acquirer ${r.acquirer})` : ''} → ${r.source} (${r.trust}): ${r.peers.join(',') || '—'}${r.reason ? ` — ${r.reason}` : ''}`);
+  return r;
 }
 
 app.get('/api/peers/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
-  console.log('[/api/peers] HIT for ticker:', req.params.ticker);
-  console.log(`[/api/peers] request for ${ticker}`);
+  const acquirer = req.query.acquirer ? String(req.query.acquirer).toUpperCase() : null;
   try {
-    await loadTickers();
-    const { peers, source, trust, sicBasis } = await resolvePeers(ticker);
-    console.log(`[/api/peers] ${ticker} → ${peers.length} peers via ${source} (${trust}):`, peers);
-    res.json({ peers, source, trust, ...(sicBasis ? { sicBasis } : {}) });
+    res.json(await resolvePeers(ticker, { acquirer }));
   } catch (err) {
     console.error(`Peers [${ticker}]:`, err.message);
-    // Even on error, never blank — hand back the broad default so the slide always renders. It's a
-    // broad-market proxy set, so it's untrusted → §2 will suppress it as comps rather than mislead.
-    res.json({ peers: BROAD_DEFAULT.filter((t) => t !== ticker).slice(0, 7), source: 'broad-default', trust: 'untrusted' });
+    // No default list on failure: no peer set, with the reason. §2 shows acquirer + target only.
+    res.json({ target: ticker, acquirer, peers: [], peerSources: {}, source: 'none', trust: 'untrusted', reason: `Peer screen failed (${err.message})` });
   }
 });
 
@@ -2978,8 +2911,6 @@ const PORT = process.env.PORT || 3001;
 if (require.main === module) {
   app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
-    // Pre-warm the SIC seed in the background so peers resolve cold (idempotent; persisted across boots).
-    warmSicSeed().catch(() => {});
   });
 }
 
