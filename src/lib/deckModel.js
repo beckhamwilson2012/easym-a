@@ -18,6 +18,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { enterpriseValue, netCashDebt } from './netDebt';
+import { isNonGaapDeal } from './reportingBasis';
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 
@@ -137,7 +138,9 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
     isAccretive:   !!deal.isAccretive,
     standaloneEPS: num(results?.companyAEPS),     // reported diluted EPS (NI ÷ diluted shares as fallback)
     proFormaEPS:   num(deal.proFormaEPS),
-    basis: 'Reported diluted EPS (net income ÷ diluted shares as fallback)',
+    // A Non-GAAP deal names its EPS basis (src/lib/reportingBasis.js); a GAAP deal keeps the label it had.
+    basis: !isNonGaapDeal(deal) ? 'Reported diluted EPS (net income ÷ diluted shares as fallback)'
+      : (deal.reportingBasis.eps.nonGaap ? 'Non-GAAP diluted EPS, company reported by both companies (8-K)' : deal.reportingBasis.eps.note),
   };
 
   const derived = {

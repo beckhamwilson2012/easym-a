@@ -3,7 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
-import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isGrossNm, grossNmNote, standaloneEPS, nonGaapFigures, fmtAsOf } from '../shared/deckTokens';
+import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isGrossNm, grossNmNote, standaloneEPS, dealNonGaap, fmtAsOf } from '../shared/deckTokens';
+import { FY_ONLY } from '../../../lib/reportingBasis';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { netCashDebt } from '../../../lib/netDebt';
@@ -72,7 +73,7 @@ function PLRow({ label, value, alt, bold, indent }) {
 // with a Margins & Growth block. Approach (A): basis labeled INLINE on each column header; estimate
 // columns italic + tinted; forward OpEx "—" (basis gap unallocable); forward lines FMP publishes no
 // consensus for are "—" (ⁿ marker). Margins computed PER COLUMN on that column's own basis.
-function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote }) {
+function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
   const cols = pnl.columns || [];
   // $M with accounting parens for negatives; expenses passed as their own sign for parens.
   const fmtM   = (v) => v == null ? '—' : (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString('en-US')})` : `$${Math.round(v).toLocaleString('en-US')}`);
@@ -107,7 +108,17 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote }) {
   // meaningful — omit the gross-relative rows and go Revenue → Operating Income directly (Fix B parity),
   // rather than rendering an all-"—" gross row. Non-restaurants unchanged.
   const GROSS_LINES = new Set(['Cost of Revenue', 'Gross Profit', 'Operating Expense']);
-  const lines   = restaurantMode ? LINES.filter(l => !GROSS_LINES.has(l.label)) : LINES;
+  const baseLines = restaurantMode ? LINES.filter(l => !GROSS_LINES.has(l.label)) : LINES;
+  // Non-GAAP deal: each company-reported figure is its OWN row, valued only in the fiscal-year column it was
+  // reported for ("—" in every other column), so no row mixes a GAAP and a non-GAAP figure. ngRows is absent on
+  // a GAAP deal, so the table is unchanged there.
+  const lines = !ngRows ? baseLines : baseLines.flatMap((l) => {
+    const extra = ngRows.filter(r => r.after === l.label).map(r => ({
+      label: r.label, ng: true, fmt: r.kind === 'eps' ? fmtEpsV : fmtM, bold: false,
+      get: (c) => (!r.ltmCard && c.actual && !c.isLtm && r.fyLabel && c.label === r.fyLabel ? r.value : null),
+    }));
+    return [l, ...extra];
+  });
   const margins = restaurantMode ? MARGINS.filter(m => m.label !== 'Gross Margin %') : MARGINS;
 
   // ── LTM column (Stage 2, ADDITIVE) — trailing-12mo GAAP actual from payload.ltm, INSERTED at the
@@ -235,7 +246,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote }) {
           <tbody>
             {lines.map((ln, ri) => (
               <tr key={ln.label}>
-                <td style={{ padding: '4px 8px', paddingLeft: ln.indent ? 18 : 8, background: ri % 2 ? ALT_ROW : '#fff', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10.5, fontWeight: ln.bold ? 700 : 400, color: ln.bold ? NAVY : '#374151' }}>
+                <td style={{ padding: '4px 8px', paddingLeft: ln.indent ? 18 : 8, background: ri % 2 ? ALT_ROW : '#fff', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10.5, fontWeight: ln.bold ? 700 : 400, color: ln.ng ? '#0070D2' : (ln.bold ? NAVY : '#374151') }}>
                   {ln.label}
                 </td>
                 {dcols.map((c, i) => {
@@ -342,15 +353,15 @@ export function SectionStandalonePLTarget({ target, deal, pageNum, exhibitLabel 
   // Standalone P&Ls are pre-deal GAAP company views (spec §2 Slides 4/5); deal terms (premium,
   // financing, mix) belong on the Exchange Ratio & Deal Considerations slide, not here. So the
   // target standalone shows margin/scale commentary like the acquirer, not deal commentary.
-  return <StandalonePLBody company={target} deal={deal} dealBasis={deal?.basis} pageNum={pageNum} role="Target" showDealCommentary={false} exhibitLabel={exhibitLabel} />;
+  return <StandalonePLBody company={target} deal={deal} basisDeal={deal} side="B" pageNum={pageNum} role="Target" showDealCommentary={false} exhibitLabel={exhibitLabel} />;
 }
 export function SectionStandalonePLAcquirer({ acquirer, deal, pageNum, exhibitLabel }) {
-  // deal is kept null for commentary (no premium/financing on the acquirer slide), but the deal-level
-  // BASIS still drives display so the whole deck reads on one basis (see resolveAccretionBasis).
-  return <StandalonePLBody company={acquirer} deal={null} dealBasis={deal?.basis} pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel={exhibitLabel} />;
+  // deal is kept null for commentary (no premium/financing on the acquirer slide), but the deal's reporting basis
+  // (basisDeal.reportingBasis, src/lib/reportingBasis.js) still drives display so the deck reads on one basis.
+  return <StandalonePLBody company={acquirer} deal={null} basisDeal={deal} side="A" pageNum={pageNum} role="Acquirer" showDealCommentary={false} exhibitLabel={exhibitLabel} />;
 }
 
-function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCommentary, exhibitLabel }) {
+function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showDealCommentary, exhibitLabel }) {
   const target = company; // body was written against `target`; keep the name internally
   const { data: verifiedData } = useVerifiedData(target?.ticker ?? null);
   const sourceLine = composeSourceLine(USED_FIELDS, verifiedData?.fields, verifiedData?.asOf);
@@ -404,16 +415,17 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
   // (never debt − 0 or 0 − 0, which would print a confident $0 or a doubled net-debt — Fix A blast-radius).
   const netDebt = netCashDebt(debt, cash, sti);   // convention (b): total debt − (cash + short-term marketable securities); sign-aware prose below
 
-  // ── Non-GAAP display layer — gated by the SINGLE per-deal basis (resolveAccretionBasis → deal.basis) ──
-  // The deck reads on ONE basis: non-GAAP only when the deal basis is 'Non-GAAP' (both companies
-  // reconcile); otherwise the whole deck — display AND accretion — is GAAP, even for a company that
-  // does report non-GAAP. selfNonGaap is the raw per-company figure (used only to word the footnote
-  // honestly). We never derive/fake a non-GAAP figure — a null ⇒ honest GAAP fallback.
-  const selfNonGaap  = nonGaapFigures(target);                       // raw per-company (may exist in a GAAP deal)
-  const ng           = dealBasis === 'Non-GAAP' ? selfNonGaap : null; // gated by the one deal basis
+  // ── Non-GAAP display layer — read from the deal's ONE reporting-basis plan (src/lib/reportingBasis.js) ──
+  // On a GAAP deal ngPlan is null and everything below is the GAAP figure. On a Non-GAAP deal, net income and
+  // diluted EPS are the company-reported non-GAAP figures only when the deal's EPS is on non-GAAP (both companies
+  // report adjusted EPS); adjusted EBITDA is per company. Operating income stays GAAP. Never derived or faked.
+  const ngPlan       = dealNonGaap(basisDeal, side);
+  const ng           = ngPlan && ngPlan.dilutedEPS != null ? ngPlan : null;
+  const ngEbitda     = ngPlan ? ngPlan.ebitda : null;
+  const ltmCard      = target?.basis === 'ltm';
   const opIncGaap    = Number.isFinite(realOI) ? realOI : null;
-  const opIncVal     = ng?.operatingIncome ?? opIncGaap;
-  const opIncNonGaap = ng?.operatingIncome != null;
+  const opIncVal     = opIncGaap;
+  const opIncNonGaap = false;
   const niVal        = ng?.netIncome ?? (ni || null);
   const niNonGaap    = ng?.netIncome != null;
   const epsVal       = ng?.dilutedEPS ?? (eps || null);
@@ -444,6 +456,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
     if (rev > 0 && niVal != null && niVal > 0) lines.push(`Net income of ${fmtMoneyTable(niVal)} — a ${fmtPct(niMarginVal)} net margin.`);
     if (rev > 0 && niVal != null && niVal < 0) lines.push(`Reported a net loss of ${fmtMoneyTable(Math.abs(niVal))} in ${target?.basis === 'ltm' ? `the period, ${target.basisLabel}` : 'the latest fiscal year'} — growth-stage profitability profile.`);
     if (shares > 0 && epsVal != null) lines.push(`${shares.toFixed(0)}M shares outstanding; ${epsNonGaap ? 'non-GAAP' : 'reported'} diluted EPS of ${fmtPerShare(epsVal)}.`);
+    if (ngEbitda && ngEbitda.value != null) lines.push(`${ngEbitda.name} of ${fmtUSDmAcct(ngEbitda.value)} (non-GAAP, company reported).`);
     if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}.`);
     else lines.push(`Net cash / (debt) position: N/A — a balance-sheet figure was unavailable in the filing.`);
     return lines;
@@ -468,12 +481,12 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
       <PageHeader
         title={`Standalone P&L — ${role || 'Target'}: ${target.name || 'N/A'}`}
         subtitle={pnl
-          ? `${pnl.columns.length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''} · $M · actuals GAAP (SEC EDGAR), forward analyst consensus (FMP)`
+          ? `${pnl.columns.length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''} · $M · actuals GAAP (SEC EDGAR), forward analyst consensus (FMP)${ngPlan && (ng || ngEbitda) ? ', non-GAAP rows company reported (earnings 8-K)' : ''}`
           : `${fyLabel} · $ in millions · profitability Non-GAAP where labeled (see basis note)`}
       />
 
       <BasisNote only={target} fixed={target?.basis === 'ltm' ? 'The commentary and the deal model read the LTM column; the fiscal-year columns are for reference.' : null} style={{ padding: '8px 20px 0' }} />
-      {pnl && <MultiYearPL pnl={pnl} restaurantMode={restaurantMode} grossNmMode={grossNmMode} grossNote={grossNmNote(target)} />}
+      {pnl && <MultiYearPL pnl={pnl} restaurantMode={restaurantMode} grossNmMode={grossNmMode} grossNote={grossNmNote(target)} ngRows={ngRowsFor(ngPlan, ng, ngEbitda, target, ltmCard)} />}
 
       <div style={{ display: 'flex', gap: 20, padding: pnl ? '4px 20px 30px' : '16px 20px 36px' }}>
         {/* Left: P&L table (single-year). Hidden when the multi-year table above is shown. */}
@@ -510,6 +523,7 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
                 <PLRow label={`Operating Income (${basisTag(opIncNonGaap)})`}  value={opIncVal != null ? fmtUSDmAcct(opIncVal) : 'N/A'} bold />
                 <PLRow label={`Operating Margin (${basisTag(opIncNonGaap)})`}  value={opMarginPct != null ? fmtPct(opMarginPct) : 'N/A'} indent alt />
                 <PLRow label="EBITDA (computed)"          value={fmtUSDmAcct(ebitda)}    bold />
+                {ngEbitda && <PLRow label={`${ngEbitda.name} (non-GAAP)`} value={ngEbitda.value != null ? fmtUSDmAcct(ngEbitda.value) : '—'} indent />}
                 <PLRow label="EBITDA Margin (computed)"   value={fmtPct(ebitdaMargin)}          indent alt />
                 <PLRow label="D&A (est.)"                 value={fmtUSDmAcct(-estDA)}    indent />
                 <PLRow label={`Net Income (${basisTag(niNonGaap)})`}  value={niVal != null ? fmtUSDmAcct(niVal) : 'N/A'} bold />
@@ -634,10 +648,10 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
       {!bankMode && (
         <div style={{ padding: '0 20px 8px', fontSize: 9, color: '#6B7280', lineHeight: 1.45 }}>
           <strong style={{ color: NAVY }}>Basis of presentation: </strong>
-          {ng
-            ? `Operating income, net income, diluted EPS and their margins are Non-GAAP, as reported in ${target.name || 'the company'}’s fiscal year-end earnings release (Form 8-K, Item 2.02${ng.accession ? `, accession ${ng.accession}` : ''}), period-matched to ${fyLabel} and reconciled to GAAP. `
-            : (selfNonGaap
-                ? `This deal is presented on a GAAP basis — non-GAAP is applied only when both companies’ fiscal year-end non-GAAP reconciliations are available, so operating income, net income, EPS and their margins are GAAP here. `
+          {ngPlan
+            ? nonGaapBasisText(target, ngPlan, ng, ngEbitda, ltmCard)
+            : (target.nonGaap?.status === 'reported'
+                ? `This deck is on a GAAP basis, as selected on the input page; ${target.name || 'the company'}’s company-reported non-GAAP figures are not applied. Operating income, net income, EPS and their margins are GAAP. `
                 : (['extractor_unavailable', 'extractor_error', 'extractor_bad_output'].includes(target.nonGaap?.status)
                     // Stage 9G — SYSTEM failure (extractor unavailable / errored / unparseable output). Do NOT blame the filer.
                     ? `Non-GAAP extraction was unavailable for this deck; figures shown are GAAP. `
@@ -656,4 +670,34 @@ function StandalonePLBody({ company, deal, dealBasis, pageNum, role, showDealCom
       )}
     </PageFrame>
   );
+}
+
+// The non-GAAP rows the multi-year table adds on a Non-GAAP deal (null on a GAAP deal → table unchanged).
+// Each row carries one company-reported figure for the fiscal-year column it was reported for.
+function ngRowsFor(ngPlan, ng, ngEbitda, company, ltmCard) {
+  if (!ngPlan || (!ng && !ngEbitda)) return null;
+  const fyLabel = company?.fiscalYear ? `FY${company.fiscalYear}` : null;
+  const rows = [];
+  if (ngEbitda) rows.push({ after: 'EBITDA', kind: 'money', label: `${ngEbitda.name} (non-GAAP)`, value: ngEbitda.value, fyLabel, ltmCard });
+  if (ng) {
+    rows.push({ after: 'Net Income', kind: 'money', label: 'Net Income (non-GAAP)', value: ng.netIncome, fyLabel, ltmCard });
+    rows.push({ after: 'Diluted EPS', kind: 'eps', label: 'Diluted EPS (non-GAAP)', value: ng.dilutedEPS, fyLabel, ltmCard });
+  }
+  return rows;
+}
+
+// Basis-of-presentation text on a Non-GAAP deal: which figures are company reported, from which 8-K, and why any
+// stay GAAP. Every figure named here was tied to GAAP in the filed reconciliation table.
+function nonGaapBasisText(company, ngPlan, ng, ngEbitda, ltmCard) {
+  const name = company?.name || 'the company';
+  const parts = [];
+  if (ng) parts.push(`Net income and diluted EPS rows marked non-GAAP are ${name}’s own (“${ng.epsRowLabel}”; ${ng.epsLabel}), tied to GAAP in the filed reconciliation table; the deal’s EPS and accretion use them. `);
+  else if (ngPlan.epsNote) parts.push(`EPS: ${ngPlan.epsNote}. `);
+  if (ngEbitda) parts.push(ltmCard || ngEbitda.value == null
+    ? `${ngEbitda.name} (non-GAAP): — (${FY_ONLY}; this company is on LTM). `
+    : `${ngEbitda.name} is ${name}’s own adjusted EBITDA (${ngEbitda.label}), tied to GAAP net income in the filed reconciliation table; the deal uses it for this company’s EBITDA. `);
+  else parts.push(`${name} reports no adjusted EBITDA, so its EBITDA is computed. `);
+  if (ltmCard && ng == null && !ngEbitda) parts.push(`Non-GAAP: — (${FY_ONLY}). `);
+  parts.push('Operating income and its margin are GAAP. ');
+  return parts.join('');
 }

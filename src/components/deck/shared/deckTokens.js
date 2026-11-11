@@ -162,28 +162,25 @@ export function standaloneEPS(company) {
   return (!isNaN(ni) && sh > 0) ? ni / sh : null;
 }
 
-// Reported NON-GAAP profitability for a company, sourced from /api/nongaap (the fiscal-year-end
-// earnings 8-K, period-matched to the deck FY and code-reconciled server-side) and threaded onto the
-// company object as `company.nonGaap` (the full API payload). Returns the usable figures ONLY when the
-// server isolated AND reconciled the annual column; otherwise null, so callers fall back to GAAP and
-// label the basis honestly. We NEVER derive/fake a non-GAAP number here — display-only of a real figure.
-export function nonGaapFigures(company) {
-  const ng = company?.nonGaap;
-  if (!ng || !ng.allReconciled) return null;
-  const f = ng.nonGaap || {};
-  const oi  = parseFloat(f.operatingIncome);
-  const ni  = parseFloat(f.netIncome);
-  const eps = parseFloat(f.dilutedEPS);
-  const sh  = parseFloat(f.dilutedShares);
-  if (!Number.isFinite(oi) && !Number.isFinite(ni) && !Number.isFinite(eps)) return null;
+// The company-reported NON-GAAP figures a Non-GAAP deal uses for one company (side 'A' = acquirer, 'B' = target),
+// straight from the deal's plan (src/lib/reportingBasis.js — the one GAAP | Non-GAAP switch). null on a GAAP deal.
+// EPS figures are present only when the plan put the deal's EPS on non-GAAP (both companies report it); EBITDA is
+// per company, under the company's own name, and its value is null on an LTM card (fiscal year only). We NEVER
+// derive or fake a non-GAAP number here — display of a filed figure only.
+export function dealNonGaap(deal, side) {
+  const plan = deal?.reportingBasis;
+  if (!plan || plan.selected !== 'Non-GAAP') return null;
+  const eps = plan.eps.nonGaap ? plan.eps[side] : null;
+  const e = plan.ebitda[side] || {};
   return {
-    operatingIncome: Number.isFinite(oi)  ? oi  : null,
-    netIncome:       Number.isFinite(ni)  ? ni  : null,
-    dilutedEPS:      Number.isFinite(eps) ? eps : null,
-    dilutedShares:   Number.isFinite(sh)  ? sh  : null, // sourced from the 8-K (Part 1); used by the accretion flip
-    accession:       ng.sourceAccession || null,
-    sourceUrl:       ng.sourceUrl || null,
-    fiscalYear:      ng.fiscalYear || null,
+    netIncome:     eps ? eps.netIncome : null,
+    dilutedEPS:    eps ? eps.value : null,
+    dilutedShares: eps ? eps.dilutedShares : null,
+    epsLabel:      eps ? eps.label : null,         // "non-GAAP, company reported, FY2025, <accession>"
+    epsRowLabel:   eps ? eps.rowLabel : null,      // the company's own row label
+    epsNote:       plan.eps.note,                  // why the deal's EPS stayed GAAP, else null
+    ebitda:        e.nonGaap ? { value: e.value, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null } : null,
+    accession:     (eps && eps.accession) || (e.nonGaap ? e.accession : null) || null,
   };
 }
 
@@ -293,9 +290,9 @@ export function buildFinancialCommentary(target, deal) {
   const rev   = parseFloat(target.revenue)  || 0;
   const ebitda = parseFloat(target.ebitda)  || 0;
   const ni    = parseFloat(target.netIncome) || 0;
-  // Basis-aware net income so the §5 commentary matches the (non-GAAP) table on a non-GAAP deal. Gated by
-  // deal.basis exactly like the table — a GAAP/bank deal leaves niVal == ni, so the wording is unchanged.
-  const ng    = deal?.basis === 'Non-GAAP' ? nonGaapFigures(target) : null;
+  // Basis-aware net income so the §5 commentary matches the (non-GAAP) table on a non-GAAP deal. Read from the
+  // deal's plan exactly like the table — a GAAP/bank deal leaves niVal == ni, so the wording is unchanged.
+  const ng    = dealNonGaap(deal, 'B');
   const niVal = ng?.netIncome ?? ni;
   const niIsNonGaap = ng?.netIncome != null;
   const margin = rev > 0 && ebitda > 0 ? (ebitda / rev * 100).toFixed(1) : null;

@@ -1,6 +1,7 @@
 import { cashBucket } from '../lib/netDebt';
 import { synergySchedule } from '../lib/synergies';
 import { basesDiffer, combination } from '../lib/companyBasis';
+import { ebitdaBasesDiffer } from '../lib/reportingBasis';
 
 // ── Sensitivity table constants ───────────────────────────────────────────────
 export const PRICE_MULTS  = [0.8, 0.9, 1.0, 1.1, 1.2];
@@ -175,7 +176,9 @@ export function calculate(inputs) {
   // coerce to 0 inside the sum and silently understate combined leverage — a partial input renders '—',
   // never a published ratio (matches the enterpriseValue / netDebt short-circuit, Fix A / 2C-2). Both-real
   // deals are unchanged.
-  const combinedEBITDA   = (!differentBases && companyAEBITDA != null && companyBEBITDA != null)
+  // A company-reported (non-GAAP) EBITDA is never added to a computed one: different EBITDA bases → null.
+  const differentEbitdaBases = ebitdaBasesDiffer(inputs);
+  const combinedEBITDA   = (!differentBases && !differentEbitdaBases && companyAEBITDA != null && companyBEBITDA != null)
     ? companyAEBITDA + companyBEBITDA + synergiesY1 : null; // synergies pre-tax
 
   // Pro-forma RECURRING net income: combine both companies, add after-tax synergies, subtract the
@@ -267,6 +270,7 @@ export function calculate(inputs) {
     synergiesY1, synergiesY2: synergies.years[1].ebitda, synergiesY3: synergies.years[2].ebitda,
     synergies,
     basesDiffer: differentBases,
+    ebitdaBasesDiffer: differentEbitdaBases,
     basisNote: combination(inputs).note,
     // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
     // dashboard "Before → After" and the percent change are internally consistent).

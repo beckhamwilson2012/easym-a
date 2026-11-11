@@ -7,6 +7,7 @@ import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, DONUT_COLORS, fmtMoney, fmtAsOf, i
 import { getCompanyProfile } from '../../../lib/companyProfiles';
 import { getCustomerMetrics } from '../../../lib/customerMetrics';
 import { pageNumOf } from '../deckRegistry';
+import { isNonGaapDeal } from '../../../lib/reportingBasis';
 
 // Customer & net-retention metrics — CITED curated callouts for SaaS issuers that DISCLOSE them (10-K /
 // 20-F / earnings letters, not XBRL). Each figure carries its OWN definition + as-of + source; the block
@@ -145,7 +146,7 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
     { k: `Gross margin (${onLtm ? 'LTM' : 'FY'})`,          v: isGrossNm(target) ? 'n/m' : pct(grossMargin) },
     { k: `Operating margin (${onLtm ? 'LTM' : 'FY'})`,      v: pct(opMargin) },
     { k: `Revenue CAGR (${actuals.length}yr)`, v: pct(revCAGR) },
-    { k: 'EV / EBITDA (LTM)',          v: evEbitda },
+    { k: isNonGaapDeal(deal) ? 'EV / EBITDA (LTM, FMP, not company-adjusted)' : 'EV / EBITDA (LTM)', v: evEbitda },
   ];
 
   const fyStr = target?.fiscalYear ? `FY${target.fiscalYear}` : 'most recent annual';

@@ -18,8 +18,10 @@ import { fmtMoneyDual, fmtMoney, fmtPerShare, isFinancial, isBankDeal } from './
 import { buildCashPercentTooltip } from './lib/suggestionTooltips';
 import { SynergyInputs } from './components/shared/SynergyInputs';
 import { CompanyBasisToggle } from './components/shared/CompanyBasisToggle';
+import { ReportingBasisToggle } from './components/shared/ReportingBasisToggle';
+import { NON_GAAP, nonGaapAvailability, effectiveBasis, resolveReportingBasis, applyReportingBasis } from './lib/reportingBasis';
 import { synergySchedule } from './lib/synergies';
-import { BASIS_FY, BASIS_LTM, ltmAvailability, companyInputs, combination } from './lib/companyBasis';
+import { BASIS_FY, ltmAvailability, companyInputs, combination } from './lib/companyBasis';
 import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium, premiumReference, PRICE_BASIS_TODAY } from './lib/offerPremium';
 import './App.css';
 
@@ -38,10 +40,11 @@ function fetchCompanyData(symbol) {
     .then(data => { if (data.error) throw new Error(data.error); return data; });
 }
 
-// Reported annual NON-GAAP figures (operating income / net income / diluted EPS) from the fiscal
-// year-end earnings 8-K, period-matched to the deck FY and code-reconciled server-side. Display layer
-// only — the accretion/pro-forma math still runs off GAAP. Returns the full payload (or null on any
-// failure) so the deck can fall back to GAAP and label the basis honestly; never throws.
+// Company-reported annual NON-GAAP figures (adjusted diluted EPS with its net income and share count;
+// adjusted EBITDA under the company's own name) read from the fiscal year-end earnings release's own
+// reconciliation tables, period-matched to the deck FY and tied to GAAP server-side. Which of them the
+// deal uses is decided by the GAAP | Non-GAAP toggle (src/lib/reportingBasis.js). Returns the full
+// payload (or null on any failure); never throws.
 function fetchNonGaap(symbol) {
   return fetch(apiUrl(`/api/nongaap/${symbol}`))
     .then(r => r.json())
@@ -49,33 +52,8 @@ function fetchNonGaap(symbol) {
 }
 
 // Wait-then-build timeout (#5): a hung non-GAAP fetch must never block the deck forever. After this,
-// build on whatever has settled (resolveAccretionBasis maps a missing side → GAAP, honestly).
+// build on whatever has settled (a lookup still in flight counts as unavailable → GAAP).
 const BASIS_WAIT_TIMEOUT_MS = 22000;
-
-// ── Accretion BASIS resolver (Step 3 flip — applied at input assembly, dealCalc helpers unchanged) ──
-// When BOTH companies have a fully-reconciled non-GAAP payload (incl. the filing-sourced dilutedShares),
-// override ONLY the four P&L inputs the accretion math reads — net income (both sides), and the
-// acquirer's reported EPS + diluted shares — so dealCalc.calculate() runs entirely on non-GAAP. If
-// EITHER side is missing/non-reconciling (e.g. any deal with Atlassian), the WHOLE deal stays on GAAP
-// (never a mixed basis). All other inputs (offer, cash%, target cover shares, price, debt, synergies)
-// are untouched, so financing drag and new-share dilution carry over identically. Returns {calcInputs, basis}.
-function resolveAccretionBasis(baseInputs, ngA, ngB) {
-  const usable = (p) => p && p.allReconciled && p.nonGaap
-    && p.nonGaap.operatingIncome != null && p.nonGaap.netIncome != null
-    && p.nonGaap.dilutedEPS != null && p.nonGaap.dilutedShares != null;
-  if (!usable(ngA) || !usable(ngB)) return { calcInputs: baseInputs, basis: 'GAAP' };
-  return {
-    basis: 'Non-GAAP',
-    calcInputs: {
-      ...baseInputs,
-      companyANetIncome:     ngA.nonGaap.netIncome,
-      companyAEPS:           ngA.nonGaap.dilutedEPS,
-      companyADilutedShares: ngA.nonGaap.dilutedShares,
-      companyADilutedSharesPeriod: { basis: 'non-GAAP diluted', end: ngA.fiscalYearEnd ?? null },
-      companyBNetIncome:     ngB.nonGaap.netIncome,
-    },
-  };
-}
 
 // ── UI components ─────────────────────────────────────────────────────────────
 
@@ -567,9 +545,18 @@ function App() {
   // "useLatest" mirror so the deferred/timeout build always reads the freshest non-GAAP, never a stale closure.
   const nonGaapRef = useRef({ a: null, b: null });
   nonGaapRef.current = { a: nonGaapA, b: nonGaapB };
-  // Basis-resolved inputs the deck reads (non-GAAP when both reconcile, else GAAP) + the basis label.
+  // Basis-resolved inputs the deck reads + the deal's EPS basis label.
   const [resolvedInputs, setResolvedInputs] = useState(null);
   const [accretionBasis, setAccretionBasis] = useState('GAAP');
+  // GAAP | Non-GAAP toggle on the input page. null = the default (Non-GAAP when a figure is available).
+  const [basisChoice, setBasisChoice] = useState(null);
+  const basisChoiceRef = useRef(null);
+  basisChoiceRef.current = basisChoice;
+  const loadingRef = useRef({ a: false, b: false });
+  loadingRef.current = { a: nonGaapLoadingA, b: nonGaapLoadingB };
+  // The plan the last build used (src/lib/reportingBasis.js); the deck reads it on a Non-GAAP deal.
+  const [reportingPlan, setReportingPlan] = useState(null);
+  const [gaapInputs, setGaapInputs] = useState(null);   // Non-GAAP deals only: the deal's inputs on GAAP (peer screen)
   // Phase 5 — upload/extract state per panel. ADDITIVE: the ticker and manual paths below are unchanged.
   const [uploadA, setUploadA] = useState(null);   // /api/extract result: { fields, docFacts, located }
   const [uploadB, setUploadB] = useState(null);
@@ -846,13 +833,20 @@ function App() {
   // Ensures exactly one build per pending cycle (settle vs timeout race; React strict-mode re-invokes).
   const buildingRef = useRef(false);
 
-  // Build the deck once on the basis-resolved inputs. resolveAccretionBasis is UNCHANGED — this only
-  // controls WHEN it runs (after the non-GAAP fetches settle). Reads the freshest non-GAAP via the ref.
+  // Whether the toggle may offer Non-GAAP, from the freshest lookups.
+  const basisAvailability = (effectiveInputs) => nonGaapAvailability({
+    ngA: nonGaapRef.current.a, ngB: nonGaapRef.current.b, loadingA: loadingRef.current.a, loadingB: loadingRef.current.b,
+    tickerA, tickerB, privateA: !!effectiveInputs.companyAPrivate, privateB: !!effectiveInputs.companyBPrivate,
+  });
+  // Build the deck once on the basis-resolved inputs; the wait-then-build effects below control WHEN it runs
+  // (after the non-GAAP fetches settle). Reads the freshest non-GAAP via the ref.
   // The inputs the deal model runs on. The build and the input page's live figures both come through here.
   const modelInputs = (effectiveInputs) => {
-    // Reported non-GAAP is annual, so a company on LTM keeps the deal on GAAP rather than mix the periods.
-    const onLtm = effectiveInputs.companyABasis === BASIS_LTM || effectiveInputs.companyBBasis === BASIS_LTM;
-    const { calcInputs, basis } = onLtm ? { calcInputs: effectiveInputs, basis: 'GAAP' } : resolveAccretionBasis(effectiveInputs, nonGaapRef.current.a, nonGaapRef.current.b);
+    // The one basis switch: the toggle's choice → a plan (EPS both-or-neither, EBITDA per company, LTM → "—").
+    const selected = effectiveBasis(basisChoiceRef.current, basisAvailability(effectiveInputs));
+    const plan = resolveReportingBasis({ selected, ngA: nonGaapRef.current.a, ngB: nonGaapRef.current.b, inputs: effectiveInputs, tickerA, tickerB });
+    const calcInputs = applyReportingBasis(effectiveInputs, plan);
+    const basis = plan.eps.nonGaap ? 'Non-GAAP' : 'GAAP';
     // Guard 1 (Stage 2E): tag the resolved inputs with the deck's isBankDeal (SIC-based, catches JPM/BAC) so
     // dealCalc's sources-of-funds construction — and every sensitivity cell that shares it — keeps bank deals
     // on today's 100%-debt behavior. Bank classification is read here, never modified.
@@ -862,11 +856,12 @@ function App() {
     // A chosen price on a date is the premium reference for the deal model (dealCalc.targetMarketPrice).
     // On today's price nothing is added, so the inputs are exactly what they were.
     const ref = reference.beforeNews ? { premiumReferencePrice: reference.price, premiumReferenceDate: unaffected.date } : {};
-    return { resolvedWithBank: { ...calcInputs, bankDeal, applySourcesOfFunds: true, ...ref }, basis };
+    // gaapWithBank: the same inputs on GAAP, for views whose other legs only exist on GAAP (the peer screen).
+    return { resolvedWithBank: { ...calcInputs, bankDeal, applySourcesOfFunds: true, ...ref }, gaapWithBank: { ...effectiveInputs, bankDeal, applySourcesOfFunds: true, ...ref }, basis, plan };
   };
 
   const runBuild = (effectiveInputs) => {
-    const { resolvedWithBank, basis } = modelInputs(effectiveInputs);
+    const { resolvedWithBank, gaapWithBank, basis, plan } = modelInputs(effectiveInputs);
     const r = calculate(resolvedWithBank);
     r.basis = basis;
     // Phase 7 — carry the private-company flags so §8 suppresses market-data sections. A private company
@@ -890,6 +885,8 @@ function App() {
     setResults(r);
     setResolvedInputs(resolvedWithBank);
     setAccretionBasis(basis);
+    setReportingPlan(plan);
+    setGaapInputs(plan.selected === NON_GAAP ? gaapWithBank : null);
     setAnalysisRun(true);
   };
 
@@ -906,7 +903,7 @@ function App() {
   }, [pendingBuild, nonGaapLoadingA, nonGaapLoadingB]);
 
   // Timeout backstop: a hung fetch must never block the build forever. After BASIS_WAIT_TIMEOUT_MS,
-  // build on whatever has settled (resolveAccretionBasis maps a missing side → GAAP).
+  // build on whatever has settled (a lookup still in flight counts as unavailable → GAAP).
   useEffect(() => {
     if (!pendingBuild) return undefined;
     const t = setTimeout(() => {
@@ -959,6 +956,7 @@ function App() {
     setNonGaapLoadingA(false); setNonGaapLoadingB(false);
     setPendingBuild(false); buildingRef.current = false;
     setResolvedInputs(null); setAccretionBasis('GAAP');
+    setBasisChoice(null); setReportingPlan(null); setGaapInputs(null);
   };
 
   const handleSaveAnalysis = () => {
@@ -1092,8 +1090,7 @@ function App() {
     basisLabel:    inputs.companyBPeriodLabel ?? null,
     fiscalYear:    fiscalYearB,
     fiscalYearEnd: fiscalYearEndB,
-    // Reported annual non-GAAP payload — drives the §4/§5/§6 display layer; the accretion flip reads it
-    // separately at input assembly (resolveAccretionBasis), so this field stays the raw display source.
+    // Company-reported annual non-GAAP payload (/api/nongaap). Which figures the deal uses is in deal.reportingBasis.
     nonGaap: nonGaapB,
   });
 
@@ -1125,8 +1122,7 @@ function App() {
     basisLabel:    inputs.companyAPeriodLabel ?? null,
     fiscalYear:    fiscalYearA,
     fiscalYearEnd: fiscalYearEndA,
-    // Reported annual non-GAAP payload — drives the §4/§5/§6 display layer; the accretion flip reads it
-    // separately at input assembly (resolveAccretionBasis), so this field stays the raw display source.
+    // Company-reported annual non-GAAP payload (/api/nongaap). Which figures the deal uses is in deal.reportingBasis.
     nonGaap: nonGaapA,
   });
 
@@ -1159,8 +1155,10 @@ function App() {
     combinedEBITDA:  results ? numOrNull(results.combinedEBITDA) : 0,
     combinedNetIncome: results ? numOrNull(results.combinedNetIncome) : 0,
     newSharesIssued: results ? parseFloat(results.newSharesIssued) : 0,
-    // Accretion basis label (Non-GAAP when both companies reconcile, else GAAP).
+    // The deal's EPS basis label (Non-GAAP only when both companies report adjusted EPS and Non-GAAP is selected).
     basis: (results && results.basis) || accretionBasis,
+    // The GAAP | Non-GAAP plan, only on a Non-GAAP deal (a GAAP deal's deal object is unchanged).
+    ...(reportingPlan && reportingPlan.selected === NON_GAAP ? { reportingBasis: reportingPlan, _inputsGaap: gaapInputs } : {}),
     // Dashboard section reads these directly. _inputs carries the BASIS-RESOLVED inputs so the deck's
     // own sensitivity helpers (calcProFormaEPS / acquirerStandaloneEPS) sit on the same basis as _results.
     _results: results,
@@ -1294,6 +1292,12 @@ function App() {
   const renderDealTerms = () => (
     <div style={{ ...cardStyle, border: '2px solid #0F2244' }}>
       <h2 style={sectionTitle}>Deal Terms</h2>
+      {(() => {
+        const avail = basisAvailability(inputs);
+        const sel = effectiveBasis(basisChoice, avail);
+        const plan = resolveReportingBasis({ selected: sel, ngA: nonGaapA, ngB: nonGaapB, inputs, tickerA, tickerB });
+        return <ReportingBasisToggle value={sel} availability={avail} plan={plan} onChange={setBasisChoice} />;
+      })()}
       {bPub ? (
         <>
           <SuggestedPremiumBox spot={refB} solve={highestAccretivePremium({

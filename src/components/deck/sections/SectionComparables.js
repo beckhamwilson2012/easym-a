@@ -7,6 +7,7 @@ import { NAVY, GRAY_BORDER, isBankDeal, isGrossNm, grossNmNote } from '../shared
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { composeSourceLine } from '../../../lib/composeSourceLine';
 import { epsAccretionPct } from '../../../utils/dealCalc';
+import { isNonGaapDeal } from '../../../lib/reportingBasis';
 import { enterpriseValue, cashBucket, netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
 import { exhibitLabelOf, pageNumOf } from '../deckRegistry';
 
@@ -363,7 +364,9 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   // For each company, model THIS acquirer buying it at the SAME premium / cash-stock mix / financing as
   // the live deal (deal._inputs), synergies = 0 (target-specific, not transferable → a clean PRE-SYNERGY,
   // comparable basis across all columns). Identical epsAccretionPct used by §7/§8 — not a separate calc.
-  const baseInputs = (deal && deal._inputs) || {};
+  // Peers carry GAAP figures only, so the acquirer leg of "EPS Impact if Acquired" is GAAP too: on a Non-GAAP deal
+  // that is deal._inputsGaap (the same inputs before the non-GAAP override), never the non-GAAP net income.
+  const baseInputs = (deal && (deal._inputsGaap || deal._inputs)) || {};
   const dealPremium = (() => {
     const offer = parseFloat(deal?.offerPrice) || parseFloat(baseInputs.offerPricePerShare) || 0;
     const tgtPx = parseFloat(baseInputs.currentSharePriceB) || 0;
@@ -551,6 +554,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
           {grossFilingNote(loadedCols) ? <>{grossFilingNote(loadedCols)} </> : null}
           {latestTenKLtmNote(loadedCols) ?<>{latestTenKLtmNote(loadedCols)} </> : null}
           {anyFyFallback(metrics, loadedCols) ?<><strong>{FY_FALLBACK_NOTE}</strong> (marked “FY” and the fiscal year in the cell). </> : null}
+          {isNonGaapDeal(deal) ? <><strong>Reporting basis: </strong>this deck is on Non-GAAP, but the comparables stay on GAAP and computed figures for every column, including {acquirer?.ticker || 'the acquirer'} and {target?.ticker || 'the target'}: the peers carry no company-reported non-GAAP figures, so P/E, EV/EBITDA and EPS Impact if Acquired are on one basis across the row. </> : null}
           Revenue growth and Op Margin/Income (NTM) are forward analyst consensus from FMP (a single provider series whose basis is not designated as GAAP or non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile ({exhibitLabelOf('targetprofile')}) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§{pageNumOf('plAcquirer')}/§{pageNumOf('plTarget')}). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
         </div>
       )}

@@ -5,6 +5,7 @@ import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { HEADLINE_SOURCES, formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
 import { NONE_ENTERED, fmtSynergy, marginSentence } from '../../../lib/synergies';
+import { isNonGaapDeal, DIFFERENT_BASES } from '../../../lib/reportingBasis';
 
 // ── Sources & Methodology — the closing page (§14) ─────────────────────────────
 // Methodology bullets are static, but the named data providers (pricing, analyst targets) are
@@ -163,8 +164,10 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
         'Period basis: the screening comparables (Public Company Screen) and the company-profile financial snapshot are computed on a last-twelve-months (LTM) basis — latest annual plus the most recent interim year-to-date, less the prior-year interim — the standard banker screening convention; the pro-forma and accretion model is built on latest-fiscal-year actuals plus forward analyst consensus (a normalized forward basis). This split is deliberate, not an inconsistency. Foreign private issuers without SEC interim (10-Q) filings, and any filer whose interim data does not tie out, are shown on a fiscal-year basis and labeled "FY".',
         'Calendarization: where the two companies have different fiscal year-ends, the LTM screening basis is used specifically because it aligns their measurement windows to within approximately one month — materially reducing the fiscal-year-end offset that a same-labeled "FY" comparison would carry. Full calendar-year restatement is deliberately NOT applied: it would require estimating unfiled interim quarters (interpolation of periods no filer reports), and the residual period difference on the LTM basis is immaterial (under ~2% of the affected figures). The pro-forma / accretion model, being built on latest-fiscal-year actuals + forward consensus, pairs each company’s own latest fiscal year (relative years, not a common calendar period) — stated on that slide.',
         'Enterprise value (EV) = equity value (market capitalization) + total debt − cash & marketable securities, taken from the same filing; figures for companies with active share-repurchase programs are approximate.',
+        ...(isNonGaapDeal(deal) ? nonGaapSourceBullets(deal.reportingBasis, acquirer, target) : [
         'Profitability on the standalone P&L and comparative-profile slides — operating income, net income, diluted EPS, and operating/net margins — is shown on a Non-GAAP basis as reported in each company’s fiscal year-end earnings release (Form 8-K, Item 2.02), period-matched to the fiscal year shown and reconciled to GAAP; each line is labeled, and falls back to a GAAP-labeled figure where a reconciled non-GAAP value was unavailable. Gross profit, gross margin and operating expenses remain GAAP; EBITDA and its margins are computed (operating income + D&A); revenue and share counts are basis-neutral.',
         'The accretion, pro forma and relative-contribution views are built on each company’s reported GAAP figures and are labeled accordingly.',
+        ]),
         ...(deal?.hasMarketData === false ? [] : [`Forward pro forma EPS: ${forwardNetIncomeLabel(deal?._inputs)}.`]),
         `Fiscal years follow each company’s own filing calendar: ${buyerRole} FY${acqFY}, ${targetRole} FY${tgtFY}.`,
         'Numbers are rounded for presentation; minor differences may arise from rounding.',
@@ -225,4 +228,24 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
       </div>
     </PageFrame>
   );
+}
+
+// Basis-of-presentation bullets on a Non-GAAP deal (src/lib/reportingBasis.js plan): which figures are company
+// reported, from which 8-K, and which stay GAAP or computed. A GAAP deal keeps the bullets above unchanged.
+function nonGaapSourceBullets(plan, acquirer, target) {
+  const tk = (c, fb) => c?.ticker || c?.name || fb;
+  const A = tk(acquirer, 'the acquirer'), B = tk(target, 'the target');
+  const out = [];
+  if (plan.eps.nonGaap) {
+    out.push(`Reporting basis selected: Non-GAAP. Net income, diluted EPS, pro forma EPS, accretion and the verdict use company-reported non-GAAP figures for both companies: ${A} “${plan.eps.A.rowLabel}” (${plan.eps.A.label}); ${B} “${plan.eps.B.rowLabel}” (${plan.eps.B.label}). Each was read from the reconciliation table in the company’s fiscal-year earnings release and ties to GAAP there (GAAP + each filed adjustment = the non-GAAP total).`);
+  } else {
+    out.push(`Reporting basis selected: Non-GAAP. EPS, pro forma EPS, accretion and the verdict stay on GAAP for both companies: ${plan.eps.note}.`);
+  }
+  const eb = (e, t) => (e.nonGaap
+    ? (e.value == null ? `${t}: ${e.name} — (non-GAAP available for fiscal year only)` : `${t}: ${e.name} (${e.label}), tied to GAAP net income in the filed reconciliation table`)
+    : `${t}: computed (operating income + D&A; ${t} reports no adjusted EBITDA)`);
+  out.push(`EBITDA by company — ${eb(plan.ebitda.A, A)}; ${eb(plan.ebitda.B, B)}. ${plan.ebitda.combinable ? `Combined EBITDA adds the two on one basis (${plan.ebitda.A.nonGaap ? 'non-GAAP' : 'computed'}).` : `Combined EBITDA and the leverage ratios on it are “—”: ${DIFFERENT_BASES}.`}`);
+  out.push('Operating income, gross profit, operating expenses and their margins are GAAP. The comparables and screening views use GAAP and computed figures for every company, including these two, because the peers carry no company-reported figures in this deck.');
+  out.push('Forward years are FMP analyst consensus. FMP does not designate a basis for it; it is not combined with Year-1 figures in one growth or accretion figure, and each forward row is labeled consensus.');
+  return out;
 }

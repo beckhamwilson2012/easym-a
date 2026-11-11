@@ -4,6 +4,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
+import { isNonGaapDeal, epsBasisLabel, combinedEbitdaLabel } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { NAVY, SF_BLUE, GRAY_BORDER, LIGHT_BLUE, fmtMoney, fmtPct, fmtPctSigned, fmtPctFloor, fmtShares } from '../shared/deckTokens';
 import { ISSUANCE_VOTE_THRESHOLD, ISSUANCE_MAJORITY_THRESHOLD } from '../../../lib/premiumThresholds';
@@ -111,6 +112,9 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   // `results ? parseFloat(results.combinedEBITDA) : 0`, which yields 0 with no results and NaN when
   // the underlying value is null — both of which would print a fabricated number here.
   const combinedEBITDA = num(R.combinedEBITDA);
+  // GAAP | Non-GAAP plan (src/lib/reportingBasis.js): null on a GAAP deal, which keeps these labels as they were.
+  const ngPlan = isNonGaapDeal(deal) ? deal.reportingBasis : null;
+  const ngEb = ngPlan ? combinedEbitdaLabel(ngPlan) : null;
   const synY1 = deal?.synergies?.years?.[0] || null;
   const mix = (da.cashPercent != null && da.stockPercent != null)
     ? `${fmtPct(da.cashPercent, 0)} cash / ${fmtPct(da.stockPercent, 0)} stock` : DASH;
@@ -132,9 +136,10 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     { label: 'New acquirer shares issued', value: sh(d.newShares) },
     { label: 'Acquirer shares outstanding (pre-deal)', value: sh(pos(d.preDealShares)) },
     { label: 'Pro forma ownership — target holders', value: pcF(d.ownershipNewPct) },
-    { label: 'Year-1 EPS accretion / (dilution)', value: accText, bold: true },
+    { label: ngPlan ? `Year-1 EPS accretion / (dilution) — ${epsBasisLabel(ngPlan)}` : 'Year-1 EPS accretion / (dilution)', value: accText, bold: true },
     { label: 'Combined revenue', value: money(d.combinedRevenue) },
-    { label: 'Combined EBITDA (incl. Year-1 synergies)', value: money(combinedEBITDA) },
+    { label: ngEb ? `Combined EBITDA (${ngEb.basis || 'n/a'}, incl. Year-1 synergies)` : 'Combined EBITDA (incl. Year-1 synergies)',
+      value: ngEb && ngEb.note ? `— (${ngEb.note})` : money(combinedEBITDA) },
     { label: 'Year-1 cost synergies', value: fmtSynergy(synY1?.cost) },
     { label: 'Year-1 revenue synergies', value: fmtSynergy(synY1?.revenue) },
     { label: 'Year-1 total synergies (EBITDA impact)', value: synY1?.entered ? fmtSynergy(synY1.ebitda) : NONE_ENTERED },

@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, nonGaapFigures, isBankDeal, isRestaurant, isGrossNm, grossNmReason } from '../shared/deckTokens';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtScaled, pickScale, fmtPct, fmtPctFloor, isBankDeal, isRestaurant, isGrossNm, grossNmReason } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 
 // Lighter shade of SF_BLUE used for the target segment of each stacked bar.
@@ -36,14 +36,12 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   const gpAvailable = Number.isFinite(aGP) && Number.isFinite(bGP);
   const grossNmReasonText = [...new Set([grossNmReason(acquirer), grossNmReason(target)].filter(Boolean))].join('; ');
   const grossNmDeal = !!grossNmReasonText;
-  // Operating income on the DECK'S basis (so §I agrees with §4/§5/§6): reported NON-GAAP operating
-  // income when the deal is non-GAAP (same /api/nongaap figures §5 shows — e.g. TEAM +$1,287M), else
-  // GAAP operating income. NOT EBITDA (which is negative for loss-making filers → false "n/m").
-  const ngA = deal?.basis === 'Non-GAAP' ? nonGaapFigures(acquirer) : null;
-  const ngB = deal?.basis === 'Non-GAAP' ? nonGaapFigures(target)   : null;
-  const aOI = ngA?.operatingIncome ?? (parseFloat(acquirer.operatingIncome) || 0);
-  const bOI = ngB?.operatingIncome ?? (parseFloat(target.operatingIncome)   || 0);
-  const oiNonGaap = ngA?.operatingIncome != null && ngB?.operatingIncome != null;
+  // Operating income is GAAP on every deal: the company-reported non-GAAP layer (src/lib/reportingBasis.js) covers
+  // adjusted EPS and adjusted EBITDA only, and neither is a contribution metric here. NOT EBITDA (which is negative
+  // for loss-making filers → false "n/m").
+  const aOI = parseFloat(acquirer.operatingIncome) || 0;
+  const bOI = parseFloat(target.operatingIncome)   || 0;
+  const oiNonGaap = false;
   // ── Free Cash Flow (Fix 3): prefer the fetched EDGAR FCF from the verified-data layer; fall
   //    back to the net-income proxy ONLY when a side's fetched FCF is genuinely missing. The proxy
   //    is misleading for growth-stage targets (e.g. TEAM net income is negative but FCF is +$1.5B,

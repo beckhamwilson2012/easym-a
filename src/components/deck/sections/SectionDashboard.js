@@ -18,6 +18,7 @@ import { ExplainButton } from '../../shared/ExplainButton';
 import { SynergyLines } from '../shared/SynergyLines';
 import { BasisNote } from '../shared/BasisNote';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
+import { isNonGaapDeal, FY_ONLY } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import {
@@ -40,6 +41,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const verdict = useDealVerdict({ deal, acquirer, target });
 
   if (!results || !inputs) return null;
+
+  // GAAP | Non-GAAP plan (src/lib/reportingBasis.js) — null on a GAAP deal, which leaves every label below as it was.
+  const ngPlan = isNonGaapDeal(deal) ? deal.reportingBasis : null;
+  const ebB = ngPlan ? ngPlan.ebitda.B : null;
+  const ebitdaBasisText = (e) => (e.nonGaap ? `${e.name} (non-GAAP)` : 'computed EBITDA');
+  const ebDiffer = !!(ngPlan && results.ebitdaBasesDiffer);
+  const combinedEbitdaBasis = ngPlan ? (ebDiffer ? null : (ngPlan.ebitda.A.nonGaap ? 'non-GAAP' : 'computed')) : null;
 
   const bankMode = isBankDeal(target, acquirer);
   const flags     = bankMode
@@ -243,25 +251,28 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               label: 'EV / EBITDA',
               // "n/m" (not meaningful): a multiple off a negative EBITDA has no economic meaning.
               value: results.evEBITDA === 'N/A' ? 'n/m' : `${results.evEBITDA}x`,
-              note:  results.evEBITDA === 'N/A' ? (inputs.companyBEBITDA <= 0 ? 'Target EBITDA is negative' : 'not available') : null,
+              note:  results.evEBITDA === 'N/A'
+                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (inputs.companyBEBITDA <= 0 ? 'Target EBITDA is negative' : 'not available'))
+                : (ebB ? `on ${ebitdaBasisText(ebB)}` : null),
               explain: () => explainEvEbitda({ ev, ebitda: inputs.companyBEBITDA, multiple: results.evEBITDA }),
             },
             {
               label: 'P / E Ratio',
               value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
-              note:  results.peRatio === 'N/A' ? (inputs.companyBEPS <= 0 ? 'Target earnings are negative' : 'not available') : null,
+              note:  results.peRatio === 'N/A' ? (inputs.companyBEPS <= 0 ? 'Target earnings are negative' : 'not available')
+                : (ngPlan ? (ngPlan.eps.nonGaap ? 'on adjusted EPS (non-GAAP)' : 'on GAAP EPS') : null),
               explain: () => explainPeRatio({ offerPrice: inputs.offerPricePerShare, eps: inputs.companyBEPS, multiple: results.peRatio }),
             },
             {
               label: 'Debt / EBITDA',
-              value: results.basesDiffer ? '—' : results.debtEBITDA === 'N/A' ? 'n/m' : `${results.debtEBITDA}x`,
+              value: (results.basesDiffer || ebDiffer) ? '—' : results.debtEBITDA === 'N/A' ? 'n/m' : `${results.debtEBITDA}x`,
               // Branch on WHY the ratio is N/A (dealCalc: combinedEBITDA > 0 && combinedDebt != null) — a null
               // combined debt with positive EBITDA is "debt not available", never "EBITDA is non-positive".
               note:  results.debtEBITDA === 'N/A'
-                ? (results.basesDiffer ? DIFFERENT_BASES : results.combinedEBITDA == null ? 'Combined EBITDA not available'
+                ? ((results.basesDiffer || ebDiffer) ? DIFFERENT_BASES : results.combinedEBITDA == null ? 'Combined EBITDA not available'
                   : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
                   : 'Combined debt not available')
-                : null,
+                : (combinedEbitdaBasis ? `on ${combinedEbitdaBasis} combined EBITDA` : null),
               explain: () => explainDebtEbitda({ combinedDebt: combinedDebtForExplain, combinedEbitda: results.combinedEBITDA, multiple: results.debtEBITDA }),
             },
           ]).map(m => (
@@ -292,6 +303,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 {(deal.basis || 'GAAP')} basis
               </span>
             </h3>
+            {ngPlan && (
+              <div data-testid="eps-basis-note" style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 12, fontStyle: 'italic' }}>
+                {ngPlan.eps.nonGaap ? 'Non-GAAP EPS, company reported by both companies (fiscal-year earnings releases).' : `${ngPlan.eps.note}.`}
+              </div>
+            )}
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Before</div>
@@ -347,9 +363,10 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             ] : [
               { label: 'Combined Revenue',    value: results.basesDiffer ? '—' : fmtMoneyTable(results.combinedRevenue)                          },
               ...(results.synergies.years[0].revenue != null ? [{ label: 'Pro Forma Revenue (incl. Y1 revenue synergies)', value: fmtMoneyTable(results.proFormaRevenue) }] : []),
-              { label: 'Combined EBITDA (incl. Y1 synergies)', value: results.basesDiffer ? '—' : fmtMoneyTable(results.combinedEBITDA) },
-              { label: 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
-              { label: 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
+              { label: ngPlan ? `Combined EBITDA (${combinedEbitdaBasis || 'n/a'}, incl. Y1 synergies)` : 'Combined EBITDA (incl. Y1 synergies)',
+                value: results.basesDiffer ? '—' : ebDiffer ? `— (${DIFFERENT_BASES})` : fmtMoneyTable(results.combinedEBITDA) },
+              { label: ngPlan && ngPlan.eps.nonGaap ? 'Acquirer Net Income (non-GAAP)' : 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
+              { label: ngPlan && ngPlan.eps.nonGaap ? 'Target Net Income (non-GAAP)' : 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Synergies (Y1)',  value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered, explain: () => explainSynergies({ schedule: results.synergies, isBank: false }) },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),

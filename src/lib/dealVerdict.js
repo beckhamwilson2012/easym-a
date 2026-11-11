@@ -1,5 +1,6 @@
 import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE } from '../utils/dealCalc';
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
+import { NON_GAAP } from './reportingBasis';
 
 // The deal verdict ladder. Deal Summary and Executive Summary both render this one result. It uses the first test
 // that this deal's own data can compute, and names the missing input when none can:
@@ -68,6 +69,9 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   const T = targetName || 'the target';
   const inputs = deal?._inputs || {};
   const results = deal?._results || {};
+  // A Non-GAAP deal names the EPS basis in the tag (a GAAP deal's tags are unchanged).
+  const ngDeal = inputs.reportingBasis === NON_GAAP;
+  const epsTag = (t) => (ngDeal ? `${t} (${inputs.companyAEpsBasis === NON_GAAP ? 'non-GAAP EPS' : 'GAAP EPS'})` : t);
   const offer = num(deal?.offerPrice) || num(inputs.offerPricePerShare) || 0;   // slide 8's own offer read
   const synY = [deal?.synergiesY1, deal?.synergiesY2, deal?.synergiesY3];
   const missing = [];
@@ -79,7 +83,7 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
     if (t) {
       const y1 = deal?.synergies?.years?.[0];
       return {
-        step: 1, tag: TAG_YEAR1, verdict: t.verdict,
+        step: 1, tag: epsTag(TAG_YEAR1), verdict: t.verdict,
         text: verdictText(t),
         pct: t.pct, standaloneEPS: t.standaloneEPS, proFormaEPS: t.proFormaEPS, breakeven: t.breakeven,
         entered: y1?.entered ? y1.ebitda : null,
@@ -104,7 +108,7 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
       const yr = deal?.synergies?.years?.[k];
       const yearLabel = label(aF[k]);
       return {
-        step: 2, tag: tagForwardYear(yearLabel), verdict: t.verdict, year: yearLabel,
+        step: 2, tag: ngDeal ? `${tagForwardYear(yearLabel)} (consensus EPS)` : tagForwardYear(yearLabel), verdict: t.verdict, year: yearLabel,
         text: verdictText(t),
         pct: t.pct, standaloneEPS: t.standaloneEPS, proFormaEPS: t.proFormaEPS, breakeven: t.breakeven,
         entered: yr?.entered ? yr.ebitda : null,
@@ -126,15 +130,19 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   const premiumDollars = (pos(offer) != null && ref != null && shares != null) ? (offer - ref) * shares : null;
   const y3 = deal?.synergies?.years?.[2];
   const pe = (pos(AV.price) != null && y1Base > 0) ? AV.price / y1Base : null;
-  const evEbitda = (num(d.evAcquirer) != null && pos(AV.ebitda) != null) ? d.evAcquirer / AV.ebitda : null;
-  const multiple = pe != null ? { value: pe, name: 'P/E' } : (evEbitda != null && evEbitda > 0 ? { value: evEbitda, name: 'EV/EBITDA' } : null);
+  // The acquirer's EBITDA on the deal's basis: on a Non-GAAP deal, its company-reported adjusted EBITDA where it reports
+  // one (inputs.companyAEBITDA, set by src/lib/reportingBasis.js); otherwise the computed figure, as before.
+  const acqEbitda = ngDeal ? inputs.companyAEBITDA : AV.ebitda;
+  const evName = ngDeal && inputs.companyAEbitdaBasis === NON_GAAP ? 'EV/adjusted EBITDA (non-GAAP)' : 'EV/EBITDA';
+  const evEbitda = (num(d.evAcquirer) != null && pos(acqEbitda) != null) ? d.evAcquirer / acqEbitda : null;
+  const multiple = pe != null ? { value: pe, name: ngDeal ? `P/E (${inputs.companyAEpsBasis === NON_GAAP ? 'non-GAAP' : 'GAAP'} EPS)` : 'P/E' } : (evEbitda != null && evEbitda > 0 ? { value: evEbitda, name: evName } : null);
   if (premiumDollars == null) missing.push(ref == null ? `there is no market price for ${T}, so the premium can't be measured` : `${T}'s share count is missing, so the premium can't be measured`);
   if (!y3?.entered) missing.push('no Year 3 synergies are entered');
   if (multiple == null) missing.push(`${A}'s P/E and EV/EBITDA are not meaningful`);
   if (premiumDollars != null && y3?.entered && multiple != null) {
     // One factor carries the basis: 1 for EV/EBITDA (pre-tax), 1 − tax for P/E (after tax). The breakeven solves
     // the same product for the Year 3 synergies as entered (pre-tax), so it is on the same basis by construction.
-    const basis = multiple.name === 'EV/EBITDA' ? 'pre-tax' : 'after-tax';
+    const basis = multiple.name.startsWith('EV/') ? 'pre-tax' : 'after-tax';
     const taxFactor = basis === 'pre-tax' ? 1 : 1 - TAX_RATE;
     const capitalizedSynergies = y3.ebitda * taxFactor;
     const value = capitalizedSynergies * multiple.value;

@@ -7,6 +7,7 @@ import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isG
 import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, forwardYearInputs, TAX_RATE } from '../../../utils/dealCalc';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
+import { isNonGaapDeal } from '../../../lib/reportingBasis';
 
 // ── §6 — Pro Forma & Accretion (one logical exhibit, split across two pages) ─────────────────────────────
 // §6a "Pro Forma Combined" (Exhibit E): the detailed per-forward-year tables (Revenue, growth %, Gross
@@ -197,8 +198,11 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   // Year-1 ex-synergy accretion — same dealCalc calls with synergies = 0 (7E); Year 1 uses the deal inputs.
   const pfEPSY1ExSyn = offer > 0 ? calcProFormaEPS(offer, 0, inputs) : null;
   const pctY1ExSyn   = offer > 0 ? epsAccretionPct(offer, 0, inputs) : null;
+  // GAAP | Non-GAAP plan (src/lib/reportingBasis.js): null on a GAAP deal, which keeps the Year 1 tag as it was.
+  const ngPlan = isNonGaapDeal(deal) ? deal.reportingBasis : null;
+  const y1Fy = ngPlan ? (ngPlan.eps.nonGaap ? 'Current actuals (non-GAAP, company reported)' : 'Current actuals (GAAP)') : 'Current actuals (verified)';
   const accRows = [
-    { label: 'Year 1', tag: (acquirer?.basis === 'ltm' || target?.basis === 'ltm') ? (deal?._results?.basesDiffer ? 'Companies on different bases' : 'LTM actuals') : 'Current actuals (verified)', basis: 'verified', standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
+    { label: 'Year 1', tag: (acquirer?.basis === 'ltm' || target?.basis === 'ltm') ? (deal?._results?.basesDiffer ? 'Companies on different bases' : 'LTM actuals') : y1Fy, basis: 'verified', standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
     ...forwardRows.map(r => ({ label: `Year ${r.year}`, tag: `Forward consensus (FY${r.acqFY}e) + Yr${r.synYr} synergies`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pfExSyn: r.pfEPSExSyn, pct: r.pct, pctExSyn: r.pctExSyn, analysts: r.analysts })),
   ];
 
@@ -284,6 +288,13 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                     <span style={{ marginLeft: 6, fontSize: 9.5, fontWeight: 700, color: '#0070D2', background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 3, padding: '1px 6px', textTransform: 'none', letterSpacing: 0 }}>Non-GAAP basis</span>
                   )}
                 </div>
+                {ngPlan && (
+                  <div data-testid="pf-eps-basis-note" style={{ fontSize: 9.5, color: '#6B7280', fontStyle: 'italic', marginBottom: 4, lineHeight: 1.35 }}>
+                    {ngPlan.eps.nonGaap
+                      ? 'Year 1: non-GAAP EPS, company reported by both companies (fiscal-year earnings releases). Forward years: FMP consensus, a basis the provider does not designate; Year 1 and forward years are not presented as one series.'
+                      : `Year 1: ${ngPlan.eps.note}. Forward years: FMP consensus, a basis the provider does not designate, so Year 1 (GAAP) and the forward years are not on one basis.`}
+                  </div>
+                )}
                 <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
                   <div style={{ background: NAVY, display: 'flex', padding: '4px 8px' }}>
                     <span style={{ flex: 2, color: '#fff', fontSize: 9.5, fontWeight: 700 }}>Year (basis)</span>

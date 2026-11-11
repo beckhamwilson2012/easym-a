@@ -2,6 +2,7 @@ import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { SynergyLines } from '../shared/SynergyLines';
+import { isNonGaapDeal, combinedEbitdaLabel } from '../../../lib/reportingBasis';
 
 // Phase 8 — Pro-Forma Credit Statistics. Leverage & coverage — the credit view that replaces the
 // market-based analysis (equity performance / analyst consensus / EPS accretion) for a private deal,
@@ -25,8 +26,9 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
   const interestPreTax  = num(R.newInterestAfterTax) != null ? num(R.newInterestAfterTax) / (1 - TAX) : null;
   const coverage        = (combinedEBITDA != null && interestPreTax > 0) ? combinedEBITDA / interestPreTax : null;
 
+  const ngEb = isNonGaapDeal(deal) ? combinedEbitdaLabel(deal.reportingBasis) : null;   // null on a GAAP deal
   const rows = [
-    { label: 'Combined EBITDA', v: fmtM(combinedEBITDA) },
+    { label: ngEb ? `Combined EBITDA (${ngEb.basis || 'n/a'})` : 'Combined EBITDA', v: ngEb && ngEb.note ? `— (${ngEb.note})` : fmtM(combinedEBITDA) },
     { label: 'Combined total debt (incl. acquisition financing)', v: fmtM(combinedDebt) },
     { label: 'Combined cash', v: fmtM(combinedCash) },
     { label: 'Net debt', v: fmtM(netDebt), bold: true },
