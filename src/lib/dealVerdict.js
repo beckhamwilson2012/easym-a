@@ -5,8 +5,10 @@ import { accretionVerdict } from '../components/deck/shared/deckTokens';
 // that this deal's own data can compute, and names the missing input when none can:
 //   1. EPS accretion / (dilution) in Year 1, when the acquirer's standalone EPS is positive.
 //   2. Otherwise the first forecast year where the acquirer's consensus EPS is positive (slide 8's own forward row).
-//   3. Otherwise run-rate (Year 3) after-tax synergies capitalized at the acquirer's P/E, or EV/EBITDA when the
-//      P/E is not meaningful, against the premium paid in dollars.
+//   3. Otherwise run-rate (Year 3) synergies capitalized at the acquirer's P/E, or EV/EBITDA when the P/E is not
+//      meaningful, against the premium paid in dollars. The synergy basis matches the multiple: EV/EBITDA is a
+//      pre-tax multiple, so it capitalizes Year 3 synergies as entered (pre-tax); P/E is after tax, so it
+//      capitalizes them after tax.
 // Every EPS figure comes from dealCalc's own functions on slide 8's inputs. Nothing is estimated or defaulted.
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
@@ -14,6 +16,8 @@ const pos = (v) => { const n = num(v); return n != null && n > 0 ? n : null; };
 
 export const TAG_YEAR1 = 'EPS test, Year 1';
 export const TAG_PREMIUM = 'Premium vs synergies';
+// The tag names the synergy basis and the multiple, e.g. "Premium vs synergies (pre-tax, EV/EBITDA 8.41x)".
+export const tagPremium = (basis, multiple) => `${TAG_PREMIUM} (${basis}, ${multiple.name} ${multiple.value.toFixed(2)}x)`;
 export const tagForwardYear = (label) => `EPS test, ${label} (first profitable year)`;
 
 // $M, the deck's convention: $636M, $1.2B; negatives in parentheses.
@@ -128,14 +132,18 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   if (!y3?.entered) missing.push('no Year 3 synergies are entered');
   if (multiple == null) missing.push(`${A}'s P/E and EV/EBITDA are not meaningful`);
   if (premiumDollars != null && y3?.entered && multiple != null) {
-    const afterTax = y3.ebitda * (1 - TAX_RATE);
-    const value = afterTax * multiple.value;
+    // One factor carries the basis: 1 for EV/EBITDA (pre-tax), 1 − tax for P/E (after tax). The breakeven solves
+    // the same product for the Year 3 synergies as entered (pre-tax), so it is on the same basis by construction.
+    const basis = multiple.name === 'EV/EBITDA' ? 'pre-tax' : 'after-tax';
+    const taxFactor = basis === 'pre-tax' ? 1 : 1 - TAX_RATE;
+    const capitalizedSynergies = y3.ebitda * taxFactor;
+    const value = capitalizedSynergies * multiple.value;
     const covers = value >= premiumDollars;
-    const breakeven = premiumDollars / (multiple.value * (1 - TAX_RATE));
+    const breakeven = premiumDollars / (multiple.value * taxFactor);
     return {
-      step: 3, tag: TAG_PREMIUM, verdict: covers ? 'covers' : 'short',
+      step: 3, tag: tagPremium(basis, multiple), verdict: covers ? 'covers' : 'short',
       text: covers ? 'Synergies cover the premium' : "Synergies don't cover the premium",
-      premiumDollars, multiple, afterTaxSynergies: afterTax, capitalizedValue: value, breakeven, entered: y3.ebitda,
+      premiumDollars, multiple, synergyBasis: basis, capitalizedSynergies, capitalizedValue: value, breakeven, entered: y3.ebitda,
       line: breakevenLine(breakeven, y3.ebitda),
     };
   }

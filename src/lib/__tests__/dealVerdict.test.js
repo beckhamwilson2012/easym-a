@@ -1,4 +1,4 @@
-import { dealVerdict, TAG_YEAR1, TAG_PREMIUM } from '../dealVerdict';
+import { dealVerdict, TAG_YEAR1 } from '../dealVerdict';
 import { calcProFormaEPS } from '../../utils/dealCalc';
 
 // Acquirer: NI 200, 100 diluted shares (EPS 2), price 40. Target: NI 50, 50 shares, price 25. 0% cash: no financing drag.
@@ -43,16 +43,35 @@ describe('deal verdict ladder', () => {
     expect(v.entered).toBe(20);
   });
 
-  test('step 3: synergies vs premium at EV/EBITDA when P/E is not meaningful', () => {
+  test('step 3 at EV/EBITDA capitalizes PRE-tax Year 3 synergies; the breakeven is on the same basis', () => {
     const inp = inputs({ companyANetIncome: -100, companyAEPS: -1 });
     const v = dealVerdict({ deal: deal(inp, [10, 20, 30]), model: model(), acquirerFwd: [{ label: 'FY2026E', eps: -0.2 }], targetFwd: [{ label: 'FY2026E', eps: 1 }] });
     expect(v.step).toBe(3);
-    expect(v.tag).toBe(TAG_PREMIUM);
+    expect(v.tag).toBe('Premium vs synergies (pre-tax, EV/EBITDA 10.00x)');
     expect(v.multiple).toEqual({ value: 10, name: 'EV/EBITDA' });
-    expect(v.premiumDollars).toBe((30 - 25) * 50);          // 250
-    expect(v.capitalizedValue).toBeCloseTo(30 * 0.79 * 10, 12); // 237
-    expect(v.text).toBe("Synergies don't cover the premium");
-    expect(v.breakeven).toBeCloseTo(250 / (10 * 0.79), 12);
+    expect(v.synergyBasis).toBe('pre-tax');
+    expect(v.premiumDollars).toBe((30 - 25) * 50);           // 250
+    expect(v.capitalizedSynergies).toBe(30);                  // as entered, no tax
+    expect(v.capitalizedValue).toBe(30 * 10);                 // 300 ≥ 250
+    expect(v.text).toBe('Synergies cover the premium');
+    expect(v.breakeven).toBe(250 / 10);                       // 25 pre-tax
+    expect(v.breakeven * v.multiple.value).toBe(v.premiumDollars);
+    expect(v.line).toBe('Breaks even at $25M of synergies; entered $30M');
+  });
+
+  test('step 3 at P/E keeps AFTER-tax synergies; the breakeven is the pre-tax figure whose after-tax value covers the premium', () => {
+    // Standalone EPS positive (2) but Year 1 pro forma EPS can't be computed (target NI missing), no forecast: step 3 at P/E 40 ÷ 2 = 20.
+    const inp = inputs({ companyBNetIncome: null });
+    const v = dealVerdict({ deal: deal(inp, [10, 20, 30]), model: model(), acquirerFwd: [], targetFwd: [] });
+    expect(v.step).toBe(3);
+    expect(v.multiple).toEqual({ value: 20, name: 'P/E' });
+    expect(v.tag).toBe('Premium vs synergies (after-tax, P/E 20.00x)');
+    expect(v.synergyBasis).toBe('after-tax');
+    expect(v.capitalizedSynergies).toBeCloseTo(30 * 0.79, 12);
+    expect(v.capitalizedValue).toBeCloseTo(30 * 0.79 * 20, 12);  // 474 ≥ 250
+    expect(v.text).toBe('Synergies cover the premium');
+    expect(v.breakeven).toBeCloseTo(250 / (20 * 0.79), 12);
+    expect(v.breakeven * 0.79 * 20).toBeCloseTo(v.premiumDollars, 9);
   });
 
   test('step 3 uses the premium reference price when one is chosen', () => {
