@@ -28,6 +28,7 @@ const { locateStatements } = require('./server/services/locatorAgent'); // Phase
 const { extractPage } = require('./server/services/extractorAgent');    // Phase 3 — Sonnet line-item extractor
 const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
 const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
+const { readNonGaapTables, reconcileCheck } = require('./server/services/nonGaapTables'); // non-GAAP from the exhibit's own reconciliation tables (no model) + the one reconcile check
 const { classifySector, SECTORS: CLASSIFIER_SECTORS } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
@@ -80,7 +81,6 @@ const llm = rateLimit({
 app.use('/api', general);
 app.use('/quote', general);
 app.use('/search', general);
-app.use('/api/nongaap', llm);
 app.use('/api/eightk', llm);
 app.use('/api/chat', llm);   // landing-page assistant — one Anthropic call per request → LLM tier (30/hr), NOT general (500/15min)
 
@@ -91,11 +91,10 @@ const ALPHAVANTAGE_KEY = process.env.ALPHAVANTAGE_KEY || '';
 const priceCache   = new Map();
 const CACHE_TTL_MS = 300_000; // 5 min — longer TTL reduces Yahoo call frequency (avoids 429s)
 
-// Annual non-GAAP results (FYE 8-K + LLM extract, ~13-21s cold). The figure for a completed fiscal
-// year is immutable, so a long TTL is safe — keyed by ticker (this route auto-selects each ticker's
-// latest FYE filing; the immutable fiscalYear + sourceAccession travel in the cached payload). The
-// 24h TTL still lets a re-extraction refresh and prevents a transient bad extract from sticking.
-// ONLY fully-reconciled successes are cached (see the route); null/failed results always retry live.
+// Annual non-GAAP results (FYE 8-K exhibit, read from its tables). The figures for a completed fiscal
+// year are immutable, so a long TTL is safe — keyed by ticker (this route auto-selects each ticker's
+// latest FYE filing; the immutable fiscalYear + sourceAccession travel in the cached payload).
+// Only a response built from an exhibit that was actually read is cached; fetch errors always retry live.
 const nonGaapCache       = new Map();
 const NONGAAP_CACHE_TTL_MS = 86_400_000; // 24h
 
@@ -2336,7 +2335,9 @@ function parseFilingDocs(indexHtml) {
 // latest 2.02 8-K, byte-for-byte unchanged. NOTE: this only sees filings.recent (~the last 1000 filings
 // / a few years for an infrequent filer); older filings live in filings.files[] and would require
 // submissions-paging — out of scope here.
-async function locateReconciliation(ticker, opts = {}) {
+// Steps 1–2 only: the earnings 8-K and its press-release exhibit URL. Shared by the locate route and
+// /api/nongaap (which reads the exhibit's tables itself). Returns out with sourceUrl set, or a note.
+async function locateEarningsExhibit(ticker, opts = {}) {
   const out = { ticker, cik: null, found: false, filingDate: null, accessionNumber: null, sourceUrl: null, exhibit: null, reconciliationText: null, note: null };
   try {
     await loadTickers();
@@ -2375,7 +2376,17 @@ async function locateReconciliation(ticker, opts = {}) {
     if (!ex) { out.note = 'No Exhibit 99.x (press release) found in the earnings 8-K.'; return out; }
     out.exhibit = ex.type.replace('EX-', '');
     out.sourceUrl = `${folder}/${ex.file}`;
+    return out;
+  } catch (e) {
+    out.note = `Error: ${e.message}`;
+    return out;
+  }
+}
 
+async function locateReconciliation(ticker, opts = {}) {
+  const out = await locateEarningsExhibit(ticker, opts);
+  if (!out.sourceUrl) return out;
+  try {
     // Step 3 — isolate the historical GAAP→non-GAAP reconciliation region (table-preserving text).
     const lines = htmlToTableText(await getText(out.sourceUrl)).split('\n');
     const isCaption = (l) => {
@@ -2512,19 +2523,8 @@ function parseLlmJson(message) {
   try { return { parsed: JSON.parse(s), rawText }; } catch { return { parsed: null, rawText }; }
 }
 
-// The SAFEGUARD — runs in code, never the model: gaap + sum(adjustments) ≈ nonGaap within a unit-aware tolerance.
-function reconcileCheck(line) {
-  const gaap = parseFloat(line.gaap);
-  const nonGaap = parseFloat(line.nonGaap);
-  const adj = Array.isArray(line.adjustments) ? line.adjustments : [];
-  const sumAdj = adj.reduce((s, a) => s + (parseFloat(a && a.value) || 0), 0);
-  const computed = gaap + sumAdj;
-  const residual = Math.round((nonGaap - computed) * 1000) / 1000;
-  const unit = (line.unit || '').toLowerCase();
-  const tolerance = /per.?share|eps/.test(unit) ? 0.02 : /percent|%/.test(unit) ? 0.15 : 2.0; // cent for EPS, ~0.1pp, ~$2M
-  const reconciles = Number.isFinite(gaap) && Number.isFinite(nonGaap) && Math.abs(residual) <= tolerance;
-  return { reconciles, residual, computed: Math.round(computed * 100) / 100, tolerance };
-}
+// The SAFEGUARD — reconcileCheck() — lives in server/services/nonGaapTables.js (imported above); the
+// table reader and this extractor share that one copy.
 
 // Audit trail: the filing line the figure came from, so every number is traceable back to the 8-K.
 function findSnippet(text, line) {
@@ -2535,54 +2535,6 @@ function findSnippet(text, line) {
   let hit = metricHead && rows.find(l => /non-?gaap/i.test(l) && new RegExp(metricHead, 'i').test(l));
   if (!hit) hit = rows.find(l => ngStr && l.includes(ngStr));
   return hit ? hit.trim().slice(0, 200) : null;
-}
-
-// Extract the REPORTED non-GAAP diluted share count straight from the 8-K reconciliation table — the
-// "Shares used (in computing|to compute) ... diluted net income per share" row — NOT computed. The
-// table lists shares per column; we align to the SAME column as the selected full-year non-GAAP EPS
-// (match the EPS value within the EPS row, then take that column index in the shares row), so the
-// share count belongs to the full-year column we picked. The NI ÷ EPS identity is a SANITY CHECK only:
-// if the reported figure and the identity disagree materially we flag it and refuse the figure (null)
-// rather than silently picking one — never fabricate a denominator for the accretion math.
-function extractNonGaapDilutedShares(reconciliationText, nonGaapEps, nonGaapNi) {
-  const out = { shares: null, reported: null, implied: null, reconciles: false, note: null };
-  if (!Number.isFinite(nonGaapEps) || nonGaapEps === 0 || !Number.isFinite(nonGaapNi)) {
-    out.note = 'cannot source shares — non-GAAP EPS/NI unavailable'; return out;
-  }
-  out.implied = Math.round((nonGaapNi / nonGaapEps) * 10) / 10; // sanity reference only
-  const nums = (s) => (String(s).match(/-?\d[\d,]*\.?\d*/g) || []).map(x => parseFloat(x.replace(/,/g, ''))).filter(Number.isFinite);
-  const rows = reconciliationText.split('\n');
-  const epsRow    = rows.find(l => /non-?gaap/i.test(l) && /per share/i.test(l) && /\d/.test(l));
-  // Basis-specific shares row. A GAAP-loss filer (e.g. Atlassian) reports TWO weighted-share rows —
-  // basic for the GAAP loss EPS, fully-diluted for the non-GAAP income EPS. Prefer the row whose label
-  // ALSO says non-GAAP; if only one generic row exists (CRM/ADBE), use it; if several rows exist and
-  // none is non-GAAP-labeled, refuse to guess (null) rather than pick the wrong basis.
-  const shareRows   = rows.filter(l => /shares used/i.test(l) && /diluted/i.test(l) && /\d/.test(l));
-  const ngShareRows = shareRows.filter(l => /non-?gaap/i.test(l));
-  const sharesRow   = ngShareRows.length >= 1 ? ngShareRows[0]
-                    : shareRows.length === 1 ? shareRows[0]
-                    : null;
-  if (!epsRow || !sharesRow) {
-    out.note = (!sharesRow && shareRows.length > 1)
-      ? `${shareRows.length} shares rows found, none labeled non-GAAP — refusing to guess between unlabeled rows`
-      : 'shares/EPS row not located in reconciliation text';
-    return out;
-  }
-  const epsNums = nums(epsRow);
-  let idx = -1, best = Infinity;
-  epsNums.forEach((n, i) => { const d = Math.abs(n - nonGaapEps); if (d < best) { best = d; idx = i; } });
-  const shareNums = nums(sharesRow);
-  out.reported = (idx >= 0 && idx < shareNums.length) ? shareNums[idx] : null;
-  if (out.reported == null) { out.note = `shares column index ${idx} out of range (${shareNums.length} cells)`; return out; }
-  const rel = out.implied > 0 ? Math.abs(out.reported - out.implied) / out.implied : 1;
-  out.reconciles = rel <= 0.01; // within 1% of NI/EPS
-  if (out.reconciles) {
-    out.shares = out.reported;
-    out.note = `reported ${out.reported}M from filing ≈ identity ${out.implied}M (NI/EPS); Δ${(rel * 100).toFixed(2)}%`;
-  } else {
-    out.note = `MISMATCH: reported ${out.reported}M vs identity ${out.implied}M (NI/EPS), Δ${(rel * 100).toFixed(2)}% — flagged, not used`;
-  }
-  return out;
 }
 
 // Resolve the filing's reporting unit → a scale factor that converts native dollar figures to MILLIONS
@@ -2705,39 +2657,38 @@ if (process.env.NODE_ENV !== 'production') {
   });
 }
 
-// ── Deck non-GAAP layer, Piece 1: period-matched ANNUAL reported non-GAAP from the fiscal-year-end 8-K ──
-// Wraps the proven locate → extract → reconcile path (unchanged). Backend only — no deck rendering.
+// ── Deck non-GAAP layer: period-matched ANNUAL company-reported non-GAAP from the fiscal-year-end 8-K ──
+// Reads the exhibit's own HTML reconciliation tables (server/services/nonGaapTables.js). No model is called.
+// Each figure carries its value, period, the company's row label, the 8-K accession and the tie-out, or
+// is null with the reason. Figures: adjusted diluted EPS (with the non-GAAP net income and diluted share
+// count it implies) and adjusted EBITDA under the company's own name.
 app.get('/api/nongaap/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
   const out = {
-    ticker, fiscalYear: null, fiscalYearEnd: null, sourceAccession: null, sourceUrl: null,
-    nonGaap:    { operatingIncome: null, netIncome: null, dilutedEPS: null, dilutedShares: null },
-    gaapAnchor: { operatingIncome: null, netIncome: null, dilutedEPS: null },
-    allReconciled: false, cached: false, note: null, status: null,   // Stage 9G — outcome class (see enum); lets the client tell a SYSTEM failure from real filer absence
+    ticker, fiscalYear: null, fiscalYearEnd: null, sourceAccession: null, sourceUrl: null, filingDate: null,
+    figures: { eps: null, netIncome: null, dilutedShares: null, ebitda: null },
+    reasons: { eps: null, netIncome: null, dilutedShares: null, ebitda: null },
+    status: null, note: null, cached: false,
   };
+  const allReasons = (why) => { for (const k of Object.keys(out.reasons)) out.reasons[k] = why; };
 
-  // Warm cache: only fully-reconciled successes are ever stored, so a hit is instant (<50ms) and
-  // byte-identical to the cold response except for cached:true. (priceCache-style Map + ts check.)
-  const cacheKey = ticker;
-  const hit = nonGaapCache.get(cacheKey);
-  if (hit && Date.now() - hit.ts < NONGAAP_CACHE_TTL_MS) {
-    return res.json({ ...hit.payload, cached: true });
-  }
+  const hit = nonGaapCache.get(ticker);
+  if (hit && Date.now() - hit.ts < NONGAAP_CACHE_TTL_MS) return res.json({ ...hit.payload, cached: true });
 
   try {
     await loadTickers();
     const cik = cikBySymbol[ticker];
-    if (!cik) { out.note = 'No SEC CIK found for this ticker.'; out.status = 'no_8k'; return res.json(out); }
+    if (!cik) { out.status = 'no_8k'; out.note = 'No SEC CIK found for this ticker.'; allReasons(out.note); return res.json(out); }
 
-    // 1) Deck's latest FY + GAAP basis — the same EDGAR source /quote uses (Source 1).
+    // 1) Deck's latest FY — the same EDGAR source /quote uses.
     const edgar = await fetchFromEDGAR(ticker, cik);
     const fy = edgar && edgar.fiscalYear ? Number(edgar.fiscalYear) : null;
     out.fiscalYear = fy;
     out.fiscalYearEnd = edgar ? (edgar.fiscalYearEnd || null) : null;
-    if (!fy || !out.fiscalYearEnd) { out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; out.status = 'no_8k'; return res.json(out); }
+    const fyEndYear = out.fiscalYearEnd ? Number(String(out.fiscalYearEnd).slice(0, 4)) : null;
+    if (!fy || !fyEndYear) { out.status = 'no_8k'; out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; allReasons(out.note); return res.json(out); }
 
-    // 2) Find the fiscal-year-END earnings 8-K: the item-2.02 8-K filed 5–90 days AFTER the FY end.
-    //    Quarterly 8-Ks are filed mid-fiscal-year, so they fall outside this window.
+    // 2) The fiscal-year-END earnings 8-K: the item-2.02 8-K filed 5–90 days AFTER the FY end.
     const sub = await get(`https://data.sec.gov/submissions/CIK${cik}.json`);
     const r = sub.filings?.recent || {};
     const fyeMs = new Date(out.fiscalYearEnd).getTime();
@@ -2746,85 +2697,42 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     for (let i = 0; i < (r.form?.length || 0); i++) {
       if (r.form[i] !== '8-K' || !(r.items[i] || '').includes('2.02')) continue;
       const days = (new Date(r.filingDate[i]).getTime() - fyeMs) / DAY;
-      if (days >= 5 && days <= 90 && (!best || days < best.days)) {
-        best = { acc: r.accessionNumber[i], date: r.filingDate[i], days: Math.round(days) };
-      }
+      if (days >= 5 && days <= 90 && (!best || days < best.days)) best = { acc: r.accessionNumber[i], date: r.filingDate[i], days: Math.round(days) };
     }
-    if (!best) { out.note = `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${out.fiscalYearEnd}.`; out.status = 'no_8k'; return res.json(out); }
+    if (!best) { out.status = 'no_8k'; out.note = `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${out.fiscalYearEnd}.`; allReasons(out.note); return res.json(out); }
     out.sourceAccession = best.acc;
+    out.filingDate = best.date;
 
-    // 3) Locate + extract + reconcile via the proven path (unchanged).
-    const loc = await locateReconciliation(ticker, { accession: best.acc });
+    // 3) Its press-release exhibit, then the exhibit's tables.
+    const loc = await locateEarningsExhibit(ticker, { accession: best.acc });
     out.sourceUrl = loc.sourceUrl;
-    if (!loc.found) { out.note = `FYE 8-K ${best.acc} found but no reconciliation isolated: ${loc.note}`; out.status = 'no_recon_table'; return res.json(out); }
-    const ex = await extractAndReconcile(loc.reconciliationText);
+    if (!loc.sourceUrl) { out.status = 'no_8k'; out.note = `FYE 8-K ${best.acc}: ${loc.note}`; allReasons(out.note); return res.json(out); }
+    const html = await getText(loc.sourceUrl);
+    const t = readNonGaapTables(html, { fiscalYear: fy, fyEndYear, accession: best.acc, sourceUrl: loc.sourceUrl });
+    Object.assign(out.figures, { eps: t.eps, netIncome: t.netIncome, dilutedShares: t.dilutedShares, ebitda: t.ebitda });
+    Object.assign(out.reasons, t.reasons);
 
-    // Stage 9G — extractor SYSTEM failure (key missing / Anthropic error / unparseable output). All three
-    // return extractedLines:[], which would otherwise fall through to the "missing full-year line(s)" note
-    // below — a FALSE claim about the FILING when the extractor never ran. Surface the real reason instead,
-    // and skip the filing-claim note entirely.
-    if (ex.status) { out.status = ex.status; out.note = ex.note; return res.json(out); }
-
-    // 4) Select the FULL-YEAR column whose year == deck fiscalYear (ignore the Q4 + prior-FY columns).
-    const isFullYear = (p) => /(fiscal\s+year|year|twelve\s+months)\s+ended/i.test(p || '') && !/three|six|nine|quarter/i.test(p || '');
-    const yearOf = (p) => { const m = String(p || '').match(/\d{4}/g); return m ? Number(m[m.length - 1]) : null; };
-    const pick = (pred) => (ex.extractedLines || []).find(l => pred(l) && isFullYear(l.period) && yearOf(l.period) === fy);
-    const lines = {
-      operatingIncome: pick(l => /income from operations|operating income/i.test(l.metric || '')),
-      netIncome:       pick(l => /net income/i.test(l.metric || '') && !/per share/i.test(l.metric || '')),
-      dilutedEPS:      pick(l => /per share/i.test(l.metric || '')),
+    // 4) Unit cross-check: the table's stated unit must agree with GAAP net income in the table ÷ EDGAR's
+    //    GAAP net income ($M). Disagreement → the dollar figures are dropped, never rescaled by guess.
+    const unitCheck = (fig, why) => {
+      if (!fig) return true;
+      const u = resolveUnitScale(fig.gaapNative, edgar ? edgar.netIncome : null, `(in ${fig.nativeUnit})`);
+      fig.unitCheck = u.source;
+      if (u.flagged) { out.reasons[why] = `unit check failed: ${u.source}`; return false; }
+      return true;
     };
+    if (!unitCheck(out.figures.netIncome, 'netIncome')) { out.figures.netIncome = null; out.figures.dilutedShares = null; out.reasons.dilutedShares = out.reasons.netIncome; }
+    if (!unitCheck(out.figures.ebitda, 'ebitda')) out.figures.ebitda = null;
 
-    const missing = Object.entries(lines).filter(([, l]) => !l).map(([k]) => k);
-    const nonRec  = Object.entries(lines).filter(([, l]) => l && !l.reconciles).map(([k]) => k);
-    if (missing.length || nonRec.length) {
-      // Honest null — never return a fabricated or non-reconciling annual figure.
-      out.status = missing.length ? 'lines_missing' : 'did_not_reconcile';   // Stage 9G — genuine filer result (the extractor ran; ex.status was unset)
-      out.note = `FYE 8-K ${best.acc} (FY${fy} column)` +
-        (missing.length ? ` — missing full-year line(s): ${missing.join(', ')}.` : '') +
-        (nonRec.length ? ` — did not reconcile: ${nonRec.join(', ')}.` : '') +
-        ' Returning null for safety.';
-      return res.json(out);
-    }
-    // Reported non-GAAP diluted shares — sourced from the filing's share row, column-aligned to the
-    // selected non-GAAP EPS, verified against the NI/EPS identity (flagged + null on material mismatch).
-    const sh = extractNonGaapDilutedShares(loc.reconciliationText, lines.dilutedEPS.nonGaap, lines.netIncome.nonGaap);
-    out.nonGaap    = { operatingIncome: lines.operatingIncome.nonGaap, netIncome: lines.netIncome.nonGaap, dilutedEPS: lines.dilutedEPS.nonGaap, dilutedShares: sh.shares };
-    out.gaapAnchor = { operatingIncome: lines.operatingIncome.gaap,    netIncome: lines.netIncome.gaap,    dilutedEPS: lines.dilutedEPS.gaap };
-    out.allReconciled = true;
-    out.status = 'reconciled';   // Stage 9G
-    out.note = `Annual non-GAAP from FYE 8-K ${best.acc} (filed ${best.date}, ${best.days}d after FYE ${out.fiscalYearEnd}); selected column "${lines.dilutedEPS.period}" == deck FY${fy}; op/ni/eps reconcile (LLM extract, code-checked); diluted shares: ${sh.note}.`;
-
-    // ── Normalize dollar figures to MILLIONS (the deck's unit). Reconcile-check already ran on the raw,
-    // same-unit lines above, so allReconciled is unaffected; here we only rescale the unit-bearing fields
-    // (operating income, net income, diluted shares — and the GAAP anchor's same fields). EPS untouched.
-    const u = resolveUnitScale(out.gaapAnchor.netIncome, edgar ? edgar.netIncome : null, loc.reconciliationText);
-    if (u.flagged) {
-      // Ambiguous unit — do NOT emit possibly-wrong dollar figures; null them so the deal falls back to GAAP.
-      out.nonGaap.operatingIncome = null; out.nonGaap.netIncome = null; out.nonGaap.dilutedShares = null;
-      out.gaapAnchor.operatingIncome = null; out.gaapAnchor.netIncome = null;
-      out.note += ` ${u.source}.`;
-    } else {
-      const sc = (v) => v == null ? null : Math.round(v * u.scale * 1000) / 1000;
-      out.nonGaap.operatingIncome    = sc(out.nonGaap.operatingIncome);
-      out.nonGaap.netIncome          = sc(out.nonGaap.netIncome);
-      out.nonGaap.dilutedShares      = sc(out.nonGaap.dilutedShares);
-      out.gaapAnchor.operatingIncome = sc(out.gaapAnchor.operatingIncome);
-      out.gaapAnchor.netIncome       = sc(out.gaapAnchor.netIncome);
-      out.note += ` Unit→$M: ${u.source}.`;
-    }
-
-    // Cache ONLY a fully-reconciled success with all three figures present. A null/failed/non-
-    // reconciling result is never stored (every branch above returns before here), so a transient
-    // EDGAR hiccup or extraction miss always retries live rather than freezing a fabrication-adjacent
-    // failure. Store cached:false; the warm read overrides it to true.
-    const ng = out.nonGaap;
-    if (out.allReconciled && ng.operatingIncome != null && ng.netIncome != null && ng.dilutedEPS != null) {
-      nonGaapCache.set(cacheKey, { ts: Date.now(), payload: { ...out } });
-    }
+    const have = Object.entries(out.figures).filter(([, v]) => v).map(([k]) => k);
+    out.status = have.length ? 'reported' : 'none_reported';
+    out.note = `FYE 8-K ${best.acc} (filed ${best.date}, ${best.days}d after FYE ${out.fiscalYearEnd}), exhibit ${loc.exhibit}; read ${t.tablesRead} tables for the FY${fy} full-year column. Found: ${have.length ? have.join(', ') : 'none'}.`;
+    nonGaapCache.set(ticker, { ts: Date.now(), payload: { ...out } });
     return res.json(out);
   } catch (e) {
+    out.status = 'error';
     out.note = `Error: ${e.message}`;
+    allReasons(`non-GAAP lookup failed: ${e.message}`);
     return res.json(out);
   }
 });
