@@ -45,6 +45,7 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
     ticker: c.ticker || null,
     name:   c.name || null,
     shares: num(c.shares),
+    sharesLabel: c.sharesLabel || null,   // provenance of a class-summed cover count; null for every other filer
     price:  num(c.sharePrice),
     // currentMarketCap = LIVE price × shares (real equity value). This — NOT the overloaded
     // `marketCap` (which for the TARGET equals the acquisition price ≈ totalPurchasePrice) — is the
@@ -157,6 +158,7 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
     // capitalization
     newShares,
     preDealShares,
+    preDealSharesLabel: A.sharesLabel,
     targetShares: T.shares,
     proFormaShares,
     ownershipExistingPct,

@@ -18,6 +18,7 @@ const { getShareholderAnalysis } = require('./server/services/def14aParser'); //
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
 const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod, grossProfitAbsentReason } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
+const { multiClassCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts'); // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
@@ -594,6 +595,16 @@ async function fetchFromEDGAR(symbol, cik) {
     if (shareInstantStale(entry.end)) continue;         // stale under this source → fall through to the next
     shares = entry.val; sharesConcept = concept; sharesInstant = entry.end; break;
   }
+  // A cover page that reports shares BY CLASS (dual-class filers: HNGE, NET, DDOG) never reaches companyfacts, which
+  // keeps only undimensioned facts, so the chain above fell to a fiscal-year weighted average. The count is the sum of
+  // every class on the latest 10-K/10-Q cover, one filing, one date (coverShares). Single-class filers return null here
+  // and keep the chain above unchanged.
+  const coverClasses = useIfrs ? null : await multiClassCoverShares(cik, dei);
+  let sharesLabel = null;
+  if (coverClasses) {
+    shares = coverClasses.value; sharesConcept = 'dei:EntityCommonStockSharesOutstanding (sum of classes)';
+    sharesInstant = coverClasses.date; sharesLabel = coverClasses.label;
+  }
   // 2b (fallback sanity) is intentionally NOT auto-rejecting on a >25% jump: the only in-call cross-check is a
   // concept's own prior annual, and a real split (WMT's 2024 3-for-1) is indistinguishable from a mis-tag on
   // that alone — auto-rejecting would drop legitimate splits. CRM's live mis-tag (819) is already excluded by
@@ -723,7 +734,9 @@ async function fetchFromEDGAR(symbol, cik) {
   const totalAssets = useIfrs ? pickMatched(ifrs, ['Assets'], revenueEntry?.end) : bsPick(['Assets']);
 
   const revenueM = inM(revenue);
-  const sharesM  = shares == null ? null : inM(shares);   // null (not 0) when the count is unresolved/stale → renders "—"
+  // A class-summed cover count is carried exactly ($M to the share: HNGE 81.271302), so market cap = that count × price.
+  // Every other path keeps its whole-million rounding unchanged.
+  const sharesM  = shares == null ? null : (coverClasses ? shares / 1e6 : inM(shares));   // null (not 0) when the count is unresolved/stale → renders "—"
   console.log(`[${symbol}] EDGAR extracted — revenue: ${revenueM}M (concept: ${revenueConcept}), shares: ${sharesM}M via ${sharesConcept || 'none'}@${sharesInstant || '—'}, eps: ${eps}, ebitda: ${inM(ebitda)}M, netIncome: ${inM(netIncome)}M`);
 
   if (revenueM === 0 && !sharesM) return null;
@@ -806,7 +819,8 @@ async function fetchFromEDGAR(symbol, cik) {
     netIncome:      netIncome != null ? inM(netIncome) : null,
     shares:         sharesM,
     sharesConcept:  sharesConcept,       // provenance: which concept the point-in-time count resolved from (staleness-gated)
-    sharesAsOf:     sharesInstant,        // provenance: its instant (may differ from balanceSheetAsOf by design — cover-page is as-of the filing date)
+    sharesAsOf:     sharesInstant,
+    sharesLabel,                          // "Class A + Class B, cover of 10-Q filed 2026-11-09" for a class-summed cover; null otherwise        // provenance: its instant (may differ from balanceSheetAsOf by design — cover-page is as-of the filing date)
     dilutedShares:  inM(dilutedShares), // weighted-avg diluted — for EPS math only (not market cap)
     dilutedSharesPeriod,                // provenance: { basis, end } of that count
     eps:            eps != null ? parseFloat(eps.toFixed(2)) : null,

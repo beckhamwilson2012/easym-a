@@ -140,7 +140,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
     { k: 'Exchange ratio', v: d.exchangeRatio != null ? `${d.exchangeRatio.toFixed(4)} ${aTk} per ${bTk} share` : '—', bold: true },
     { k: `${bName} shares outstanding`, v: dash(d.targetShares, fmtShares) },
     { k: `New ${aTk} shares issued`, v: dash(d.newShares, fmtShares) },
-    { k: `${aName} shares (pre-deal)`, v: dash(d.preDealShares, fmtShares) },
+    { k: d.preDealSharesLabel ? `${aName} shares (pre-deal; ${d.preDealSharesLabel})` : `${aName} shares (pre-deal)`, v: dash(d.preDealShares, fmtShares) },
     { k: 'Pro forma total shares', v: dash(d.proFormaShares, fmtShares), bold: true },
   ];
 

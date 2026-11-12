@@ -521,4 +521,5 @@ module.exports = {
   sumComponents, calculateGrossProfit, resolveGrossProfit, grossFromCostOfRevenue, statementCostResolutions, statementCostTieOut,
   LTM_COST_DISAGREES_REASON, annualCostCorrectedFromStatement, NO_COST_LINE_REASON, grossProfitAbsentReason,
   pickAnnualAt, annualIncomeLines, describeCostSource, describeLtmCostSource, componentSumEntries, parseInstanceCosts, prepareIncomeFacts, filerSic, latestAnnualFilingPeriod,
+  submissions,
 };

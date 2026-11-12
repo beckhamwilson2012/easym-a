@@ -2,6 +2,7 @@
 const { get } = require('../utils/httpGet');
 const { resolveTotalDebt } = require('./debtConcepts'); // shared total-debt resolution (deal EV / comps / §16 identical)
 const { annualIncomeLines, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./incomeConcepts'); // shared cost of revenue / gross profit (/quote, /api/pnl, LTM, §16 identical)
+const { multiClassCoverShares } = require('./coverShares'); // dual-class cover count, shared with /quote
 const { resolveFilerRevenue, isOlderFiscalYear } = require('./revenueConcepts'); // shared revenue and fiscal-year floor (/quote, /api/pnl, LTM, §16 identical)
 const { OPERATING_CASH_FLOW_CONCEPTS, resolveCapexAt, resolveOperatingCashFlowAt, computeFreeCashFlow } = require('./cashFlowConcepts'); // shared capex and FCF
 
@@ -132,11 +133,14 @@ async function fetchFields(cik) {
   const fcfResult = computeFreeCashFlow(resolveOperatingCashFlowAt(gaap, refEnd), capex);
   const ocfEntry = pickAtEnd(gaap, OPERATING_CASH_FLOW_CONCEPTS, refEnd);
 
-  // Shares: point-in-time balance sheet count preferred over weighted average
-  const sharesEntry =
-    latestAnnualEntry(gaap['CommonStockSharesOutstanding'],      'shares', floorEnd) ??
-    latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares', floorEnd) ??
-    latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares', floorEnd);
+  // Shares: a multi-class cover is the sum of its classes (coverShares, the same helper /quote uses); otherwise the
+  // point-in-time balance sheet count preferred over weighted average, unchanged.
+  const coverClasses = useIfrs ? null : await multiClassCoverShares(cik, dei);
+  const sharesEntry = coverClasses
+    ? { val: coverClasses.value, end: coverClasses.date, form: coverClasses.form, fy: null, fp: null, label: coverClasses.label }
+    : latestAnnualEntry(gaap['CommonStockSharesOutstanding'],      'shares', floorEnd) ??
+      latestAnnualEntry(dei['EntityCommonStockSharesOutstanding'], 'shares', floorEnd) ??
+      latestAnnualEntry(gaap['WeightedAverageNumberOfSharesOutstandingBasic'], 'shares', floorEnd);
 
   let freeCashFlow = null;
   if (fcfResult.value != null) {
@@ -151,7 +155,8 @@ async function fetchFields(cik) {
   }
 
   const sharesField = sharesEntry ? {
-    value: inM(sharesEntry.val),
+    value: coverClasses ? sharesEntry.val / 1e6 : inM(sharesEntry.val),
+    ...(coverClasses ? { sourceLabel: coverClasses.label } : {}),
     asOf:  sharesEntry.end,
     period: { fy: sharesEntry.fy, fp: sharesEntry.fp, form: sharesEntry.form, end: sharesEntry.end },
     source: 'edgar',
