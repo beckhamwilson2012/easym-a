@@ -1067,7 +1067,8 @@ function App() {
     sharesLabel: quoteB?.sharesLabel ?? null,
     // Source of a filed $0 debt, or why debt is "—". Carried only while the card still shows the /quote figure (an edit drops it).
     debtLabel:  quoteB && inputs.companyBDebt === quoteB.debt ? (quoteB.debtLabel ?? null) : null,
-    debtReason: quoteB && inputs.companyBDebt == null && quoteB.debt == null ? (quoteB.debtReason ?? null) : null,   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
+    debtReason: quoteB && inputs.companyBDebt == null && quoteB.debt == null ? (quoteB.debtReason ?? null) : null,
+    epsLabel: inputs.companyBEpsLabel ?? null, epsReason: inputs.companyBEpsReason ?? null,   // LTM EPS legs (sum of filed quarters), or why it is "—"   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
     balanceSheetAsOf: inputs.companyBBsAsOf, balanceSheetBasis: inputs.companyBBsBasis,
     debt: inputs.companyBDebt, companyType: companyTypeB,
     sharePrice: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null,
@@ -1109,7 +1110,8 @@ function App() {
     sharesLabel: quoteA?.sharesLabel ?? null,
     // Source of a filed $0 debt, or why debt is "—". Carried only while the card still shows the /quote figure (an edit drops it).
     debtLabel:  quoteA && inputs.companyADebt === quoteA.debt ? (quoteA.debtLabel ?? null) : null,
-    debtReason: quoteA && inputs.companyADebt == null && quoteA.debt == null ? (quoteA.debtReason ?? null) : null,   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
+    debtReason: quoteA && inputs.companyADebt == null && quoteA.debt == null ? (quoteA.debtReason ?? null) : null,
+    epsLabel: inputs.companyAEpsLabel ?? null, epsReason: inputs.companyAEpsReason ?? null,   // LTM EPS legs (sum of filed quarters), or why it is "—"   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
     balanceSheetAsOf: inputs.companyABsAsOf, balanceSheetBasis: inputs.companyABsBasis,
     debt: inputs.companyADebt, companyType: companyTypeA,
     sharePrice: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null,

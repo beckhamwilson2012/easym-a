@@ -353,8 +353,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Combined Net Interest Income',  value: fmtMoneyTable((target?.netInterestIncome || 0) + (acquirer?.netInterestIncome || 0)) },
               { label: 'Combined Non-Interest Income',  value: fmtMoneyTable((target?.nonInterestIncome || 0) + (acquirer?.nonInterestIncome || 0)) },
               { label: 'Combined Non-Interest Expense', value: `(${fmtMoneyTable((target?.nonInterestExpense || 0) + (acquirer?.nonInterestExpense || 0))})`, red: true },
-              { label: 'Acquirer Net Income',           value: fmtMoneyAccounting(inputs.companyANetIncome) },
-              { label: 'Target Net Income',             value: fmtMoneyAccounting(inputs.companyBNetIncome) },
+              { label: (inputs.companyANetIncomeToCommon ? 'Acquirer Net Income to Common (EPS numerator)' : 'Acquirer Net Income'), value: fmtMoneyAccounting(inputs.companyANetIncome) },
+              { label: (inputs.companyBNetIncomeToCommon ? 'Target Net Income to Common (EPS numerator)' : 'Target Net Income'), value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Cost Synergies (Y1)', value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
@@ -365,8 +365,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               ...(results.synergies.years[0].revenue != null ? [{ label: 'Pro Forma Revenue (incl. Y1 revenue synergies)', value: fmtMoneyTable(results.proFormaRevenue) }] : []),
               { label: ngPlan ? `Combined EBITDA (${combinedEbitdaBasis || 'n/a'}, incl. Y1 synergies)` : 'Combined EBITDA (incl. Y1 synergies)',
                 value: results.basesDiffer ? '—' : ebDiffer ? `— (${DIFFERENT_BASES})` : fmtMoneyTable(results.combinedEBITDA) },
-              { label: ngPlan && ngPlan.eps.nonGaap ? 'Acquirer Net Income (non-GAAP)' : 'Acquirer Net Income', value: fmtMoneyAccounting(inputs.companyANetIncome) },
-              { label: ngPlan && ngPlan.eps.nonGaap ? 'Target Net Income (non-GAAP)' : 'Target Net Income',   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
+              { label: ngPlan && ngPlan.eps.nonGaap ? 'Acquirer Net Income (non-GAAP)' : (inputs.companyANetIncomeToCommon ? 'Acquirer Net Income to Common (EPS numerator)' : 'Acquirer Net Income'), value: fmtMoneyAccounting(inputs.companyANetIncome) },
+              { label: ngPlan && ngPlan.eps.nonGaap ? 'Target Net Income (non-GAAP)' : (inputs.companyBNetIncomeToCommon ? 'Target Net Income to Common (EPS numerator)' : 'Target Net Income'),   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Synergies (Y1)',  value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered, explain: () => explainSynergies({ schedule: results.synergies, isBank: false }) },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),

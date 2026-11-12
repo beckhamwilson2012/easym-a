@@ -20,7 +20,8 @@ const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareInco
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
 const { multiClassCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts');
-const { resolveZeroDebt } = require('./server/services/debtZero'); // debt that is zero by a filing's own statement, not by absence // shared total-debt resolution — deal EV / comps / §16 resolve identically
+const { resolveZeroDebt } = require('./server/services/debtZero');
+const { resolveLtmEps, epsNumeratorAt, ltmEpsNumerator } = require('./server/services/ltmEps'); // LTM EPS = sum of filed quarters; EPS numerator = net income to common // debt that is zero by a filing's own statement, not by absence // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
@@ -795,6 +796,10 @@ async function fetchFromEDGAR(symbol, cik) {
   } catch (e) {
     ltm = { trusted: false, fallback: 'annual', reason: 'computeLTM error: ' + e.message, asOf: null };
   }
+  // LTM EPS = the sum of filed quarters (never LTM net income ÷ shares); the pro forma numerator beside it is net income to common.
+  if (!useIfrs && ltm && ltm.trusted && ltm.basis !== 'latest-10-K' && ltmRaw && ltmRaw.periods) {
+    Object.assign(ltm, await filedLtmEps(symbol, cik, gaap, ltmRaw, currentEps, revenueEntry?.end ?? null));
+  }
 
   return {
     name:           cleanEntityTitle(titleBySymbol[symbol]) || facts.entityName || symbol,  // registry title (BAC fix) > entityName (can be a subsidiary shell) > ticker
@@ -826,6 +831,9 @@ async function fetchFromEDGAR(symbol, cik) {
     // Last 4 annual revenues (oldest→newest) for the §6 multi-year revenue-trajectory line chart.
     revenueHistory: annualSeries((useIfrs ? ifrs : gaap)[revenueConcept], 'USD', 4),
     netIncome:      netIncome != null ? inM(netIncome) : null,
+    // The filed EPS numerator: net income (loss) attributable to common stockholders for this fiscal year, when the filing reports
+    // it (HNGE FY2025 $(424.087)M vs net loss $(528.261)M). Pro forma EPS uses this so it sits on the same basis as reported EPS.
+    epsNetIncome:   (() => { const n = useIfrs ? null : epsNumeratorAt(gaap, revenueEntry?.end); return n ? inM(n.value) : null; })(),
     shares:         sharesM,
     sharesConcept:  sharesConcept,       // provenance: which concept the point-in-time count resolved from (staleness-gated)
     sharesAsOf:     sharesInstant,
@@ -1874,6 +1882,8 @@ app.get('/api/pnl/:ticker', async (req, res) => {
           ebitda: fy.ebitda, ebitdaDaFound: fy.ebitda != null, ebitdaReason: fy.ebitdaReason,
           eps: fy.eps, dilutedShares: fy.dilutedShares, ltmLabel: lr.fyAsLtm.label });
       })() : { trusted: false, fallback: lr.fallback || 'annual', reason: lr.reason || null };
+      // Same LTM EPS as /quote (filedLtmEps): the sum of filed quarters, with its label or the reason it is "—".
+      if (!useIfrs && lr.ltm && lr.periods) Object.assign(ltmBlock, await filedLtmEps(ticker, cik, ns, lr, sEps[lr.periods.annual.end] ?? null, lr.periods.annual.end));
     } catch (e) { ltmBlock = { trusted: false, fallback: 'annual', reason: 'computeLTM error: ' + e.message }; }
 
     const payload = {
@@ -2621,6 +2631,55 @@ if (process.env.NODE_ENV !== 'production') {
 // Each figure carries its value, period, the company's row label, the 8-K accession and the tie-out, or
 // is null with the reason. Figures: adjusted diluted EPS (with the non-GAAP net income and diluted share
 // count it implies) and adjusted EBITDA under the company's own name.
+// The fiscal-year-END earnings release: the item-2.02 8-K filed 5–90 days AFTER the FY end, nearest first, and its press-release
+// exhibit's HTML. One locator for /api/nongaap and the LTM EPS Q4 read. Returns { best, loc, html } or { reason } (best/loc kept
+// when the exhibit itself is missing). Cached per CIK and FY end.
+const fyReleaseCache = new Map();
+function fyRelease(ticker, cik, fiscalYearEnd) {
+  const key = `${cik}|${fiscalYearEnd}`;
+  const hit = fyReleaseCache.get(key);
+  if (hit && (!hit.failed || Date.now() - hit.ts < 60 * 60 * 1000)) return hit.promise;
+  const promise = (async () => {
+    const sub = await get(`https://data.sec.gov/submissions/CIK${cik}.json`);
+    const r = sub.filings?.recent || {};
+    const fyeMs = new Date(fiscalYearEnd).getTime();
+    const DAY = 86400000;
+    let best = null;
+    for (let i = 0; i < (r.form?.length || 0); i++) {
+      if (r.form[i] !== '8-K' || !(r.items[i] || '').includes('2.02')) continue;
+      const days = (new Date(r.filingDate[i]).getTime() - fyeMs) / DAY;
+      if (days >= 5 && days <= 90 && (!best || days < best.days)) best = { acc: r.accessionNumber[i], date: r.filingDate[i], days: Math.round(days) };
+    }
+    if (!best) return { reason: `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${fiscalYearEnd}.` };
+    const loc = await locateEarningsExhibit(ticker, { accession: best.acc });
+    if (!loc.sourceUrl) return { best, loc, reason: `FYE 8-K ${best.acc}: ${loc.note}` };
+    return { best, loc, html: await getText(loc.sourceUrl) };
+  })().catch((e) => {
+    fyReleaseCache.set(key, { promise: Promise.resolve({ reason: `release lookup failed: ${e.message}` }), failed: true, ts: Date.now() });
+    return { reason: `release lookup failed: ${e.message}` };
+  });
+  fyReleaseCache.set(key, { promise, failed: false, ts: Date.now() });
+  return promise;
+}
+
+// LTM diluted EPS from filed per-share figures (ltmEps) and the to-common numerator beside it. /quote and /api/pnl both call
+// this, so the two LTM columns cannot disagree. US-GAAP filers with a computed LTM only; everything else keeps its block.
+async function filedLtmEps(ticker, cik, ns, lr, fyEps, fiscalYearEnd) {
+  const periods = { annual: lr.periods.annual, latestInterim: lr.periods.latestInterim, priorInterim: lr.periods.priorInterim };
+  const r = await resolveLtmEps(ns, periods, {
+    fyEps,
+    readRelease: async () => {
+      const rel = await fyRelease(ticker, cik, fiscalYearEnd);
+      return rel.html ? { html: rel.html, accession: rel.best.acc } : { reason: rel.reason };
+    },
+  });
+  const num = ltmEpsNumerator(ns, periods);
+  return {
+    eps: r.value, epsLabel: r.label ?? null, epsReason: r.reason ?? null, epsLegs: r.legs ?? null,
+    epsNetIncome: num ? inM(num.value) : null, epsNetIncomeConcept: num ? num.concept : null,
+  };
+}
+
 app.get('/api/nongaap/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
   const out = {
@@ -2647,26 +2706,15 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     const fyEndYear = out.fiscalYearEnd ? Number(String(out.fiscalYearEnd).slice(0, 4)) : null;
     if (!fy || !fyEndYear) { out.status = 'no_8k'; out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; allReasons(out.note); return res.json(out); }
 
-    // 2) The fiscal-year-END earnings 8-K: the item-2.02 8-K filed 5–90 days AFTER the FY end.
-    const sub = await get(`https://data.sec.gov/submissions/CIK${cik}.json`);
-    const r = sub.filings?.recent || {};
-    const fyeMs = new Date(out.fiscalYearEnd).getTime();
-    const DAY = 86400000;
-    let best = null;
-    for (let i = 0; i < (r.form?.length || 0); i++) {
-      if (r.form[i] !== '8-K' || !(r.items[i] || '').includes('2.02')) continue;
-      const days = (new Date(r.filingDate[i]).getTime() - fyeMs) / DAY;
-      if (days >= 5 && days <= 90 && (!best || days < best.days)) best = { acc: r.accessionNumber[i], date: r.filingDate[i], days: Math.round(days) };
-    }
-    if (!best) { out.status = 'no_8k'; out.note = `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${out.fiscalYearEnd}.`; allReasons(out.note); return res.json(out); }
+    // 2–3) The fiscal-year-END earnings release and its exhibit (fyRelease — shared with the LTM EPS Q4 read).
+    const rel = await fyRelease(ticker, cik, out.fiscalYearEnd);
+    if (!rel.best) { out.status = 'no_8k'; out.note = rel.reason; allReasons(out.note); return res.json(out); }
+    const best = rel.best, loc = rel.loc;
     out.sourceAccession = best.acc;
     out.filingDate = best.date;
-
-    // 3) Its press-release exhibit, then the exhibit's tables.
-    const loc = await locateEarningsExhibit(ticker, { accession: best.acc });
     out.sourceUrl = loc.sourceUrl;
-    if (!loc.sourceUrl) { out.status = 'no_8k'; out.note = `FYE 8-K ${best.acc}: ${loc.note}`; allReasons(out.note); return res.json(out); }
-    const html = await getText(loc.sourceUrl);
+    if (!loc.sourceUrl) { out.status = 'no_8k'; out.note = rel.reason; allReasons(out.note); return res.json(out); }
+    const html = rel.html;
     const t = readNonGaapTables(html, { fiscalYear: fy, fyEndYear, accession: best.acc, sourceUrl: loc.sourceUrl });
     Object.assign(out.figures, { eps: t.eps, netIncome: t.netIncome, dilutedShares: t.dilutedShares, ebitda: t.ebitda });
     Object.assign(out.reasons, t.reasons);

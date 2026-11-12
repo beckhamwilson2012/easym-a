@@ -662,6 +662,8 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
             : grossNmMode ? `${grossNmNote(target)} `
             : 'Gross profit, gross margin and operating expenses are GAAP. '}
           EBITDA and its margin are computed (operating income + D&amp;A). Revenue and share counts are basis-neutral.
+          {target?.basis === 'ltm' && target?.epsLabel ? ` LTM diluted EPS is the ${target.epsLabel}.` : ''}
+          {target?.basis === 'ltm' && target?.epsReason ? ` LTM diluted EPS is “—”: ${target.epsReason}.` : ''}
         </div>
       )}
       {sourceLine && (

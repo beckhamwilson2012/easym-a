@@ -28,7 +28,10 @@ function figures(data, basis) {
   if (basis === BASIS_LTM) {
     const L = data.ltm;
     return {
-      Revenue: L.revenue, EBITDA: L.ebitda, NetIncome: L.netIncome, OperatingIncome: L.operatingIncome,
+      // NetIncome is the EPS numerator: net income attributable to common stockholders when filed (ltmEps), else net income.
+      Revenue: L.revenue, EBITDA: L.ebitda, NetIncome: L.epsNetIncome ?? L.netIncome, OperatingIncome: L.operatingIncome,
+      NetIncomeToCommon: L.epsNetIncome != null && L.epsNetIncome !== L.netIncome,
+      EpsLabel: L.epsLabel ?? null, EpsReason: L.eps == null ? (L.epsReason ?? null) : null,
       GrossProfit: L.grossProfit ?? null, FreeCashFlow: L.freeCashFlow ?? null, EPS: L.eps, DilutedShares: L.dilutedShares,
       DilutedSharesPeriod: L.dilutedShares != null ? { basis: 'weighted average', end: L.asOf, interim: true } : null,
       CostOfRevenue: L.costOfRevenue ?? null, CostOfRevenueSource: L.costOfRevenueSource ?? null,
@@ -37,7 +40,9 @@ function figures(data, basis) {
     };
   }
   return {
-    Revenue: data.revenue, EBITDA: data.ebitda, NetIncome: data.netIncome, OperatingIncome: data.operatingIncome,
+    Revenue: data.revenue, EBITDA: data.ebitda, NetIncome: data.epsNetIncome ?? data.netIncome, OperatingIncome: data.operatingIncome,
+    NetIncomeToCommon: data.epsNetIncome != null && data.epsNetIncome !== data.netIncome,
+    EpsLabel: null, EpsReason: null,
     GrossProfit: data.grossProfit ?? null, FreeCashFlow: data.freeCashFlow ?? null, EPS: data.eps, DilutedShares: data.dilutedShares,
     DilutedSharesPeriod: data.dilutedSharesPeriod ?? null,
     CostOfRevenue: data.costOfRevenue ?? null, CostOfRevenueSource: data.costOfRevenueSource ?? null,
