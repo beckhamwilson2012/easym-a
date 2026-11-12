@@ -53,6 +53,13 @@ test('a fact on a non-class dimension (co-registrant) is not a class', () => {
   assert.strictEqual(r.value, null);
 });
 
+test('GSAT: preferred stock on the cover is not common stock → one common class → not multi-class (existing resolution kept)', () => {
+  const xml = `<xbrl>${ctx('c', '2026-10-30', 'us-gaap:CommonStockMember')}${ctx('p', '2026-10-30', 'us-gaap:PreferredStockMember')}${fact('c', 129619359)}${fact('p', 149425)}</xbrl>`;
+  const parsed = parseCoverShares(xml);
+  assert.deepStrictEqual(parsed.classes.map((x) => x.member), ['us-gaap:CommonStockMember']);
+  assert.strictEqual(sumCoverClasses(parsed, Q3_FILING).value, null);
+});
+
 test('three classes (A, B, C) all summed', () => {
   const xml = `<xbrl>${ctx('a', '2026-10-20', 'us-gaap:CommonClassAMember')}${ctx('b', '2026-10-20', 'us-gaap:CommonClassBMember')}${ctx('c', '2026-10-20', 'us-gaap:CommonClassCMember')}
     ${fact('a', 5)}${fact('b', 1)}${fact('c', 6)}</xbrl>`;

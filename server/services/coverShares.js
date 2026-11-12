@@ -16,6 +16,7 @@ const { latestPeriodicFiling, readInstanceXml, readSubmissions, parseContexts, n
 
 const COVER_CONCEPT = 'EntityCommonStockSharesOutstanding';
 const CLASS_AXIS = 'StatementClassOfStockAxis';
+const NOT_COMMON = /preferred|warrant|right|unit|note|debenture|depositary|convertible/i;
 
 // "us-gaap:CommonClassAMember" → "Class A"; "hnge:SeriesOneCommonStockMember" → "Series One Common Stock".
 function classLabel(member) {
@@ -37,7 +38,10 @@ function parseCoverShares(xml) {
     const c = contexts[f.ctx];
     if (!c.members.length) { undimensioned = { shares: f.val, date: c.instant }; continue; }
     // A class fact: exactly one member, on the class-of-stock axis. Any other dimension (e.g. a co-registrant) is not a class.
-    if (c.members.length === 1 && c.members[0].dimension.split(':').pop() === CLASS_AXIS && c.instant) {
+    // Common stock only: GSAT tags its preferred (us-gaap:PreferredStockMember, 149,425 shares) under the same cover
+    // concept, and preferred is not common stock, so it never enters the count or the market cap.
+    if (c.members.length === 1 && c.members[0].dimension.split(':').pop() === CLASS_AXIS && c.instant
+      && !NOT_COMMON.test(c.members[0].member.split(':').pop())) {
       byClass.push({ member: c.members[0].member, label: classLabel(c.members[0].member), shares: f.val, date: c.instant });
     }
   }
