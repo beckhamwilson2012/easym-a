@@ -1065,11 +1065,12 @@ function App() {
     freeCashFlow: inputs.companyBFreeCashFlow ?? null,
     netIncome: inputs.companyBNetIncome, eps: inputs.companyBEPS,
     shares: inputs.companyBShares, cash: inputs.companyBCash, sti: inputs.companyBSti,
-    sharesLabel: quoteB?.sharesLabel ?? null,
+    sharesLabel: quoteB?.sharesLabel ?? null,   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
     // Source of a filed $0 debt, or why debt is "—". Carried only while the card still shows the /quote figure (an edit drops it).
     debtLabel:  quoteB && inputs.companyBDebt === quoteB.debt ? (quoteB.debtLabel ?? null) : null,
     debtReason: quoteB && inputs.companyBDebt == null && quoteB.debt == null ? (quoteB.debtReason ?? null) : null,
-    epsLabel: inputs.companyBEpsLabel ?? null, epsReason: inputs.companyBEpsReason ?? null,   // LTM EPS legs (sum of filed quarters), or why it is "—"   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
+    epsLabel: inputs.companyBEpsLabel ?? null, epsReason: inputs.companyBEpsReason ?? null,   // LTM EPS legs (sum of filed quarters), or why it is "—"
+    netIncomeToCommon: !!inputs.companyBNetIncomeToCommon,   // netIncome is the to-common EPS numerator, not the income statement's net income
     balanceSheetAsOf: inputs.companyBBsAsOf, balanceSheetBasis: inputs.companyBBsBasis,
     debt: inputs.companyBDebt, companyType: companyTypeB,
     sharePrice: inputs.currentSharePriceB > 0 ? inputs.currentSharePriceB : null,
@@ -1107,11 +1108,12 @@ function App() {
     freeCashFlow: inputs.companyAFreeCashFlow ?? null,
     netIncome: inputs.companyANetIncome, eps: inputs.companyAEPS,
     shares: inputs.companyAShares, cash: inputs.companyACash, sti: inputs.companyASti,
-    sharesLabel: quoteA?.sharesLabel ?? null,
+    sharesLabel: quoteA?.sharesLabel ?? null,   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
     // Source of a filed $0 debt, or why debt is "—". Carried only while the card still shows the /quote figure (an edit drops it).
     debtLabel:  quoteA && inputs.companyADebt === quoteA.debt ? (quoteA.debtLabel ?? null) : null,
     debtReason: quoteA && inputs.companyADebt == null && quoteA.debt == null ? (quoteA.debtReason ?? null) : null,
-    epsLabel: inputs.companyAEpsLabel ?? null, epsReason: inputs.companyAEpsReason ?? null,   // LTM EPS legs (sum of filed quarters), or why it is "—"   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
+    epsLabel: inputs.companyAEpsLabel ?? null, epsReason: inputs.companyAEpsReason ?? null,   // LTM EPS legs (sum of filed quarters), or why it is "—"
+    netIncomeToCommon: !!inputs.companyANetIncomeToCommon,   // netIncome is the to-common EPS numerator, not the income statement's net income
     balanceSheetAsOf: inputs.companyABsAsOf, balanceSheetBasis: inputs.companyABsBasis,
     debt: inputs.companyADebt, companyType: companyTypeA,
     sharePrice: inputs.currentSharePriceA > 0 ? inputs.currentSharePriceA : null,

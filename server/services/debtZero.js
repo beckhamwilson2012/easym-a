@@ -57,7 +57,11 @@ function nothingDrawnStatement(xml) {
     for (const m of xml.matchAll(new RegExp(`<us-gaap:${block}\\b[^>]*>([\\s\\S]*?)</us-gaap:${block}>`, 'g'))) {
       const text = textOf(m[1]);
       if (!FACILITY.test(text)) continue;
-      const sentence = text.split(/(?<=\.)\s+(?=[A-Z])/).find((s) => NOTHING_DRAWN.some((re) => re.test(s)));
+      // The sentence must state the position AS OF a date (a period end, or "the date of this filing") and must not be about a
+      // facility that has ended: FFIV's "At the time of expiration, there were no outstanding borrowings under the Revolving
+      // Credit Facility" describes a past facility, not the debt at the balance-sheet date, so it is not a statement of zero.
+      const sentence = text.split(/(?<=\.)\s+(?=[A-Z])/).find((s) => NOTHING_DRAWN.some((re) => re.test(s))
+        && /\bas of\b/i.test(s) && !/expir|terminat|matured|prior to/i.test(s));
       if (!sentence) continue;
       const heading = (text.match(/^([A-Z][A-Za-z ,&-]{1,40}?)(?=\s+(?:On|As|In|The|We|During|At)\b)/) || [])[1] || null;
       return { block, heading, sentence: sentence.trim(), revolver: /revolv/i.test(text) };

@@ -453,8 +453,11 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
     if (rev > 0 && ebitda > 0) lines.push(`EBITDA margin of ${fmtPct(ebitda / rev * 100)} on ${fmtMoneyTable(rev)} of revenue.`);
     // Net income / EPS use the SAME basis-aware values the table renders (niVal/epsVal), so the commentary
     // never contradicts the table. On a GAAP/bank deal niVal/epsVal == the GAAP figures → wording unchanged.
-    if (rev > 0 && niVal != null && niVal > 0) lines.push(`Net income of ${fmtMoneyTable(niVal)} — a ${fmtPct(niMarginVal)} net margin.`);
-    if (rev > 0 && niVal != null && niVal < 0) lines.push(`Reported a net loss of ${fmtMoneyTable(Math.abs(niVal))} in ${target?.basis === 'ltm' ? `the period, ${target.basisLabel}` : 'the latest fiscal year'} — growth-stage profitability profile.`);
+    // When the deal reads net income attributable to common stockholders (the filed EPS numerator, HNGE $166M LTM vs the
+    // table's $168M net income), the commentary names it so the two figures cannot be read as one.
+    const toCommon = !!target?.netIncomeToCommon && !epsNonGaap;
+    if (rev > 0 && niVal != null && niVal > 0) lines.push(`${toCommon ? 'Net income attributable to common stockholders (the EPS numerator)' : 'Net income'} of ${fmtMoneyTable(niVal)} — a ${fmtPct(niMarginVal)} net margin.`);
+    if (rev > 0 && niVal != null && niVal < 0) lines.push(`Reported a net loss${toCommon ? ' attributable to common stockholders' : ''} of ${fmtMoneyTable(Math.abs(niVal))} in ${target?.basis === 'ltm' ? `the period, ${target.basisLabel}` : 'the latest fiscal year'} — growth-stage profitability profile.`);
     if (shares > 0 && epsVal != null) lines.push(`${shares.toFixed(0)}M shares outstanding; ${epsNonGaap ? 'non-GAAP' : 'reported'} diluted EPS of ${fmtPerShare(epsVal)}.`);
     if (ngEbitda && ngEbitda.value != null) lines.push(`${ngEbitda.name} of ${fmtUSDmAcct(ngEbitda.value)} (non-GAAP, company reported).`);
     if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}${target?.debtLabel ? `; total debt ${target.debtLabel}` : ''}.`);

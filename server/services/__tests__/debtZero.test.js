@@ -86,6 +86,16 @@ test('a debt note that only describes a facility (no "nothing drawn" sentence) i
   assert.strictEqual(nothingDrawnStatement(xml), null);
 });
 
+test('FFIV: "At the time of expiration, there were no outstanding borrowings" is about a past facility → not a statement of zero', () => {
+  const xml = '<xbrl><us-gaap:DebtDisclosureTextBlock contextRef="c">Debt In 2021 we entered into a revolving credit facility. The Revolving Credit Facility expired in April 2026. At the time of expiration, there were no outstanding borrowings under the Revolving Credit Facility.</us-gaap:DebtDisclosureTextBlock></xbrl>';
+  assert.strictEqual(nothingDrawnStatement(xml), null);
+});
+
+test('MNST: "As of September 30, 2026, no borrowings were outstanding under the Credit Facilities" → a statement of zero', () => {
+  const xml = '<xbrl><us-gaap:DebtDisclosureTextBlock contextRef="c">Debt The Company has a revolving credit facility. As of September 30, 2026, no borrowings were outstanding under the Credit Facilities, and the Company was in compliance with all covenants.</us-gaap:DebtDisclosureTextBlock></xbrl>';
+  assert.match(nothingDrawnStatement(xml).sentence, /^As of September 30, 2026, no borrowings were outstanding/);
+});
+
 test('helpers: non-zero facts only at the balance-sheet date; note number nearest before the sentence', () => {
   const xml = `<xbrl>${ctx('a', '2026-09-30')}${ctx('b', '2025-12-31')}<us-gaap:LongTermDebt contextRef="b">7</us-gaap:LongTermDebt><us-gaap:LongTermDebt contextRef="a">0</us-gaap:LongTermDebt></xbrl>`;
   assert.deepStrictEqual(nonZeroDebtFacts(xml, '2026-09-30'), []);
