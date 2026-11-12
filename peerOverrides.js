@@ -21,7 +21,7 @@ const PEER_OVERRIDES = {
   // Large-cap tech / cloud (SIC 7372)
   MSFT: ['GOOGL', 'AMZN', 'ORCL', 'CRM', 'ADBE'],
   GOOGL:['MSFT', 'META', 'AMZN', 'SNAP', 'PINS'],
-  META: ['GOOGL', 'SNAP', 'PINS', 'TWTR', 'MTCH'],
+  META: ['GOOGL', 'SNAP', 'PINS', 'MTCH'],   // TWTR removed: delisted 2022 (FIX7A)
   AMZN: ['MSFT', 'GOOGL', 'WMT', 'SHOP', 'EBAY'],
 
   // Semiconductors (SIC 3674)

@@ -1,4 +1,5 @@
 import { apiUrl } from '../../../api';
+import { marketCapM } from '../../../lib/marketCap';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -41,7 +42,7 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   const rev    = Number.isFinite(parseFloat(data.revenue)) ? parseFloat(data.revenue) : null;   // Stage 17: null-honest (was `|| 0`) — absent revenue → "—", a genuine 0 → 0. Mirrors :49 (cashVal).
   const live   = data.livePrice != null && data.livePrice > 0 ? data.livePrice : null;
   const shares = parseFloat(data.shares) || 0;
-  const mktCap = live != null && shares > 0 ? live * shares : null;
+  const mktCap = marketCapM(live, shares);   // src/lib/marketCap — the same product the server's peer screen uses
   // EV via the shared helper — cash bucket = cash + short-term marketable securities (convention b).
   // Cash is null-aware: the helper short-circuits (net debt → null → EV → null → "—") when cash is null, so a
   // bank added as a peer — cash sits under CashAndDueFromBanks, not the standard concept, so data.cash is null —
@@ -563,7 +564,10 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
       )}
       <BasisNote acquirer={acquirer} target={target} fixed="Actuals on this slide are LTM for every company with trusted LTM, whichever basis the card is on. Forward growth is against the last fiscal year, never LTM." style={{ padding: '0 22px 6px' }} />
       {(sourceLine || peerProvenance) && (
-        <div style={{ padding: '0 22px 14px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
+        // Bottom padding clears PageFrame's 28px page-number bar (absolute, bottom: 0), which was painted over the last
+        // line of this footnote — the peer source labels ("FMP peers", "set by hand"). The frame grows to fit (minHeight),
+        // so on screen and in the PDF capture the whole footnote now sits above the bar. (FIX7A Task 8, the one layout change.)
+        <div style={{ padding: '0 22px 40px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
           {sourceLine && <>{sourceLine} Revenue &amp; gross margin are <strong>LTM (trailing 12 months)</strong> GAAP from SEC filings (latest annual + interim YTD − prior-year YTD); columns marked "· FY" keep the latest fiscal year where interim data isn't tagged (foreign filers). EV / Revenue = current EV (live price × reported shares + net debt) ÷ LTM revenue — a standard current-EV-over-trailing-revenue multiple. {NET_DEBT_BASIS} Non-marketable equity is excluded; a company without a short-term marketable-securities line is net of cash &amp; equivalents only.{bsRange ? <> <strong>Balance-sheet items (cash, debt, short-term marketable securities) are as of each filer's latest interim balance sheet ({bsRange})</strong> — so enterprise value and LTM revenue share one as-of date per company; a company shown at its fiscal year-end had no newer interim.</> : null} <strong>The LTM basis aligns each company's measurement window to within about one month</strong>{acqAsOf && tgtAsOf ? <> (here acquirer LTM to {acqAsOf}, target LTM to {tgtAsOf})</> : ''} — materially tighter than the underlying fiscal-year-end offset; each column's LTM ends at that filer's latest reported quarter. </>}
           {loadedCols.some(c => c.grossNm) ? <>{grossNmNote(...loadedCols)} </> : null}
           {grossFilingNote(loadedCols) ? <>{grossFilingNote(loadedCols)} </> : null}

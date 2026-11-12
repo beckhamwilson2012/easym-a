@@ -10,6 +10,7 @@ const fs   = require('fs');
 const path = require('path');
 const os   = require('os');
 const { PEER_OVERRIDES } = require('./peerOverrides');
+const { marketCapM } = require('./src/lib/marketCap'); // price × shares — one definition, server and slides
 const { FINANCIAL_SIC } = require('./src/lib/financialSic'); // shared with deckTokens.isFinancial — one SIC source
 const { grossNotMeaningfulReason } = require('./src/lib/insuranceSic'); // utilities and insurers; shared with deckTokens.grossNmReason
 const { resolveDepreciationAt, resolveCapexAt, resolveOperatingCashFlowAt, computeEbitda, computeFreeCashFlow, traceOf } = require('./server/services/cashFlowConcepts'); // shared D&A, capex, EBITDA and FCF (/quote, /api/pnl, LTM, §16 identical)
@@ -1559,7 +1560,8 @@ const peerSelector = createPeerSelector({
     const [q, p] = await Promise.all([quotePayload(t), livePricePayload(t)]);
     const shares = q && Number.isFinite(q.shares) && q.shares > 0 ? q.shares : null;
     const price = p && Number.isFinite(p.price) && p.price > 0 ? p.price : null;
-    const value = shares != null && price != null ? price * shares * 1e6 : null;
+    const capM = marketCapM(price, shares);   // the same helper the Comparables slide uses (src/lib/marketCap)
+    const value = capM != null ? capM * 1e6 : null;
     return { value, detail: { price, priceSource: p?.source ?? null, sharesM: shares, sharesSource: q?.dataSource ?? null } };
   },
   // Revenue the slide would show for this ticker (fiscal-year, or trusted LTM).
