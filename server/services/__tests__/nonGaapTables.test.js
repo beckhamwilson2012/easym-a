@@ -209,4 +209,57 @@ test('prose is never read: a reconciliation written as a paragraph yields nothin
   assert.strictEqual(r.tablesRead, 0);
 });
 
+// ── Task 5: the FY-release picker's test and the two reader fixes it needed (PGNY 0001551306-26-000012) ──
+const { fullYearReconciliation } = require('../nonGaapTables');
+// PGNY Annex A: a heading states the unit once; the EBITDA table under it states none; its anchor reads "Net income1".
+const PGNY_ANNEX = '<p>ANNEX A PROGYNY, INC. Reconciliation of GAAP to Non-GAAP Financial Measures (unaudited) (in thousands)</p>' +
+  rowTable([
+    ['Net income1', '$12,485', '$10,532', '$58,520', '$54,336'],
+    ['Depreciation and amortization', '1,367', '868', '4,948', '3,175'],
+    ['Stock‑based compensation expense1', '34,799', '30,859', '131,867', '128,130'],
+    ['Interest and other income, net', '(2,632)', '(1,871)', '(10,155)', '(15,747)'],
+    ['Provision for income taxes', '5,369', '7,126', '36,912', '28,866'],
+    ['Adjusted EBITDA', '$51,388', '$47,514', '$222,092', '$198,760'],
+  ]).replace('<p>(in thousands, except per share amounts)</p>', '<table><tr><td>Cost of services</td><td>241,522</td></tr></table><p>Twelve months ended</p>') +
+  '<p>Revenue ($ in millions)</p>';
+
+test('PGNY: "Net income1" anchors the block (footnote digit), and the heading unit scales it → $222.092M, residual 0', () => {
+  const r = readNonGaapTables(PGNY_ANNEX, CTX);
+  assert.strictEqual(r.ebitda.value, 222.092);
+  assert.strictEqual(r.ebitda.tieOut.residual, 0);
+  assert.strictEqual(r.ebitda.nativeUnit, 'thousands');
+  assert.ok(/last unit stated before table/.test(r.ebitda.unitSource));
+});
+
+test('an inherited unit never touches a per-share figure; a table that states its own unit records nothing extra', () => {
+  const stated = readNonGaapTables(rowTable([...NET_NI, ...NET_EPS]), CTX);
+  assert.strictEqual(stated.netIncome.unitSource, undefined);
+  // The same EPS block under a heading unit with a table in between: the EPS figure keeps nativeUnit null (HNGE's payload
+  // stayed byte-identical for this reason), while the net income in that table is scaled by the inherited unit.
+  const inheritedHtml = '<p>(in thousands)</p><table><tr><td>x</td><td>1</td></tr></table>' +
+    rowTable([...NET_NI, ...NET_EPS]).replace('<p>(in thousands, except per share amounts)</p>', '');
+  const r = readNonGaapTables(inheritedHtml, CTX);
+  assert.strictEqual(r.eps.value, 0.93);
+  assert.strictEqual(r.eps.nativeUnit, null);
+  assert.strictEqual(r.netIncome.nativeUnit, 'thousands');
+  assert.ok(/last unit stated before table/.test(r.netIncome.unitSource));
+});
+
+test('picker test: a January pre-announcement with no reconciliation table is refused, with the reason', () => {
+  const jan = '<p>Progyny announces preliminary fourth quarter results. Revenue is expected to be approximately $318 million.</p>';
+  assert.strictEqual(fullYearReconciliation(jan, 2025), 'no non-GAAP reconciliation with a full-year 2025 column (0 tables)');
+  const prelim = '<table><tr><td>Revenue</td><td>$318</td></tr></table>';
+  assert.ok(/1 table/.test(fullYearReconciliation(prelim, 2025)));
+});
+
+test('picker test: the FY release with a full-year reconciliation column is accepted', () => {
+  assert.strictEqual(fullYearReconciliation(PGNY_ANNEX, 2025), true);
+  assert.strictEqual(fullYearReconciliation(rowTable([...NET_NI, ...NET_EPS]), 2025), true);
+});
+
+test('picker test: a reconciliation for the wrong year (a later quarterly release) is refused', () => {
+  const later = PGNY_ANNEX.replace(/<td>2025<\/td>/g, '<td>2026</td>');
+  assert.notStrictEqual(fullYearReconciliation(later, 2025), true);
+});
+
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}\n`);

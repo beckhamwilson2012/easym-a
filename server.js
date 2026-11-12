@@ -21,7 +21,7 @@ const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalY
 const { multiClassCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts');
 const { resolveZeroDebt } = require('./server/services/debtZero');
-const { resolveLtmEps, epsNumeratorAt, ltmEpsNumerator } = require('./server/services/ltmEps'); // LTM EPS = sum of filed quarters; EPS numerator = net income to common // debt that is zero by a filing's own statement, not by absence // shared total-debt resolution — deal EV / comps / §16 resolve identically
+const { resolveLtmEps, releaseQuarterEps, epsNumeratorAt, ltmEpsNumerator } = require('./server/services/ltmEps'); // LTM EPS = sum of filed quarters; EPS numerator = net income to common // debt that is zero by a filing's own statement, not by absence // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
@@ -31,7 +31,7 @@ const { locateStatements } = require('./server/services/locatorAgent'); // Phase
 const { extractPage } = require('./server/services/extractorAgent');    // Phase 3 — Sonnet line-item extractor
 const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
 const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
-const { readNonGaapTables, reconcileCheck } = require('./server/services/nonGaapTables'); // non-GAAP from the exhibit's own reconciliation tables (no model) + the one reconcile check
+const { readNonGaapTables, reconcileCheck, fullYearReconciliation } = require('./server/services/nonGaapTables'); // non-GAAP from the exhibit's own reconciliation tables (no model) + the one reconcile check
 const { classifySector, SECTORS: CLASSIFIER_SECTORS } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
@@ -2631,35 +2631,61 @@ if (process.env.NODE_ENV !== 'production') {
 // Each figure carries its value, period, the company's row label, the 8-K accession and the tie-out, or
 // is null with the reason. Figures: adjusted diluted EPS (with the non-GAAP net income and diluted share
 // count it implies) and adjusted EBITDA under the company's own name.
-// The fiscal-year-END earnings release: the item-2.02 8-K filed 5–90 days AFTER the FY end, nearest first, and its press-release
-// exhibit's HTML. One locator for /api/nongaap and the LTM EPS Q4 read. Returns { best, loc, html } or { reason } (best/loc kept
-// when the exhibit itself is missing). Cached per CIK and FY end.
-const fyReleaseCache = new Map();
-function fyRelease(ticker, cik, fiscalYearEnd) {
+// The fiscal-year-END earnings release. Candidates: every item-2.02 8-K filed 5–90 days AFTER the FY end, EARLIEST first.
+// The pick is the first whose press-release exhibit passes `accept(html)` — for the non-GAAP reader, a full-year column for
+// that fiscal year in a reconciliation table (nonGaapTables.fullYearReconciliation); for the LTM EPS Q4 read, a GAAP
+// diluted EPS row tying to the filed FY EPS. A January pre-announcement (OMDA, PGNY 2026-01-12) fails and is skipped.
+// None passes → { reason } naming every 8-K checked and why. One locator for both readers; each exhibit is read once.
+const fyCandidatesCache = new Map();   // `${cik}|${fyEnd}` → { ts, list }
+const releaseHtmlCache = new Map();    // accession → Promise<{ loc, html } | { loc, reason }>
+async function fyReleaseCandidates(cik, fiscalYearEnd) {
   const key = `${cik}|${fiscalYearEnd}`;
-  const hit = fyReleaseCache.get(key);
+  const hit = fyCandidatesCache.get(key);
+  if (hit && Date.now() - hit.ts < 60 * 60 * 1000) return hit.list;
+  const sub = await get(`https://data.sec.gov/submissions/CIK${cik}.json`);
+  const r = sub.filings?.recent || {};
+  const fyeMs = new Date(fiscalYearEnd).getTime();
+  const DAY = 86400000;
+  const list = [];
+  for (let i = 0; i < (r.form?.length || 0); i++) {
+    if (r.form[i] !== '8-K' || !(r.items[i] || '').includes('2.02')) continue;
+    const days = (new Date(r.filingDate[i]).getTime() - fyeMs) / DAY;
+    if (days >= 5 && days <= 90) list.push({ acc: r.accessionNumber[i], date: r.filingDate[i], days: Math.round(days) });
+  }
+  list.sort((x, y) => x.days - y.days || x.date.localeCompare(y.date));
+  fyCandidatesCache.set(key, { ts: Date.now(), list });
+  return list;
+}
+function releaseHtml(ticker, acc) {
+  const hit = releaseHtmlCache.get(acc);
   if (hit && (!hit.failed || Date.now() - hit.ts < 60 * 60 * 1000)) return hit.promise;
   const promise = (async () => {
-    const sub = await get(`https://data.sec.gov/submissions/CIK${cik}.json`);
-    const r = sub.filings?.recent || {};
-    const fyeMs = new Date(fiscalYearEnd).getTime();
-    const DAY = 86400000;
-    let best = null;
-    for (let i = 0; i < (r.form?.length || 0); i++) {
-      if (r.form[i] !== '8-K' || !(r.items[i] || '').includes('2.02')) continue;
-      const days = (new Date(r.filingDate[i]).getTime() - fyeMs) / DAY;
-      if (days >= 5 && days <= 90 && (!best || days < best.days)) best = { acc: r.accessionNumber[i], date: r.filingDate[i], days: Math.round(days) };
-    }
-    if (!best) return { reason: `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${fiscalYearEnd}.` };
-    const loc = await locateEarningsExhibit(ticker, { accession: best.acc });
-    if (!loc.sourceUrl) return { best, loc, reason: `FYE 8-K ${best.acc}: ${loc.note}` };
-    return { best, loc, html: await getText(loc.sourceUrl) };
+    const loc = await locateEarningsExhibit(ticker, { accession: acc });
+    if (!loc.sourceUrl) return { loc, reason: loc.note };
+    return { loc, html: await getText(loc.sourceUrl) };
   })().catch((e) => {
-    fyReleaseCache.set(key, { promise: Promise.resolve({ reason: `release lookup failed: ${e.message}` }), failed: true, ts: Date.now() });
-    return { reason: `release lookup failed: ${e.message}` };
+    releaseHtmlCache.set(acc, { promise: Promise.resolve({ loc: null, reason: e.message }), failed: true, ts: Date.now() });
+    return { loc: null, reason: e.message };
   });
-  fyReleaseCache.set(key, { promise, failed: false, ts: Date.now() });
+  releaseHtmlCache.set(acc, { promise, failed: false, ts: Date.now() });
   return promise;
+}
+async function fyRelease(ticker, cik, fiscalYearEnd, accept) {
+  try {
+    const list = await fyReleaseCandidates(cik, fiscalYearEnd);
+    if (!list.length) return { reason: `No fiscal-year-end earnings 8-K (item 2.02) found 5–90 days after FYE ${fiscalYearEnd}.` };
+    const checked = [];
+    for (const c of list) {
+      const r = await releaseHtml(ticker, c.acc);
+      if (!r.html) { checked.push(`${c.acc} (${c.date}): ${r.reason}`); continue; }
+      const ok = accept(r.html);
+      if (ok === true) return { best: c, loc: r.loc, html: r.html, skipped: checked };
+      checked.push(`${c.acc} (${c.date}): ${ok}`);
+    }
+    return { reason: `No item-2.02 8-K 5–90 days after FYE ${fiscalYearEnd} qualifies — ${checked.join('; ')}.` };
+  } catch (e) {
+    return { reason: `release lookup failed: ${e.message}` };
+  }
 }
 
 // LTM diluted EPS from filed per-share figures (ltmEps) and the to-common numerator beside it. /quote and /api/pnl both call
@@ -2669,7 +2695,11 @@ async function filedLtmEps(ticker, cik, ns, lr, fyEps, fiscalYearEnd) {
   const r = await resolveLtmEps(ns, periods, {
     fyEps,
     readRelease: async () => {
-      const rel = await fyRelease(ticker, cik, fiscalYearEnd);
+      const fyEndYear = Number(String(fiscalYearEnd).slice(0, 4));
+      const rel = await fyRelease(ticker, cik, fiscalYearEnd, (html) => {
+        const q = releaseQuarterEps(html, { fyEndYear, fyEps });
+        return q.value != null ? true : q.reason;
+      });
       return rel.html ? { html: rel.html, accession: rel.best.acc } : { reason: rel.reason };
     },
   });
@@ -2707,7 +2737,7 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     if (!fy || !fyEndYear) { out.status = 'no_8k'; out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; allReasons(out.note); return res.json(out); }
 
     // 2–3) The fiscal-year-END earnings release and its exhibit (fyRelease — shared with the LTM EPS Q4 read).
-    const rel = await fyRelease(ticker, cik, out.fiscalYearEnd);
+    const rel = await fyRelease(ticker, cik, out.fiscalYearEnd, (html) => fullYearReconciliation(html, fyEndYear));
     if (!rel.best) { out.status = 'no_8k'; out.note = rel.reason; allReasons(out.note); return res.json(out); }
     const best = rel.best, loc = rel.loc;
     out.sourceAccession = best.acc;
@@ -2733,7 +2763,7 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
 
     const have = Object.entries(out.figures).filter(([, v]) => v).map(([k]) => k);
     out.status = have.length ? 'reported' : 'none_reported';
-    out.note = `FYE 8-K ${best.acc} (filed ${best.date}, ${best.days}d after FYE ${out.fiscalYearEnd}), exhibit ${loc.exhibit}; read ${t.tablesRead} tables for the FY${fy} full-year column. Found: ${have.length ? have.join(', ') : 'none'}.`;
+    out.note = `FYE 8-K ${best.acc} (filed ${best.date}, ${best.days}d after FYE ${out.fiscalYearEnd}), exhibit ${loc.exhibit}; read ${t.tablesRead} tables for the FY${fy} full-year column. Found: ${have.length ? have.join(', ') : 'none'}.${rel.skipped && rel.skipped.length ? ` Skipped (earlier item-2.02 8-K without a full-year FY${fy} reconciliation): ${rel.skipped.join('; ')}.` : ''}`;
     nonGaapCache.set(ticker, { ts: Date.now(), payload: { ...out } });
     return res.json(out);
   } catch (e) {

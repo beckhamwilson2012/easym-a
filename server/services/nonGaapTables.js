@@ -73,6 +73,18 @@ function parseTables(html) {
     out.push({ index: out.length, rows, unit: inside || before || null });
     prevEnd = m.index + m[0].length;
   }
+  // A table that states no unit, with none in the text since the previous table, inherits the LAST unit the exhibit stated
+  // before it (`inheritedUnit`; `unit` stays null): a section heading covers the tables under it (PGNY's FY2025 release, Annex A: "Reconciliation of GAAP to
+  // Non-GAAP Financial Measures (unaudited) (in thousands)" heads its EBITDA and EPS tables, which state none). Nothing
+  // stated before the table → it stays unit-less and its dollar figures null. The route's GAAP net income cross-check
+  // (table GAAP net income ÷ EDGAR net income) still has to agree before any dollar figure is kept.
+  const starts = [];
+  { const re2 = /<table[\s\S]*?<\/table>/gi; let m2; while ((m2 = re2.exec(html))) starts.push(m2.index); }
+  out.forEach((t, i) => {
+    if (t.unit) return;
+    const u = lastUnit(stripText(html.slice(0, starts[i])));
+    if (u) t.inheritedUnit = u;   // scales dollar figures only (net income, EBITDA); never a per-share figure or a share count
+  });
   return out;
 }
 
@@ -188,9 +200,10 @@ function rowBlocks(table, fy, { isTotal, isAnchor, isSubtotal = () => false, uni
   const out = [];
   const rows = table.rows.map(splitRow);
   rows.forEach((sr, t) => {
-    if (!sr.label || !isTotal(sr.label) || !hasValues(sr)) return;
+    // Labels are matched with footnote markers removed: PGNY prints "Net income1", where the 1 is a footnote.
+    if (!sr.label || !isTotal(cleanLabel(sr.label)) || !hasValues(sr)) return;
     let a = -1;
-    for (let r = t - 1; r >= 0; r--) { if (isAnchor(rows[r].label) && hasValues(rows[r])) { a = r; break; } }
+    for (let r = t - 1; r >= 0; r--) { if (isAnchor(cleanLabel(rows[r].label)) && hasValues(rows[r])) { a = r; break; } }
     if (a < 0) return;
     const cols = rowColumns(table.rows, a);
     const base = { table: table.index, layout: 'row', totalLabel: sr.label, anchorLabel: rows[a].label };
@@ -327,6 +340,8 @@ function shareCandidates(tables, fy) {
 }
 
 const round2 = (x) => Math.round(x * 100) / 100;
+// Provenance of a dollar figure scaled by an inherited unit; nothing is added when the table stated its own.
+const inherited = (c) => (c.tableUnit == null && c.inheritedUnit ? { nativeUnit: c.inheritedUnit, unitSource: `"in ${c.inheritedUnit}", the last unit stated before table ${c.table}` } : {});
 
 /**
  * Read the non-GAAP figures from one exhibit.
@@ -345,7 +360,7 @@ function readNonGaapTables(html, ctx) {
   const gather = (rowSpec, tSpec) => tables.flatMap(t => [
     ...rowBlocks(t, fy, { ...rowSpec, unit: rowSpec.unit, }),
     ...(tSpec ? transposedBlocks(t, fy, tSpec) : []),
-  ].map(c => ({ ...c, tableUnit: t.unit })));
+  ].map(c => ({ ...c, tableUnit: t.unit, inheritedUnit: t.inheritedUnit || null })));
 
   const figure = (c, value, unit, extra = {}) => ({
     value, unit, period: c.period, fiscalYear: ctx.fiscalYear, rowLabel: cleanLabel(c.totalLabel),
@@ -358,9 +373,9 @@ function readNonGaapTables(html, ctx) {
   const niC = gather({ isTotal: M.niTotal, isAnchor: M.niAnchor, isSubtotal: M.niSubtotal, unit: 'millions' }, { isMeasure: M.tNi, unit: 'millions' });
   const ni = choose(niC, 'net income');
   if (ni.pick) {
-    const v = toMillions(ni.pick.tie.nonGaap.value, ni.pick.tableUnit);
+    const v = toMillions(ni.pick.tie.nonGaap.value, ni.pick.tableUnit ?? ni.pick.inheritedUnit);
     if (v == null) reasons.netIncome = `net income: unit not stated for table ${ni.pick.table}`;
-    else res.netIncome = figure(ni.pick, v, '$M', { native: ni.pick.tie.nonGaap.value, gaapNative: ni.pick.tie.gaap.value });
+    else res.netIncome = figure(ni.pick, v, '$M', { native: ni.pick.tie.nonGaap.value, gaapNative: ni.pick.tie.gaap.value, ...inherited(ni.pick) });
   } else reasons.netIncome = ni.reason || 'no non-GAAP net income row in the reconciliation tables';
 
   // Diluted shares: a filed row whose count reproduces the filed EPS from the filed net income (to the cent).
@@ -421,12 +436,33 @@ function readNonGaapTables(html, ctx) {
   const ebC = gather({ isTotal: M.ebitdaTotal, isAnchor: M.ebitdaAnchor, unit: 'millions' }, null);
   const eb = choose(ebC, 'EBITDA');
   if (eb.pick) {
-    const v = toMillions(eb.pick.tie.nonGaap.value, eb.pick.tableUnit);
+    const v = toMillions(eb.pick.tie.nonGaap.value, eb.pick.tableUnit ?? eb.pick.inheritedUnit);
     if (v == null) reasons.ebitda = `EBITDA: unit not stated for table ${eb.pick.table}`;
-    else res.ebitda = figure(eb.pick, v, '$M', { native: eb.pick.tie.nonGaap.value, gaapNative: eb.pick.tie.gaap.value });
+    else res.ebitda = figure(eb.pick, v, '$M', { native: eb.pick.tie.nonGaap.value, gaapNative: eb.pick.tie.gaap.value, ...inherited(eb.pick) });
   } else reasons.ebitda = eb.reason || 'no adjusted EBITDA row in the reconciliation tables';
 
   return res;
 }
 
-module.exports = { readNonGaapTables, reconcileCheck, parseTables, splitRow, rowColumns, isFullYearText };
+// The FY-release picker's test (server.js fyRelease): does this exhibit carry a non-GAAP reconciliation for the fiscal year,
+// i.e. a non-GAAP or EBITDA row with a value in a full-year column for that year, or a figure the reader ties? A January
+// pre-announcement (OMDA, PGNY 2026-01-12) has none. Returns true or the reason.
+function fullYearReconciliation(html, fyEndYear) {
+  const tables = parseTables(html);
+  for (const t of tables) {
+    for (let ri = 0; ri < t.rows.length; ri++) {
+      const sr = splitRow(t.rows[ri]);
+      const l = cleanLabel(sr.label);
+      if (!(NG_WORD.test(l) || /ebitda/i.test(l)) || /margin|%|guidance|outlook/i.test(l) || !hasValues(sr)) continue;
+      const cols = rowColumns(t.rows, ri);
+      if (!cols || cols.length !== sr.values.length) continue;
+      const ci = cols.findIndex(c => c.year === fyEndYear && c.period && isFullYearText(c.period));
+      if (ci >= 0 && sr.values[ci].value != null) return true;
+    }
+  }
+  const r = readNonGaapTables(html, { fiscalYear: fyEndYear, fyEndYear, accession: null });
+  if (r.eps || r.netIncome || r.ebitda) return true;
+  return `no non-GAAP reconciliation with a full-year ${fyEndYear} column (${tables.length} table${tables.length === 1 ? '' : 's'})`;
+}
+
+module.exports = { readNonGaapTables, reconcileCheck, parseTables, splitRow, rowColumns, isFullYearText, fullYearReconciliation };
