@@ -44,7 +44,7 @@ const FIELD_LABELS = {
   cash:              'Cash & Equivalents',
   totalAssets:       'Total Assets',
   totalStockholdersEquity: "Shareholders' Equity",
-  freeCashFlow:      'Free Cash Flow',
+  freeCashFlow:      'Free Cash Flow (CFO − capex)',
   analystTargetMean: 'Analyst Target (Mean)',
   analystTargetHigh: 'Analyst Target (High)',
   analystTargetLow:  'Analyst Target (Low)',
@@ -115,7 +115,7 @@ function LtmUsed({ acquirer, target, showFigures }) {
   const cos = [acquirer, target].filter((c) => c?.basis === 'ltm');
   const parts = [acquirer, target].filter((c) => c?.basisLabel).map((c) => `${c.ticker} ${c.basisLabel}`);
   if (!parts.length) return null;
-  const rows = [['Revenue', 'revenue', '$'], ['Gross Profit', 'grossProfit', '$'], ['Operating Income', 'operatingIncome', '$'], ['EBITDA', 'ebitda', '$'], ['Net Income', 'netIncome', '$'], ['Diluted EPS', 'eps', '$/sh'], ['Free Cash Flow', 'freeCashFlow', '$']];
+  const rows = [['Revenue', 'revenue', '$'], ['Gross Profit', 'grossProfit', '$'], ['Operating Income', 'operatingIncome', '$'], ['EBITDA', 'ebitda', '$'], ['Net Income', 'netIncome', '$'], ['Diluted EPS', 'eps', '$/sh'], ['Free Cash Flow (CFO − capex)', 'freeCashFlow', '$']];
   return (
     <div data-testid="ltm-used" style={{ marginTop: 12, fontSize: 10, color: '#374151', lineHeight: 1.5 }}>
       <strong style={{ color: NAVY }}>Basis used: </strong>{parts.join('; ')}. The table above cross-checks fiscal-year figures.

@@ -30,7 +30,7 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
   const rows = [
     { label: ngEb ? `Combined EBITDA (${ngEb.basis || 'n/a'})` : 'Combined EBITDA', v: ngEb && ngEb.note ? `— (${ngEb.note})` : fmtM(combinedEBITDA) },
     { label: 'Combined total debt (incl. acquisition financing)', v: fmtM(combinedDebt) },
-    { label: 'Combined cash', v: fmtM(combinedCash) },
+    { label: 'Combined cash & equivalents', v: fmtM(combinedCash) },
     { label: 'Net debt', v: fmtM(netDebt), bold: true },
     { label: 'Gross debt / EBITDA', v: fmtX(grossDebtEBITDA) },
     { label: 'Net debt / EBITDA', v: fmtX(netDebtEBITDA), bold: true },

@@ -521,9 +521,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             { label: 'Revenue',          key: 'revenue' },
             { label: 'Net Income',       key: 'netIncome' },
             { label: 'Shares Out.',      key: 'sharesOutstanding' },
-            { label: 'Cash',             key: 'cash' },
+            { label: 'Cash & Equivalents', key: 'cash' },
             { label: 'Total Debt',       key: 'totalDebt' },
-            { label: 'Free Cash Flow',   key: 'freeCashFlow' },
+            { label: 'Free Cash Flow (CFO − capex)', key: 'freeCashFlow' },
             { label: 'Price',            key: 'price' },
             { label: 'Analyst Target',   key: 'analystTargetMean' },
           ];

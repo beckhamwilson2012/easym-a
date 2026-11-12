@@ -138,7 +138,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     { label: `Revenue growth (proj., ${growthVs})`, fmt: (f) => f.growth != null ? `${f.growth >= 0 ? '+' : '−'}${Math.abs(f.growth).toFixed(1)}%` : '—', get: (f) => f.growth },
     { label: 'Gross margin (GAAP)',     fmt: (f) => f.grossNm ? 'n/m' : f.grossMargin != null ? fmtPct(f.grossMargin) : '—', get: (f) => f.grossMargin },
     { label: 'Operating margin (GAAP)', fmt: (f) => f.opMargin != null ? fmtPct(f.opMargin) : '—', get: (f) => f.opMargin },
-    { label: 'Free cash flow',       fmt: (f) => f.fcf != null ? fmtMoneyTable(f.fcf) : '—', get: (f) => f.fcf },
+    { label: 'Free cash flow (CFO − capex)', fmt: (f) => f.fcf != null ? fmtMoneyTable(f.fcf) : '—', get: (f) => f.fcf },
     { label: 'Equity value (mkt cap)', fmt: (f) => f.marketCap != null ? fmtMoneyTable(f.marketCap) : '—', get: (f) => f.marketCap },
     { label: 'Total debt',           fmt: (f) => f.debt != null ? fmtMoneyTable(f.debt) : '—', get: (f) => f.debt },
     { label: 'Cash & equivalents',   fmt: (f) => f.cash != null ? fmtMoneyTable(f.cash) : '—', get: (f) => f.cash },
@@ -166,7 +166,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
   // next to "$5,000M" (FCF) in one column — and contradict its own "($M)" header. Commit the whole
   // table to ONE scale chosen from all money values across both columns; pickScale stays in $M unless
   // every money value reads cleanly in $B, so a small target value never collapses to "$0.xB".
-  const MONEY_LABELS = new Set(['Revenue', 'Free cash flow', 'Equity value (mkt cap)', 'Total debt',
+  const MONEY_LABELS = new Set(['Revenue', 'Free cash flow (CFO − capex)', 'Equity value (mkt cap)', 'Total debt',
     'Cash & equivalents', 'Total assets', 'Enterprise value', 'Pre-provision net revenue', 'Total deposits']);
   const isMoneyRow = (m) => MONEY_LABELS.has(m.label);
   const moneyScale = pickScale(KEYFIN_ROWS.filter(isMoneyRow).flatMap((m) => [m.get(acqFin), m.get(tgtFin)]));

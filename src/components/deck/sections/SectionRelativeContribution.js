@@ -54,7 +54,7 @@ export function SectionRelativeContribution({ target, acquirer, deal, model, pag
   const aFCF = aFetchedFCF != null ? parseFloat(aFetchedFCF) : (parseFloat(acquirer.netIncome) || 0);
   const bFCF = bFetchedFCF != null ? parseFloat(bFetchedFCF) : (parseFloat(target.netIncome) || 0);
   const fcfFromProxy = aFetchedFCF == null || bFetchedFCF == null; // label honestly if either side fell back
-  const fcfLabel = fcfFromProxy ? 'Free Cash Flow (est. ≈ Net Income)' : 'Free Cash Flow';
+  const fcfLabel = fcfFromProxy ? 'Free Cash Flow (est. ≈ Net Income)' : 'Free Cash Flow (CFO − capex)';
   console.log(
     `[§10 FCF] acq=${acquirer.ticker} NIproxy=${parseFloat(acquirer.netIncome) || 0} fetchedFCF=${aFetchedFCF ?? 'null'} -> use=${aFCF} | ` +
     `tgt=${target.ticker} NIproxy=${parseFloat(target.netIncome) || 0} fetchedFCF=${bFetchedFCF ?? 'null'} -> use=${bFCF} | ` +
