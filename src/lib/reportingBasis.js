@@ -92,11 +92,24 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
   };
   const A = side(a, ltmA), B = side(b, ltmB);
   const combinable = A.nonGaap === B.nonGaap;
+  const noChange = (!epsNonGaap && !A.nonGaap && !B.nonGaap) ? noChangeLine(a, b, tA, tB, epsNote) : null;
   return {
     selected: NON_GAAP,
+    noChange,   // one line when Non-GAAP changes no figure for this pair; null otherwise
     eps: { nonGaap: epsNonGaap, note: epsNote, A: epsNonGaap ? a.eps : null, B: epsNonGaap ? b.eps : null },
     ebitda: { A, B, combinable, note: combinable ? null : DIFFERENT_BASES },
   };
+}
+
+// "Non-GAAP changes nothing here: …" — why, from each company's own reasons. "Doesn't report" only where the release has no
+// such row; a figure the release prints but that does not tie to GAAP (TDOC's Adjusted EBITDA) is said so, never "not reported".
+const NOT_REPORTED = /^no (adjusted|non-gaap)\b|^no adjusted (eps|ebitda) reported$/i;
+function noChangeLine(a, b, tA, tB, epsNote) {
+  const parts = [];
+  if (a.eps && b.eps) parts.push(`EPS stays GAAP: ${epsNote}`);   // both report adjusted EPS, but an LTM card keeps it GAAP
+  else [[a, tA], [b, tB]].forEach(([x, t]) => { if (!x.eps) parts.push(NOT_REPORTED.test(x.epsReason || '') ? `${t} doesn’t report adjusted EPS` : `${t}’s adjusted EPS doesn’t tie to GAAP in its release`); });
+  [[a, tA], [b, tB]].forEach(([x, t]) => { if (!x.ebitda) parts.push(NOT_REPORTED.test(x.ebitdaReason || '') ? `${t} doesn’t report adjusted EBITDA` : `${t}’s adjusted EBITDA doesn’t tie to GAAP in its release`); });
+  return `Non-GAAP changes nothing here: ${parts.join('; ')}.`;
 }
 
 // The deal model's inputs on the plan's basis. GAAP: the same object, untouched.

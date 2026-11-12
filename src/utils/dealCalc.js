@@ -365,24 +365,35 @@ export function formatDollars(m) {
 // ── Narrative ─────────────────────────────────────────────────────────────────
 
 export function buildNarrative(results, inputs, nameA, nameB, flags) {
-  const a   = nameA || 'Company A';
-  const b   = nameB || 'Company B';
-  const priceStr = `$${(parseFloat(inputs.offerPricePerShare) || 0).toFixed(2)}`;
-  const totalStr = formatDollars(results.totalPurchasePrice);
+  // Names are the ones the slides use (SectionDashboard passes the acquirer/target objects' names), never "Company B".
+  // A value that is unknown drops its clause: no "$null", no "$0.00/share" for a private target with no per-share price.
+  // Known values print exactly as before.
+  const a   = nameA || 'The acquirer';
+  const b   = nameB || 'the target';
+  const offer = parseFloat(inputs.offerPricePerShare);
+  const priceClause = offer > 0 ? ` at $${offer.toFixed(2)}/share` : '';
+  const total = parseFloat(results.totalPurchasePrice);
+  const totalClause = Number.isFinite(total) ? ` (${formatDollars(total)} total)` : '';
+  const deal = `${a}'s acquisition of ${b}${priceClause}${totalClause}`;
   const direction = results.isAccretive ? 'accretive' : 'dilutive';
+  const known = (v) => v != null && v !== '' && Number.isFinite(parseFloat(v));
+  const haveEps = known(results.companyAEPS) && known(results.proFormaEPS);
 
+  if (results.basesDiffer) {
+    return `${deal}: pro forma EPS and accretion are not shown because the companies are on different bases. Put both on the same basis to combine them.`;
+  }
   // When the acquirer is loss-making (standalone EPS ≤ 0) a percentage change from a negative base
   // is not meaningful — describe the absolute EPS move instead of reporting a misleading percentage.
   const pct = results.epsChangePct === null ? null : parseFloat(results.epsChangePct);
   let text;
-  if (pct === null || isNaN(pct)) {
-    text = `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total) moves pro forma EPS from $${results.companyAEPS} to $${results.proFormaEPS} — accretion/(dilution) is not meaningful from a non-positive EPS base.`;
+  if (!haveEps) {
+    text = `${deal}.`;
+  } else if (pct === null || isNaN(pct)) {
+    const nonPositive = parseFloat(results.companyAEPS) <= 0 || parseFloat(results.proFormaEPS) <= 0;
+    text = `${deal} moves pro forma EPS from $${results.companyAEPS} to $${results.proFormaEPS}${nonPositive ? ' — accretion/(dilution) is not meaningful from a non-positive EPS base' : ''}.`;
   } else {
     const epsDir = results.isAccretive ? 'increasing' : 'decreasing';
-    text = `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total) would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from $${results.companyAEPS} to $${results.proFormaEPS}.`;
-  }
-  if (results.basesDiffer) {
-    return `${a}'s acquisition of ${b} at ${priceStr}/share (${totalStr} total): pro forma EPS and accretion are not shown because the companies are on different bases. Put both on the same basis to combine them.`;
+    text = `${deal} would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from $${results.companyAEPS} to $${results.proFormaEPS}.`;
   }
   if (flags.length > 0) {
     text += ` ${flags[0].text.split('—')[0].trim()} represents the deal's biggest structural risk.`;

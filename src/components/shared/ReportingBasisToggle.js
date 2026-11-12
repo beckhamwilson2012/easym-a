@@ -18,7 +18,9 @@ export function ReportingBasisToggle({ value, availability, plan, onChange }) {
   };
   const nonGaapDisabled = loading || !availability.available;
   const notes = [];
-  if (!loading && value === NON_GAAP && plan && plan.selected === NON_GAAP) {
+  if (!loading && value === NON_GAAP && plan && plan.selected === NON_GAAP && plan.noChange) {
+    notes.push(plan.noChange);   // the toggle still switches; this says why no figure moves
+  } else if (!loading && value === NON_GAAP && plan && plan.selected === NON_GAAP) {
     notes.push(plan.eps.nonGaap ? 'EPS, pro forma EPS and accretion: non-GAAP (company reported, both companies).' : `EPS, pro forma EPS and accretion: ${plan.eps.note}.`);
     ['A', 'B'].forEach((P) => {
       const e = plan.ebitda[P];
