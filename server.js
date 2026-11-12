@@ -19,7 +19,8 @@ const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM
 const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod, grossProfitAbsentReason } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
 const { multiClassCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
-const { resolveTotalDebt } = require('./server/services/debtConcepts'); // shared total-debt resolution — deal EV / comps / §16 resolve identically
+const { resolveTotalDebt } = require('./server/services/debtConcepts');
+const { resolveZeroDebt } = require('./server/services/debtZero'); // debt that is zero by a filing's own statement, not by absence // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
 const cnbcClient  = require('./server/services/cnbcClient');  // keyless, reliable primary price source
@@ -724,10 +725,18 @@ async function fetchFromEDGAR(symbol, cik) {
   // resolver uses (LongTermDebtAndCapitalLeaseObligations, KO) is FINANCE-lease-inclusive BORROWING — do
   // NOT add OperatingLeaseLiability*. (ltdSiblingSum above is now subsumed by the resolver's NC+Cur sum.)
   const debtRes = useIfrs ? null : resolveTotalDebt(bsPick);
-  const debt = useIfrs
+  const debtResolved = useIfrs
     ? pickMatched(ifrs, ['LongtermBorrowings', 'Borrowings', 'NoncurrentPortionOfLongtermBorrowings'], revenueEntry?.end)
     : (debtRes.value ?? convertTotal
        ?? bsPick(['DebtLongtermAndShorttermCombinedAmount', 'LongTermLineOfCredit', 'LongTermNotesPayable']));
+  // Debt that is ZERO, not unknown (debtZero): only when a filing says so — a filed 0 no later filing contradicts (OMDA's
+  // FY2025 10-K LongTermDebt = 0), or the latest debt note stating nothing is drawn (PGNY's revolver). Otherwise it stays
+  // null with the reason (HNGE: no debt concept, no statement of zero). Never inferred from absence.
+  let debtLabel = null, debtReason = null;
+  const debtZero = (!useIfrs && debtResolved == null) ? await resolveZeroDebt(cik, gaap, floorEnd) : null;
+  if (debtZero && debtZero.value === 0) debtLabel = debtZero.label;
+  else if (debtZero) debtReason = debtZero.reason;
+  const debt = debtZero && debtZero.value === 0 ? 0 : debtResolved;
 
   // Total assets at the balance-sheet anchor (7A Item 2) — resolved via bsPick, i.e. pickInstantAt at the SAME
   // bsAnchor as cash/debt (interim) or the same annual end (annual). Same instant → no mixed-date risk on §3.
@@ -827,6 +836,9 @@ async function fetchFromEDGAR(symbol, cik) {
     cash:           cash != null ? inM(cash) : null, // null when the cash tag was stale-rejected (Fix A) → deck shows N/A
     shortTermInvestments: shortTermInvestments != null ? inM(shortTermInvestments) : null, // short-term marketable securities (net-debt convention b); null → cash-only for this filer
     debt:           debt != null ? inM(debt) : null, // null when the debt tag was stale-rejected (Fix A) → deck shows N/A
+    debtLabel,                             // "$0, 10-K FY2025, no later debt tag" / "$0, nothing drawn on revolver, 10-Q 9/30/2026 note 6"; null otherwise
+    debtReason,                            // why debt is null ("—"), when the zero check ran and found no filed statement
+    debtSource:     debtZero && debtZero.value === 0 ? debtZero.source : null,   // accession, as-of, concept or note sentence
     totalAssets:    totalAssets != null ? inM(totalAssets) : null, // total assets at the SAME balance-sheet anchor as cash/debt (2B-2); null if untagged there
     balanceSheetAsOf: bsAnchor,            // as-of date of the net-debt trio (2B-2): LTM latest-interim end, or annual end when no interim LTM
     balanceSheetBasis: bsInterim ? 'interim' : 'annual', // provenance: which anchor was used (faculty p6 "as-of date")

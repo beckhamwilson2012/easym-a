@@ -78,15 +78,16 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   ];
 
   // ── Pro-forma capitalization / leverage ─────────────────────────────────────────────────────────────
-  const aDebt = num(inp.companyADebt) || 0, bDebt = num(inp.companyBDebt);   // bDebt null = unavailable, never $0
+  // Both null-preserving: an acquirer with no filed debt figure (HNGE) is unknown, not $0 — every total it feeds is "—".
+  const aDebt = num(inp.companyADebt), bDebt = num(inp.companyBDebt);   // null = unavailable, never $0
   const aCash = num(inp.companyACash) || 0, bCash = num(inp.companyBCash) || 0;
   const aSti  = num(inp.companyASti),      bSti  = num(inp.companyBSti);
   const aBsAsOf = fmtAsOf(inp.companyABsAsOf, inp.companyABsBasis), bBsAsOf = fmtAsOf(inp.companyBBsAsOf, inp.companyBBsBasis);
   const sub = (x, y) => (x != null && y != null) ? x - y : null;   // null-propagating difference
-  const preDebt      = bDebt != null ? aDebt + bDebt : null;
+  const preDebt      = (aDebt != null && bDebt != null) ? aDebt + bDebt : null;
   // Non-bank: target debt is repaid (assumption) → pro-forma debt = acquirer debt + new acquisition debt.
   // Bank (Guard 1): target debt stays outstanding → legacy pre-deal debt + new debt.
-  const proFormaDebt = newDebt == null ? null : (bankFin ? (preDebt != null ? preDebt + newDebt : null) : aDebt + newDebt);
+  const proFormaDebt = newDebt == null ? null : (bankFin ? (preDebt != null ? preDebt + newDebt : null) : (aDebt != null ? aDebt + newDebt : null));
   // ONE cash definition (convention b): cash & equivalents + short-term marketable securities, both companies.
   const preCash      = cashBucket(aCash, aSti).value + cashBucket(bCash, bSti).value;
   const pfCash       = excessUsedAmt != null ? preCash - excessUsedAmt : null;   // cash drawn to fund the deal

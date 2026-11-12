@@ -68,7 +68,7 @@ test('class labels: us-gaap members and custom members', () => {
 
 test('latest periodic filing: 10-Q/10-K only, newest filed; 8-K and Form 4 ignored', () => {
   const sub = { filings: { recent: { form: ['144', '10-Q', '8-K', '10-K'], accessionNumber: ['x', 'q3', 'k8', 'k'], filingDate: ['2026-11-10', '2026-11-09', '2026-11-02', '2026-03-03'], reportDate: ['', '2026-09-30', '2026-10-29', '2025-12-31'] } } };
-  assert.deepStrictEqual(latestPeriodicFiling(sub), { form: '10-Q', accn: 'q3', filed: '2026-11-09', reportDate: '2026-09-30' });
+  assert.deepStrictEqual(latestPeriodicFiling(sub), { form: '10-Q', accn: 'q3', filed: '2026-11-09', reportDate: '2026-09-30', primaryDocument: null });
 });
 
 test('companyfacts already holds an undimensioned cover count from that filing → single class, no instance read', async () => {

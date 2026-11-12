@@ -457,7 +457,8 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
     if (rev > 0 && niVal != null && niVal < 0) lines.push(`Reported a net loss of ${fmtMoneyTable(Math.abs(niVal))} in ${target?.basis === 'ltm' ? `the period, ${target.basisLabel}` : 'the latest fiscal year'} — growth-stage profitability profile.`);
     if (shares > 0 && epsVal != null) lines.push(`${shares.toFixed(0)}M shares outstanding; ${epsNonGaap ? 'non-GAAP' : 'reported'} diluted EPS of ${fmtPerShare(epsVal)}.`);
     if (ngEbitda && ngEbitda.value != null) lines.push(`${ngEbitda.name} of ${fmtUSDmAcct(ngEbitda.value)} (non-GAAP, company reported).`);
-    if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}.`);
+    if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}${target?.debtLabel ? `; total debt ${target.debtLabel}` : ''}.`);
+    else if (target?.debtReason) lines.push(`Net cash / (debt) position: N/A — total debt is not shown: ${target.debtReason}.`);
     else lines.push(`Net cash / (debt) position: N/A — a balance-sheet figure was unavailable in the filing.`);
     return lines;
   })();
