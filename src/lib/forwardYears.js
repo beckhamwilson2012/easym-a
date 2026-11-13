@@ -41,9 +41,14 @@ export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerNam
   const A = acquirerName || 'the acquirer';
   const T = targetName || 'the target';
   const gaap = inputs?.reportingBasis !== NON_GAAP;
-  const firstCol = (cols) => (Array.isArray(cols) ? (cols.find((c) => c && !c.actual && c.fy != null)?.fy ?? null) : null);
-  const fA = firstCol(acquirerFwd);
-  const fB = firstCol(targetFwd);
+  const fA = firstFiscalYearAfter(year1End(inputs, 'A'), inputs?.companyAFiscalYearEnd);
+  const fB = firstFiscalYearAfter(year1End(inputs, 'B'), inputs?.companyBFiscalYearEnd);
+  // /api/pnl returns at most three forecast years after the latest 10-K (server.js, `.slice(0, 3)`): a year past them is
+  // not "no consensus", it is beyond what the deck loads, and the reason says so.
+  const beyond = (cols, fy) => {
+    const fys = (Array.isArray(cols) ? cols : []).filter((c) => c && !c.actual && c.fy != null).map((c) => c.fy);
+    return fys.length >= FORWARD_SLOTS && fy > Math.max(...fys) ? `FY${fy} is beyond the three forecast years the deck loads (FY${Math.min(...fys)}–FY${Math.max(...fys)})` : null;
+  };
   const find = (cols, fy) => (fy != null && Array.isArray(cols) ? cols.find((c) => c && !c.actual && c.fy === fy) || null : null);
   const slots = [];
   for (let k = 0; k < FORWARD_SLOTS; k++) {
@@ -53,17 +58,17 @@ export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerNam
     let reason = null;
     if (gaap) reason = NO_GAAP_FORECAST;
     else if (!Array.isArray(acquirerFwd) || !acquirerFwd.length) reason = `no forecast EPS for ${A}`;
-    else if (fyA == null) reason = `${A}'s Year 1 period or fiscal year end is not known`;
-    else if (!a || a.eps == null) reason = `no FMP consensus EPS for ${A} FY${fyA}`;
     else if (privateTarget) reason = `${T} has no forecast EPS (a private company has no analyst consensus)`;
+    else if (fyA == null) reason = `${A}'s Year 1 period or fiscal year end is not known`;
+    else if (!a || a.eps == null) reason = beyond(acquirerFwd, fyA) || `no FMP consensus EPS for ${A} FY${fyA}`;
     else if (fyB == null) reason = `${T}'s Year 1 period or fiscal year end is not known`;
-    else if (!b || b.eps == null) reason = `no FMP consensus EPS for ${T} FY${fyB}`;
+    else if (!b || b.eps == null) reason = beyond(targetFwd, fyB) || `no FMP consensus EPS for ${T} FY${fyB}`;
     slots.push({
       year: k + 2, synYr: k + 1, fyA, fyB,
       label: fyA != null ? `FY${fyA}E` : null,
       a, b, epsOk: reason == null, reason,
       // Why the column itself (revenue, EBIT, net income) is missing, for the slide 9 tables.
-      colReason: fyA == null ? `${A}'s fiscal year end is not known` : !a ? `no FMP consensus for ${A} FY${fyA}` : (!privateTarget && !b) ? `no FMP consensus for ${T} FY${fyB}` : null,
+      colReason: fyA == null ? `${A}'s fiscal year end is not known` : !a ? (beyond(acquirerFwd, fyA) || `no FMP consensus for ${A} FY${fyA}`) : (!privateTarget && !b) ? `no FMP consensus for ${T} FY${fyB}` : null,
     });
   }
   return { slots, gaap, firstFy: { A: fA, B: fB } };

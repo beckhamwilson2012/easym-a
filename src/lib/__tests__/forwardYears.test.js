@@ -50,3 +50,35 @@ describe('Fix 10 Task 2 — forward EPS follows the toggle', () => {
     expect(r).toEqual({ premium: null, reason: 'Year 2 is “—”: consensus is non-GAAP; no GAAP forecast.' });
   });
 });
+
+// Fix 10 Task 3: no forward year overlaps Year 1.
+import { firstFiscalYearAfter } from '../forwardYears';
+describe('Fix 10 Task 3 — no overlapping years', () => {
+  const ng = { reportingBasis: NON_GAAP };
+  test('first fiscal year that begins after Year 1 ends', () => {
+    expect(firstFiscalYearAfter('2026-09-30', '2025-12-31')).toBe(2027);   // HNGE LTM: FY2026 began 1/1/2026, inside Year 1
+    expect(firstFiscalYearAfter('2025-12-31', '2025-12-31')).toBe(2026);   // FY card: unchanged
+    expect(firstFiscalYearAfter('2026-06-30', '2026-06-30')).toBe(2027);   // TEAM FY (June)
+    expect(firstFiscalYearAfter('2026-09-30', '2026-06-30')).toBe(2028);   // TEAM LTM: FY2027 began 7/1/2026, inside Year 1
+    expect(firstFiscalYearAfter('2025-12-27', '2025-12-27')).toBe(2026);   // PEP 52/53-week year
+    expect(firstFiscalYearAfter(null, '2025-12-31')).toBeNull();
+  });
+  test('HNGE/TDOC on LTM: Year 2 = FY2027, Year 3 = FY2028, Year 4 "—" (beyond the three loaded years)', () => {
+    const inputs = { ...ng, companyABasis: 'ltm', companyBBasis: 'ltm', companyALtmAsOf: '2026-09-30', companyBLtmAsOf: '2026-09-30',
+      companyAFiscalYearEnd: '2025-12-31', companyBFiscalYearEnd: '2025-12-31' };
+    const s = selectForwardYears({ inputs, acquirerFwd: hngeFwd, targetFwd: tdocFwd, acquirerName: 'HNGE', targetName: 'TDOC' });
+    expect(s.slots.map(x => x.label)).toEqual(['FY2027E', 'FY2028E', 'FY2029E']);
+    expect(s.slots.map(x => x.epsOk)).toEqual([true, true, false]);
+    expect(s.slots[0].a.eps).toBe(3.12917);
+    expect(s.slots[2].reason).toBe('FY2029 is beyond the three forecast years the deck loads (FY2026–FY2028)');
+  });
+  test('HNGE/TDOC on FY: Year 2 = FY2026, unchanged', () => {
+    const s = selectForwardYears({ inputs: { ...fy, ...ng }, acquirerFwd: hngeFwd, targetFwd: tdocFwd });
+    expect(s.slots.map(x => x.label)).toEqual(['FY2026E', 'FY2027E', 'FY2028E']);
+  });
+  test('each company is shifted on its own Year 1: a FY target beside an LTM acquirer keeps its own first year', () => {
+    const inputs = { ...ng, companyABasis: 'ltm', companyALtmAsOf: '2026-09-30', companyAFiscalYearEnd: '2025-12-31', companyBBasis: 'fy', companyBFiscalYearEnd: '2025-12-31' };
+    const s = selectForwardYears({ inputs, acquirerFwd: hngeFwd, targetFwd: tdocFwd });
+    expect([s.slots[0].a.fy, s.slots[0].b.fy]).toEqual([2027, 2026]);
+  });
+});
