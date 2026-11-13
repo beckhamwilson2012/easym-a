@@ -4,7 +4,8 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isGrossNm, grossNmNote, standaloneEPS, dealNonGaap, fmtAsOf } from '../shared/deckTokens';
-import { FY_ONLY } from '../../../lib/reportingBasis';
+import { FY_ONLY, epsCheckNote } from '../../../lib/reportingBasis';
+import { ExplainButton } from '../../shared/ExplainButton';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { netCashDebt } from '../../../lib/netDebt';
@@ -114,7 +115,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
   // a GAAP deal, so the table is unchanged there.
   const lines = !ngRows ? baseLines : baseLines.flatMap((l) => {
     const extra = ngRows.filter(r => r.after === l.label).map(r => ({
-      label: r.label, ng: true, fmt: r.kind === 'eps' ? fmtEpsV : fmtM, bold: false,
+      label: r.label, ng: true, fmt: r.kind === 'eps' ? fmtEpsV : fmtM, bold: false, info: r.info || null,
       get: (c) => (!r.ltmCard && c.actual && !c.isLtm && r.fyLabel && c.label === r.fyLabel ? r.value : null),
     }));
     return [l, ...extra];
@@ -247,7 +248,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
             {lines.map((ln, ri) => (
               <tr key={ln.label}>
                 <td style={{ padding: '4px 8px', paddingLeft: ln.indent ? 18 : 8, background: ri % 2 ? ALT_ROW : '#fff', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10.5, fontWeight: ln.bold ? 700 : 400, color: ln.ng ? '#0070D2' : (ln.bold ? NAVY : '#374151') }}>
-                  {ln.label}
+                  {ln.label}{ln.info ? <> <ExplainButton portal explain={{ formula: ln.info }} /></> : null}
                 </td>
                 {dcols.map((c, i) => {
                   const v = ln.get(c);
@@ -458,7 +459,11 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
     const toCommon = !!target?.netIncomeToCommon && !epsNonGaap;
     if (rev > 0 && niVal != null && niVal > 0) lines.push(`${toCommon ? 'Net income attributable to common stockholders (the EPS numerator)' : 'Net income'} of ${fmtMoneyTable(niVal)} — a ${fmtPct(niMarginVal)} net margin.`);
     if (rev > 0 && niVal != null && niVal < 0) lines.push(`Reported a net loss${toCommon ? ' attributable to common stockholders' : ''} of ${fmtMoneyTable(Math.abs(niVal))} in ${target?.basis === 'ltm' ? `the period, ${target.basisLabel}` : 'the latest fiscal year'} — growth-stage profitability profile.`);
-    if (shares > 0 && epsVal != null) lines.push(`${shares.toFixed(0)}M shares outstanding; ${epsNonGaap ? 'non-GAAP' : 'reported'} diluted EPS of ${fmtPerShare(epsVal)}.`);
+    if (shares > 0 && epsVal != null) {
+      const epsLine = `${shares.toFixed(0)}M shares outstanding; ${epsNonGaap ? 'non-GAAP' : 'reported'} diluted EPS of ${fmtPerShare(epsVal)}.`;
+      const info = epsNonGaap ? ngEpsInfo(target, ng) : null;
+      lines.push(info ? <>{epsLine} <ExplainButton portal explain={{ formula: info }} /></> : epsLine);
+    }
     if (ngEbitda && ngEbitda.value != null) lines.push(`${ngEbitda.name} of ${fmtUSDmAcct(ngEbitda.value)} (non-GAAP, company reported).`);
     if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}${target?.debtLabel ? `; total debt ${target.debtLabel}` : ''}.`);
     else if (target?.debtReason) lines.push(`Net cash / (debt) position: N/A — total debt is not shown: ${target.debtReason}.`);
@@ -678,6 +683,13 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
   );
 }
 
+// The ⓘ text for this company's adjusted EPS, wherever the slide prints it (reportingBasis.epsCheckNote), or null.
+function ngEpsInfo(company, ng) {
+  if (!ng) return null;
+  return epsCheckNote(company?.ticker || company?.name || 'The company',
+    { value: ng.dilutedEPS, netIncome: ng.netIncome, dilutedShares: ng.dilutedShares, checkMethod: ng.epsCheckMethod });
+}
+
 // The non-GAAP rows the multi-year table adds on a Non-GAAP deal (null on a GAAP deal → table unchanged).
 // Each row carries one company-reported figure for the fiscal-year column it was reported for.
 function ngRowsFor(ngPlan, ng, ngEbitda, company, ltmCard) {
@@ -687,7 +699,7 @@ function ngRowsFor(ngPlan, ng, ngEbitda, company, ltmCard) {
   if (ngEbitda) rows.push({ after: 'EBITDA', kind: 'money', label: `${ngEbitda.name} (non-GAAP)`, value: ngEbitda.value, fyLabel, ltmCard });
   if (ng) {
     rows.push({ after: 'Net Income', kind: 'money', label: 'Net Income (non-GAAP)', value: ng.netIncome, fyLabel, ltmCard });
-    rows.push({ after: 'Diluted EPS', kind: 'eps', label: 'Diluted EPS (non-GAAP)', value: ng.dilutedEPS, fyLabel, ltmCard });
+    rows.push({ after: 'Diluted EPS', kind: 'eps', label: 'Diluted EPS (non-GAAP)', value: ng.dilutedEPS, fyLabel, ltmCard, info: ngEpsInfo(company, ng) });
   }
   return rows;
 }

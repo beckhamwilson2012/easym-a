@@ -190,6 +190,7 @@ export function dealNonGaap(deal, side) {
     dilutedShares: eps ? eps.dilutedShares : null,
     epsLabel:      eps ? eps.label : null,         // "non-GAAP, company reported, FY2025, <accession>"
     epsRowLabel:   eps ? eps.rowLabel : null,      // the company's own row label
+    epsCheckMethod: eps ? (eps.checkMethod || null) : null,   // how the server tied it (reportingBasis.epsCheckNote reads it)
     epsNote:       plan.eps.note,                  // why the deal's EPS stayed GAAP, else null
     ebitda:        e.nonGaap ? { value: e.value, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null } : null,
     accession:     (eps && eps.accession) || (e.nonGaap ? e.accession : null) || null,

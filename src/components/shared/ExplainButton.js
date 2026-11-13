@@ -1,4 +1,5 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useExplain } from '../../contexts/ExplainContext';
 
 let nextId = 0;
@@ -10,23 +11,41 @@ function isMobile() {
   return typeof window !== 'undefined' && window.innerWidth < MOBILE_BP;
 }
 
-export function ExplainButton({ explain, value }) {
+// `portal` (opt-in): on desktop the popover is drawn in document.body at the button's on-screen position, so a
+// parent with overflow:hidden (a slide's table or card) cannot clip it. Without it the popover sits below the button
+// in place, exactly as before.
+export function ExplainButton({ explain, value, portal = false }) {
   const { openId, toggle, close } = useExplain();
   const id = useRef(null);
   if (!id.current) id.current = `eb-${nextId++}`;
   const isOpen = openId === id.current;
 
   const containerRef = useRef(null);
+  const popRef = useRef(null);
+  const [anchor, setAnchor] = useState(null);
 
-  // Close on click-outside
+  // Close on click-outside (the portaled popover is outside containerRef in the DOM, so it is checked too)
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e) => {
-      if (!containerRef.current?.contains(e.target)) close();
+      if (!containerRef.current?.contains(e.target) && !popRef.current?.contains(e.target)) close();
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, [isOpen, close]);
+
+  // Portal mode: anchor to the button's viewport rect when opened; a scroll or resize closes it rather than leaving it
+  // floating away from its button.
+  useEffect(() => {
+    if (!portal || !isOpen || !containerRef.current) { setAnchor(null); return; }
+    const r = containerRef.current.getBoundingClientRect();
+    const w = Math.min(360, window.innerWidth - 32);   // = POPOVER_W
+    setAnchor({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left + r.width / 2 - w / 2, window.innerWidth - w - 8)) });
+    const off = () => close();
+    window.addEventListener('scroll', off, true);
+    window.addEventListener('resize', off);
+    return () => { window.removeEventListener('scroll', off, true); window.removeEventListener('resize', off); };
+  }, [portal, isOpen, close]);
 
   // Close on Escape
   useEffect(() => {
@@ -80,7 +99,21 @@ export function ExplainButton({ explain, value }) {
               <PopoverContent computed={computed} value={value} onClose={close} />
             </div>
           </div>
-        ) : (
+        ) : portal ? (anchor && createPortal(
+          // Desktop, portal mode: the same popover, fixed at the button's position, kept inside the viewport.
+          <div ref={popRef} style={{
+            position: 'fixed', top: anchor.top, left: anchor.left,
+            zIndex: 1000,
+            background: '#fff', border: '1px solid #E5E7EB',
+            borderRadius: 8, padding: 12,
+            boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+            width: POPOVER_W,
+            fontFamily: 'Arial, sans-serif',
+          }}>
+            <PopoverContent computed={computed} value={value} onClose={close} />
+          </div>,
+          document.body,
+        )) : (
           // Desktop: popover below the button
           <div style={{
             position: 'absolute', top: 'calc(100% + 4px)', left: '50%',

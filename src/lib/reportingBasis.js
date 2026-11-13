@@ -20,6 +20,19 @@ export { DIFFERENT_BASES };
 
 const fin = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
 
+// The ⓘ text beside a company-reported adjusted EPS whose filing shows no per-share adjustments (DDOG): the server
+// checked it as filed non-GAAP net income ÷ filed non-GAAP diluted shares (method 'net-income identity'). The note
+// says whether that quotient rounds to the filed EPS. null for every other method (the per-share table itself ties).
+export function epsCheckNote(ticker, eps) {
+  if (!eps || eps.checkMethod !== 'net-income identity') return null;
+  const v = fin(eps.value), ni = fin(eps.netIncome), sh = fin(eps.dilutedShares);
+  if (v == null || ni == null || !(sh > 0)) return null;
+  const q = ni / sh;
+  const ties = Math.round(q * 100) === Math.round(v * 100);
+  return `${ticker} doesn't list per-share adjustments, so $${v.toFixed(2)} is checked as filed non-GAAP net income ÷ filed non-GAAP diluted shares. `
+    + (ties ? 'It ties to the cent.' : `It does not tie: ${q.toFixed(3)} against the filed $${v.toFixed(2)}.`);
+}
+
 // One company's usable figures from its /api/nongaap payload. Adjusted EPS is usable for the deal only with the
 // net income and diluted share count it was filed with (the deal model divides one by the other).
 export function reportedNonGaap(payload) {
@@ -30,6 +43,7 @@ export function reportedNonGaap(payload) {
         value: fin(f.eps.value), netIncome: fin(f.netIncome.value), dilutedShares: fin(f.dilutedShares.value),
         rowLabel: f.eps.rowLabel || null, label: f.eps.label || null, period: f.eps.period || null,
         accession: f.eps.accession || payload.sourceAccession || null, fiscalYear: payload.fiscalYear ?? null, fiscalYearEnd: payload.fiscalYearEnd ?? null,
+        checkMethod: f.eps.method || null,   // how the server tied the EPS to GAAP: per-share reconciliation, or net-income identity
       }
     : null;
   const ebitda = f.ebitda && fin(f.ebitda.value) != null
