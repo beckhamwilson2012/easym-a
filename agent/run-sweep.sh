@@ -1694,7 +1694,7 @@ while :; do
 done
 
 RUN_COMPLETED=1                                # the run ended on its own terms — finalize_abnormal stands down
-log "RUN $RUN_ID COMPLETE · branch sweep/auto-$RUN_ID · undo: $RUN_DIR/UNDO.txt"
+if [[ "$DRY_RUN" == "1" ]]; then log "RUN $RUN_ID COMPLETE · dry run · detached $(gitr rev-parse --short HEAD) · no branch, no tag, no commit"; else log "RUN $RUN_ID COMPLETE · branch sweep/auto-$RUN_ID · undo: $RUN_DIR/UNDO.txt"; fi
 commit_ledger                                  # explicit at COMPLETE; the EXIT trap repeats it for every other path
 
 # ── exit contract (added 2026-09-17) ─────────────────────────────────────────────────────────────────
