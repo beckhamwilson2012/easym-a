@@ -11,7 +11,7 @@ import {
 import { calcStockIssuancePct, triggers199Rule } from '../../../lib/dealMath';
 import {
   isBankDeal, calcPTBV, combinedCET1, computeBankFlags, buildBankNarrative,
-  fmtRatio, fmtPct, fmtMoneyTable, fmtMoneyDual, fmtMoneyAccounting, fmtPerShare, fmtPctSigned,
+  fmtRatio, fmtPct, fmtMoneyTable, fmtMoneyDual, fmtMoneyAccounting, fmtPerShare, fmtPctSigned, fmtInterest,
 } from '../shared/deckTokens';
 import { useWindowWidth } from '../../../hooks/useWindowWidth';
 import { ExplainButton } from '../../shared/ExplainButton';
@@ -357,7 +357,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: (inputs.companyBNetIncomeToCommon ? 'Target Net Income to Common (EPS numerator)' : 'Target Net Income'), value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Cost Synergies (Y1)', value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
-                : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
+                : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtInterest(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income',          value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',                 value: fmtPerShare(results.proFormaEPS), bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ] : [
@@ -369,7 +369,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: ngPlan && ngPlan.eps.nonGaap ? 'Target Net Income (non-GAAP)' : (inputs.companyBNetIncomeToCommon ? 'Target Net Income to Common (EPS numerator)' : 'Target Net Income'),   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Synergies (Y1)',  value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered, explain: () => explainSynergies({ schedule: results.synergies, isBank: false }) },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
-                : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtMoneyTable(results.newInterestAfterTax)})`, red: true }] : []),
+                : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtInterest(results.newInterestAfterTax)})`, red: true }] : []),
               { label: 'Pro Forma Net Income', value: results.basesDiffer ? '—' : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',       value: results.basesDiffer ? '—' : fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (

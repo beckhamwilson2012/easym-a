@@ -3,7 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote } from '../shared/deckTokens';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote, fmtInterest } from '../shared/deckTokens';
 import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, forwardYearInputs, TAX_RATE } from '../../../utils/dealCalc';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
@@ -24,6 +24,8 @@ const FORWARD_BG  = '#FFFBEB', FORWARD_BORDER  = '#F59E0B';
 const ACC_GREEN = '#047857', DIL_RED = '#DC2626', NEUTRAL_GRAY = '#6B7280';
 
 const fmtM    = (v) => v == null ? '—' : (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString('en-US')})` : `$${Math.round(v).toLocaleString('en-US')}`);
+// The financing line and its basis note go through the deck's one interest formatter (one decimal under $10M).
+const fmtFin  = (v) => fmtInterest(v, { unit: '', whole: fmtM });
 const fmtPlus = (v) => v == null ? '—' : (v === 0 ? '—' : `+$${Math.round(v).toLocaleString('en-US')}`);
 const fmtPct1 = (v) => v == null ? '—' : `${v.toFixed(1)}%`;
 const fmtAcc  = (pct) => {
@@ -55,7 +57,7 @@ function estFetch(ticker) {
 
 const Cell = ({ v, kind, bold, color, nm, text }) => (
   <span style={{ flex: 1, fontSize: text ? 9 : 10, textAlign: 'right', fontWeight: bold ? 700 : 500, color: color || (typeof v === 'number' && v < 0 ? '#DC2626' : '#374151') }}>
-    {text ? text : nm ? 'n/m' : kind === 'pct' ? fmtPct1(v) : kind === 'syn' ? fmtPlus(v) : kind === 'dash' ? '—' : fmtM(v)}
+    {text ? text : nm ? 'n/m' : kind === 'pct' ? fmtPct1(v) : kind === 'syn' ? fmtPlus(v) : kind === 'dash' ? '—' : kind === 'int' ? fmtFin(v) : fmtM(v)}
   </span>
 );
 
@@ -264,7 +266,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                           <Cell v={r.b} nm={r.nmB} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={r.bold} />
                           <Cell v={r.c} nm={r.nmC} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={r.bold} color={r.bold ? NAVY : undefined} />
                           <Cell v={isPct || isDash ? null : r.syn} text={r.synText} kind={isPct || isDash ? 'dash' : 'syn'} color="#166534" />
-                          <Cell v={isPct ? r.c : (isDash ? null : r.pf)} nm={r.nmC} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={!r.fin} color={r.fin ? '#DC2626' : NAVY} />
+                          <Cell v={isPct ? r.c : (isDash ? null : r.pf)} nm={r.nmC} kind={isPct ? 'pct' : isDash ? 'dash' : r.fin ? 'int' : 'm'} bold={!r.fin} color={r.fin ? '#DC2626' : NAVY} />
                         </div>
                       );
                     })}
@@ -336,7 +338,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           <strong style={{ color: NAVY }}>Basis: </strong>
           {grossNmNote(acquirer, target) ? <>{grossNmNote(acquirer, target)} </> : null}
           Acquirer &amp; target forward legs are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>; the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each combined year is paired position-wise and labeled by the acquirer's fiscal year (the two companies' fiscal calendars are offset). Combined = Acquirer + Target.
-          <strong> Synergies are the deal's entered assumptions</strong> (total EBITDA impact {synergyYears.slice(0, nYears).map((y, k) => { const cr = sum(aFwd[k]?.revenue, bFwd[k]?.revenue); const pc = cr > 0 ? (y.ebitda / cr * 100) : null; return y.entered ? `${fmtM(y.ebitda)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}` : `${NONE_ENTERED} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. Cost synergies add to EBIT dollar for dollar — <strong>without asserting whether they arise in cost of revenue or operating expense</strong>. Revenue synergies add to PF revenue{deal?.synergies?.anyRevenue ? <> and {synergyMargin?.pct != null ? 'reach EBIT at the combined gross margin' : 'do not reach EBIT'}: {marginSentence(synergyMargin)}{deal.synergies.revenueOnly ? <> <strong style={{ color: '#92400E' }}>⚠ {REVENUE_ONLY_FLAG}</strong></> : null}</> : '.'} <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtM(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on {(acquirer?.basis === 'ltm' && target?.basis === 'ltm') ? 'the LTM actuals selected for Year 1' : 'latest-FY actuals'} + forward consensus</strong>; forward growth is always measured against fiscal-year figures, never LTM; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
+          <strong> Synergies are the deal's entered assumptions</strong> (total EBITDA impact {synergyYears.slice(0, nYears).map((y, k) => { const cr = sum(aFwd[k]?.revenue, bFwd[k]?.revenue); const pc = cr > 0 ? (y.ebitda / cr * 100) : null; return y.entered ? `${fmtM(y.ebitda)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}` : `${NONE_ENTERED} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. Cost synergies add to EBIT dollar for dollar — <strong>without asserting whether they arise in cost of revenue or operating expense</strong>. Revenue synergies add to PF revenue{deal?.synergies?.anyRevenue ? <> and {synergyMargin?.pct != null ? 'reach EBIT at the combined gross margin' : 'do not reach EBIT'}: {marginSentence(synergyMargin)}{deal.synergies.revenueOnly ? <> <strong style={{ color: '#92400E' }}>⚠ {REVENUE_ONLY_FLAG}</strong></> : null}</> : '.'} <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtFin(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on {(acquirer?.basis === 'ltm' && target?.basis === 'ltm') ? 'the LTM actuals selected for Year 1' : 'latest-FY actuals'} + forward consensus</strong>; forward growth is always measured against fiscal-year figures, never LTM; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
           <sup style={{ fontSize: 9.5 }}>n</sup> No consensus available: FMP publishes no forward gross profit, so forward cost of revenue, gross profit and gross margin are "—". Forward Operating Expense is "—" — consensus supplies operating income but not gross profit (same treatment as the Standalone P&amp;L slides).
         </div>
       </PageFrame>

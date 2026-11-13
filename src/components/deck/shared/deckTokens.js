@@ -46,6 +46,18 @@ export function fmtMoneyTable(m) {
   return (v < 0 && body !== '$0') ? `(${body})` : body;
 }
 
+// ONE formatter for every interest and financing-cost amount ($M): Credit Stats' pre-tax interest, the Deal Summary's
+// after-tax financing cost, the Pro Forma slide's financing line and its basis note. Under $10M it shows one decimal
+// ($0.5M), so a real drag on a small new debt never rounds to "$0M"; $10M and up goes to the slide's own whole-$M
+// formatter (`whole`), so those figures print exactly as before. Null / non-numeric → "—". Negatives in parentheses.
+export function fmtInterest(m, { unit = 'M', whole = fmtMoneyTable } = {}) {
+  const v = parseFloat(m);
+  if (m == null || !Number.isFinite(v)) return '—';
+  if (Math.abs(v) >= 10) return whole(v);
+  const body = `$${Math.abs(v).toFixed(1)}${unit}`;
+  return v < 0 ? `(${body})` : body;
+}
+
 // Dual money formatter — shows billions + millions for values >= $1B.
 // Use in suggestion badges and deal-size headlines for educational context.
 export function fmtMoneyDual(m) {

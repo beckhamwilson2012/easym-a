@@ -286,7 +286,10 @@ export function calculate(inputs) {
     proFormaEPS:       proFormaEPS === null ? null : proFormaEPS.toFixed(2),
     proFormaNetIncome: proFormaNetIncome === null ? null : proFormaNetIncome.toFixed(0),
     afterTaxSynergies: afterTaxSynergies.toFixed(0),
-    newInterestAfterTax: newInterestAfterTax == null ? null : newInterestAfterTax.toFixed(0),
+    // Full precision (was toFixed(0), which turned $0.47M into "0" before Credit Stats grossed it up to "$0M"). Every
+    // display rounds once, through deckTokens.fmtInterest. Pre-tax interest is the same new debt × the financing rate.
+    newInterestAfterTax: newInterestAfterTax,
+    newInterestPreTax:   sources.newDebt == null ? null : sources.newDebt * DEBT_INTEREST_RATE,
     // ── Sources of funds (Stage 2E) — the drag above is charged on newDebt; §10 renders the build ──
     newDebt:           sources.newDebt == null ? null : sources.newDebt.toFixed(0),
     cashConsideration: sources.cashConsideration.toFixed(0),
