@@ -46,11 +46,14 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   // EV via the shared helper — cash bucket = cash + short-term marketable securities (convention b).
   // Cash is null-aware: the helper short-circuits (net debt → null → EV → null → "—") when cash is null, so a
   // bank added as a peer — cash sits under CashAndDueFromBanks, not the standard concept, so data.cash is null —
-  // renders "—" rather than a fabricated EV built from ~$300B of un-netted debt. Debt keeps ||0: a missing debt
-  // tag means a near-debt-free filer (e.g. SHOP has no LongTermDebt), where treating it as $0 is honest.
+  // renders "—" rather than a fabricated EV built from ~$300B of un-netted debt. Debt is null-aware too (Fix 7b): it was
+  // `|| 0` ("a missing debt tag means a near-debt-free filer"), which printed HNGE's EV as $9,597M while Company Profiles
+  // showed "—" for the same figure. /quote now returns a filed 0 as 0 (debtZero) and an unknown debt as null with its
+  // reason, so null here is genuinely unknown: EV and net debt are "—", and the footnote gives the reason (debtUnknownNote).
   const stiVal = parseFloat(data.shortTermInvestments);
   const cashVal = Number.isFinite(parseFloat(data.cash)) ? parseFloat(data.cash) : null;
-  const ev     = enterpriseValue(mktCap, parseFloat(data.debt) || 0, cashVal, stiVal);
+  const debtVal = Number.isFinite(parseFloat(data.debt)) ? parseFloat(data.debt) : null;
+  const ev     = enterpriseValue(mktCap, debtVal, cashVal, stiVal);
   const stiUsed = cashBucket(0, stiVal).stiUsed;   // provenance: false → this column is cash-only (no ST-marketable line)
   const evRev  = ev != null && rev > 0 ? ev / rev : null;
   const opInc  = data.operatingIncome != null ? parseFloat(data.operatingIncome) : null;
@@ -118,9 +121,9 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     : (evEbitApprox ? 'n/mᵇ'
     : (evEbitVal == null ? '—' : (evEbitVal > 100 ? 'n/m' : `${evEbitVal.toFixed(1)}x`)));
 
-  // Net cash/(debt) for the equity value → EV bridge (shared helper). debt||0 (a missing debt tag = near-debt-
-  // free filer at $0 — SHOP; consistent with the EV row and EV/Revenue), cash null-aware (a bank hides cash → "—").
-  const netDebtLtm = netCashDebt(parseFloat(data.debt) || 0, cashVal, stiVal);
+  // Net cash/(debt) for the equity value → EV bridge (shared helper). Debt and cash both null-aware (same legs as the EV
+  // row above): an unknown debt is "—", never a $0 that nets the company's whole cash pile.
+  const netDebtLtm = netCashDebt(debtVal, cashVal, stiVal);
 
   // Which LTM-labeled cells fell back to a fiscal-year figure, so each is marked "FY<yy>" in its own cell. The values above are
   // unchanged; this only says which basis each one is on. CCI: LTM cost tags disagree with its statement, so its margin is FY.
@@ -148,6 +151,8 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     ev: mktCapSane ? ev : null,
     // valuation multiples + net-debt bridge (Stage 7A) — pre-formatted cells (n/m / footnote markers baked in)
     peCell, peNonOp, evEbitCell, evEbitApprox, netDebt: netDebtLtm,
+    // Why EV and net debt are "—" when the debt figure is unknown: /quote's own sourced reason (debtUnknownNote).
+    debtUnknown: debtVal == null && mktCap != null, debtReason: debtVal == null ? (data.debtReason || 'no total debt figure in the filing') : null,
     // raw inputs for the EPS-impact engine
     netIncome: data.netIncome != null ? parseFloat(data.netIncome) : null,
     netIncomeLtm: niLtm, growthBaseFy: latestAct?.label ?? null,
@@ -163,6 +168,14 @@ export function grossFilingNote(cols) {
   const byReason = new Map();
   cols.filter((c) => !c.loading && c.grossFilingReason).forEach((c) => byReason.set(c.grossFilingReason, [...(byReason.get(c.grossFilingReason) || []), c.ticker]));
   return byReason.size ? [...byReason].map(([reason, tickers]) => `Gross margin: n/m for ${tickers.join(', ')}: ${reason}.`).join(' ') : null;
+}
+
+// "Enterprise value, net debt and EV multiples are "—" for HNGE, SDGR: total debt is not shown: <reason>." One sentence
+// per distinct reason, or null. Same reason text Company Profiles and the P&L use (/quote debtReason).
+export function debtUnknownNote(cols) {
+  const byReason = new Map();
+  cols.filter((c) => !c.loading && c.debtUnknown).forEach((c) => byReason.set(c.debtReason, [...(byReason.get(c.debtReason) || []), c.ticker]));
+  return byReason.size ? [...byReason].map(([reason, tickers]) => `Enterprise value, net debt and EV multiples are “—” for ${tickers.join(', ')}: total debt is not shown: ${reason}.`).join(' ') : null;
 }
 
 // "AAPL: LTM to 2026-09-26 (latest 10-K; no later 10-Q yet)" for each such column, or null.
@@ -572,6 +585,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
           {loadedCols.some(c => c.grossNm) ? <>{grossNmNote(...loadedCols)} </> : null}
           {grossFilingNote(loadedCols) ? <>{grossFilingNote(loadedCols)} </> : null}
           {latestTenKLtmNote(loadedCols) ?<>{latestTenKLtmNote(loadedCols)} </> : null}
+          {debtUnknownNote(loadedCols) ? <>{debtUnknownNote(loadedCols)} </> : null}
           {anyFyFallback(metrics, loadedCols) ?<><strong>{FY_FALLBACK_NOTE}</strong> (marked “FY” and the fiscal year in the cell). </> : null}
           {isNonGaapDeal(deal) ? <><strong>Reporting basis: </strong>this deck is on Non-GAAP, but the comparables stay on GAAP and computed figures for every column, including {acquirer?.ticker || 'the acquirer'} and {target?.ticker || 'the target'}: the peers carry no company-reported non-GAAP figures, so P/E, EV/EBITDA and EPS Impact if Acquired are on one basis across the row. </> : null}
           Revenue growth and Op Margin/Income (NTM) are forward analyst consensus from FMP (a single provider series whose basis is not designated as GAAP or non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile ({exhibitLabelOf('targetprofile')}) — not here, as they are reported on non-comparable definitions. <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium / cash-stock mix / financing as the live deal; pre-synergy) modeling this acquirer buying each company — a real computation, not a fetch.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§{pageNumOf('plAcquirer')}/§{pageNumOf('plTarget')}). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}
