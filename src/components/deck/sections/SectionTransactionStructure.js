@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf } from '../shared/deckTokens';
-import { netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { evClaimsNote, NET_DEBT_BASIS } from '../../../lib/netDebt';
 import { epsAccretionPct, privateConsideration } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
@@ -86,7 +86,6 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   // Read from dealCalc's ONE result (proFormaCapitalization), the same figures Credit Stats and the Deal Summary's
   // Debt / EBITDA use. Non-bank: target debt repaid → acquirer debt + new debt; bank: pre-deal debt + new debt. Cash is
   // cash & equivalents + short-term marketable securities, less the excess cash used. Null legs stay "—".
-  const bDebt = num(inp.companyBDebt), bCash = num(inp.companyBCash), bSti = num(inp.companyBSti);   // target EV header only
   const aBsAsOf = fmtAsOf(inp.companyABsAsOf, inp.companyABsBasis), bBsAsOf = fmtAsOf(inp.companyBBsAsOf, inp.companyBBsBasis);
   const sub = (x, y) => (x != null && y != null) ? x - y : null;   // null-propagating difference
   const cap = r.capitalization || {};
@@ -113,8 +112,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const accAtZero    = Number.isFinite(accZeroRaw) ? accZeroRaw : null;
 
   // ── Deal-size header (link, don't duplicate §8) ─────────────────────────────────────────────────────
-  const tgtNetDebt = netCashDebt(bDebt, bCash, bSti);   // null when target debt is unavailable → EV unavailable
-  const txnEV = num(d.transactionEV) ?? ((equityPurchase != null && tgtNetDebt != null) ? equityPurchase + tgtNetDebt : null);
+  const txnEV = num(d.transactionEV);   // dealCalc's one transaction EV (Fix 10 Task 5), never re-derived here
 
   const capRows = [
     { k: 'Total debt',            pre: preDebt,     pf: proFormaDebt, impact: sub(proFormaDebt, preDebt) },
@@ -200,7 +198,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
         ) : (
           <>New acquisition debt <strong>= cash consideration, less total combined cash, plus minimum cash kept by the combined company, plus {bTk} debt repaid on change of control (assumed 100%), floored at zero</strong>. Equivalently — the collapsed form the Sources &amp; Uses "Excess cash on hand used" line ties to — this is cash consideration + {bTk} debt repaid − excess cash on hand, where excess cash on hand = combined cash less minimum cash kept. Combined cash above the retained minimum funds part of the deal, so the financing drag reflects net funding rather than a 100%-debt assumption. Stock consideration is newly issued {aTk} equity, so <strong>Sources = Uses</strong>. <strong style={{ color: '#374151' }}>Assumption:</strong> minimum cash kept by the combined company is set at <strong>{minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% of pro-forma {minCashBasisText ? 'revenue' : 'LTM revenue'}</strong>{minCashBasisText ? ` (${minCashBasisText})` : ''}{minCashRetained != null ? ` (${fmtMoneyTable(minCashRetained)})` : ''} — a modeling assumption, not a sourced figure. <strong style={{ color: '#374151' }}>Assumption:</strong> 100% of {bTk}'s debt is assumed repaid on change of control — a stated assumption, not sourced. {accAtCurrent != null && accAtZero != null ? <><strong style={{ color: '#374151' }}>Robustness:</strong> the accretion/(dilution) conclusion does not depend on the min-cash assumption — at min cash = 0 the pro-forma EPS impact is <strong>{accAtZero >= 0 ? '+' : ''}{accAtZero.toFixed(1)}%</strong> and at the assumed {minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% it is <strong>{accAtCurrent >= 0 ? '+' : ''}{accAtCurrent.toFixed(1)}%</strong>, {(accAtZero < 0) === (accAtCurrent < 0) ? `${accAtCurrent < 0 ? 'dilutive' : 'accretive'} across the full range` : 'the sign is stable across the range'}. </> : null}</>
         )}
-        {!bankDeal && <>Leverage is <strong>net debt (and total debt) ÷ combined EBITDA</strong> — the same EBITDA basis used on the Pro Forma slides (includes Year-1 synergies). {MULTIPLE_RULE} </>}
+        {!bankDeal && <>Leverage is <strong>net debt (and total debt) ÷ combined EBITDA</strong> — the same EBITDA basis used on the Pro Forma slides (includes Year-1 synergies). {MULTIPLE_RULE} </>}{evClaimsNote(deal?._inputs?.companyBClaims, bTk)} 
         {!bankDeal && ngEb && (ngEb.note ? <>Leverage ratios are “—”: combined EBITDA is not added because the {ngEb.note}. </> : <>Combined EBITDA is on a {ngEb.basis} basis. </>)}{NET_DEBT_BASIS}{aBsAsOf && bBsAsOf ? ` Balance-sheet items (cash, debt, marketable securities) are as of ${aTk} ${aBsAsOf} and ${bTk} ${bBsAsOf}.` : ''} Figures are illustrative transaction assumptions — not negotiated terms.
       </div>
     </PageFrame>

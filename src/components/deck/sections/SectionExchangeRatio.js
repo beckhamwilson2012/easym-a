@@ -7,7 +7,7 @@ import { multipleOf, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtPerShare, fmtShares, fmtPct, fmtPctFloor, fmtAsOf } from '../shared/deckTokens';
-import { netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { netCashDebt, evClaims, NET_DEBT_BASIS } from '../../../lib/netDebt';
 
 // Spec §2 Slide 8 — Exchange Ratio & Deal Considerations. Two side-by-side tables, ALL values read
 // from the C1 single source of truth (deckModel.derived / dealAssumptions) so they can never diverge
@@ -149,7 +149,8 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
   // ── Sensitivity matrix computation ──────────────────────────────────────────────────────────────────
   const price   = d.currentPriceTarget;                                            // USD (ADR for foreign)
   const shares  = d.targetShares;                                                   // millions
-  const netDebt = netCashDebt(target?.debt, target?.cash, target?.sti); // $M, USD — shared helper, cash bucket = cash + short-term marketable (b)
+  // Net debt plus the target's tagged noncontrolling interest / preferred (Fix 10 Task 5): the same EV build as dealCalc.
+  const netDebt = (() => { const nd = netCashDebt(target?.debt, target?.cash, target?.sti); return nd == null ? null : nd + evClaims(target?.claims); })(); // $M, USD — shared helper, cash bucket = cash + short-term marketable (b)
   const struckPrem = d.premiumPct;                                                  // actual struck deal premium (%)
 
   // Forward years: the two LATEST consensus forward columns (skips the near/stub year → matches "2027/2028"

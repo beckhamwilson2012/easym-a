@@ -17,7 +17,7 @@
 // so the deferred spec-conformance slides (e.g. the master's Exchange Ratio slide) read one value.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { enterpriseValue, netCashDebt } from './netDebt';
+import { enterpriseValue } from './netDebt';
 import { isNonGaapDeal } from './reportingBasis';
 
 const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
@@ -113,7 +113,7 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
   //    the TRANSACTION EV (offer-based) used for deal multiples. Kept separate on purpose. ──
   // Requires both debt and cash (Fix A): a stale-rejected component (null) makes EV unavailable rather than
   // silently dropping it to 0. (Currently unrendered, but kept null-honest so it can never leak a partial EV.)
-  const tradingEV = (cap, c) => enterpriseValue(cap, c.debt, c.cash, c.sti);   // shared helper — cash bucket = cash + short-term marketable securities
+  const tradingEV = (cap, c) => enterpriseValue(cap, c.debt, c.cash, c.sti, c.claims);   // shared helper — cash bucket = cash + short-term marketable securities
 
   // ── Transaction economics ──────────────────────────────────────────────────
   const totalConsideration = num(deal.totalPrice);
@@ -122,8 +122,8 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
     ? A.marketCap + totalConsideration : null;
   // Transaction EV of the target (acquisition basis) — re-derived in 5 places today (dealCalc,
   // Dashboard, AVP explainer, explanations, orphan TargetOverview). Centralized here.
-  const transactionEV = (totalConsideration != null && T.debt != null && T.cash != null)
-    ? totalConsideration + netCashDebt(T.debt, T.cash, T.sti) : null;   // net debt via shared helper (cash + short-term marketable)
+  // ONE calculation (Fix 10 Task 5): dealCalc's enterprise value, read here, never re-derived.
+  const transactionEV = deal?._results?.enterpriseValueFull ?? null;
   // Exchange ratio = new acquirer shares issued per target share (master slide 8). Our deck has no
   // Exchange Ratio slide yet — computed here so the future slide reads ONE value.
   const stockPerTargetShare = (offerPrice != null && dealAssumptions.stockPercent != null)

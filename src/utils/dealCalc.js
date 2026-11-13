@@ -1,4 +1,4 @@
-import { cashBucket } from '../lib/netDebt';
+import { cashBucket, enterpriseValue as evOf } from '../lib/netDebt';
 import { synergySchedule } from '../lib/synergies';
 import { basesDiffer, combination } from '../lib/companyBasis';
 import { ebitdaBasesDiffer } from '../lib/reportingBasis';
@@ -273,7 +273,11 @@ export function calculate(inputs) {
   // Fix A: EV and combined leverage require BOTH debt and cash; if a component was stale-rejected (null),
   // the metric is unavailable (null → 'N/A') — never let null coerce to 0 (silent $0 EV / understated
   // leverage that could mute the ">5×" flag). Non-stale deals pass real numbers → unchanged.
-  const enterpriseValue  = (companyBDebt != null && companyBCash != null) ? totalPurchasePrice + companyBDebt - companyBCash : null;
+  // The ONE transaction EV (Fix 10 Task 5): purchase price + target net debt on the shared cash bucket (cash + short-term
+  // marketable securities) + tagged noncontrolling interest and preferred stock. It was price + debt − cash only, while
+  // deckModel's transactionEV netted short-term investments too: NET/DDOG showed EV ≈ $86.7B here and $82.3B there.
+  const targetClaims     = inputs.companyBClaims ?? null;   // { nci, preferred, … } from /quote (App.js claimsOf), or null
+  const enterpriseValue  = evOf(totalPurchasePrice, companyBDebt, companyBCash, inputs.companyBSti, targetClaims);
   // The one multiples rule (src/lib/multiples.js): n/m with the reason for a zero or negative denominator or above 100x.
   const evM              = enterpriseValue != null ? multipleOf(enterpriseValue, companyBEBITDA, { denName: 'Target EBITDA' }) : { value: null, reason: null };
   const evEBITDA         = evM.value;
@@ -338,6 +342,7 @@ export function calculate(inputs) {
     // The numerators of the two multiples above, exposed so explainers show the SAME figure the multiple
     // was built from — null (never a $0-debt rebuild) whenever a leg is unavailable.
     enterpriseValue:   enterpriseValue === null ? null : enterpriseValue.toFixed(0),
+    enterpriseValueFull: enterpriseValue,                 // full precision, for slides that round once (Exec Summary, Transaction Structure)
     combinedDebt:      combinedDebt    === null ? null : combinedDebt.toFixed(0),
     // Full precision, so each slide rounds once at display: { preDebt, proFormaDebt, preCash, proFormaCash, cashUsed,
     // preNetDebt, proFormaNetDebt }, each null when a leg is unavailable.

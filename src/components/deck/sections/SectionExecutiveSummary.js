@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
+import { evClaimsNote } from '../../../lib/netDebt';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
@@ -216,8 +217,8 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
             <div style={{ marginTop: 7, fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
               Equity value is the offer times target shares — the deck's deal value, and the basis the
               HSR size test uses. Enterprise value is the acquisition basis (equity value plus target
-              net debt) and requires both target debt and cash; where either is unreported it reads
-              “{DASH}”. Any unavailable input reads “{DASH}”, never zero.
+              net debt, plus tagged noncontrolling interest and preferred stock) and requires both target debt and cash; where either is unreported it reads
+              “{DASH}”. Any unavailable input reads “{DASH}”, never zero. {evClaimsNote(deal?._inputs?.companyBClaims, bTk)}
             </div>
           </div>
 

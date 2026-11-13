@@ -25,6 +25,7 @@ import { synergySchedule } from './lib/synergies';
 import { BASIS_FY, ltmAvailability, companyInputs, combination } from './lib/companyBasis';
 import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, highestAccretivePremium, premiumReference, PRICE_BASIS_TODAY } from './lib/offerPremium';
 import { selectForwardYears } from './lib/forwardYears';
+import { claimsOf } from './lib/netDebt';
 import './App.css';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -764,6 +765,7 @@ function App() {
         ...companyInputs('A', data, BASIS_FY),   // figures on the card's basis; a new company starts on Fiscal year
         companyAShares: data.shares,
         companyACash: data.cash, companyASti: data.shortTermInvestments ?? null, companyADebt: data.debt,
+        companyAClaims: claimsOf(data),   // tagged noncontrolling interest / preferred stock, added to EV (Fix 10 Task 5)
         companyABsAsOf: data.balanceSheetAsOf ?? null, companyABsBasis: data.balanceSheetBasis ?? null,
         companyALtmRevenue: data.ltm?.trusted ? data.ltm.revenue : null,   // LTM (not FY) — min-cash basis
         // Don't clobber a live price that the parallel /api/price fetch may have already set.
@@ -808,6 +810,7 @@ function App() {
         ...companyInputs('B', data, BASIS_FY),   // figures on the card's basis; a new company starts on Fiscal year
         companyBShares: data.shares,
         companyBCash: data.cash, companyBSti: data.shortTermInvestments ?? null, companyBDebt: data.debt,
+        companyBClaims: claimsOf(data),   // tagged noncontrolling interest / preferred stock, added to EV (Fix 10 Task 5)
         companyBBsAsOf: data.balanceSheetAsOf ?? null, companyBBsBasis: data.balanceSheetBasis ?? null,
         companyBLtmRevenue: data.ltm?.trusted ? data.ltm.revenue : null,   // LTM (not FY) — min-cash basis
         // Preserve any live price already set by the parallel /api/price fetch (see handleSelectA).
@@ -1067,7 +1070,7 @@ function App() {
     grossProfit: inputs.companyBGrossProfit, operatingIncome: inputs.companyBOperatingIncome,
     freeCashFlow: inputs.companyBFreeCashFlow ?? null,
     netIncome: inputs.companyBNetIncome, eps: inputs.companyBEPS,
-    shares: inputs.companyBShares, cash: inputs.companyBCash, sti: inputs.companyBSti,
+    shares: inputs.companyBShares, cash: inputs.companyBCash, sti: inputs.companyBSti, claims: inputs.companyBClaims ?? null,
     sharesLabel: quoteB?.sharesLabel ?? null,   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
     // Source of a filed $0 debt, or why debt is "—". Carried only while the card still shows the /quote figure (an edit drops it).
     debtLabel:  quoteB && inputs.companyBDebt === quoteB.debt ? (quoteB.debtLabel ?? null) : null,
@@ -1110,7 +1113,7 @@ function App() {
     grossProfit: inputs.companyAGrossProfit, operatingIncome: inputs.companyAOperatingIncome,
     freeCashFlow: inputs.companyAFreeCashFlow ?? null,
     netIncome: inputs.companyANetIncome, eps: inputs.companyAEPS,
-    shares: inputs.companyAShares, cash: inputs.companyACash, sti: inputs.companyASti,
+    shares: inputs.companyAShares, cash: inputs.companyACash, sti: inputs.companyASti, claims: inputs.companyAClaims ?? null,
     sharesLabel: quoteA?.sharesLabel ?? null,   // "Class A + Class B, cover of 10-Q filed …" for a class-summed cover
     // Source of a filed $0 debt, or why debt is "—". Carried only while the card still shows the /quote figure (an edit drops it).
     debtLabel:  quoteA && inputs.companyADebt === quoteA.debt ? (quoteA.debtLabel ?? null) : null,

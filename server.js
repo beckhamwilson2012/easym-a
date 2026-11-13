@@ -744,6 +744,16 @@ async function fetchFromEDGAR(symbol, cik) {
   // bsAnchor as cash/debt (interim) or the same annual end (annual). Same instant → no mixed-date risk on §3.
   const totalAssets = useIfrs ? pickMatched(ifrs, ['Assets'], revenueEntry?.end) : bsPick(['Assets']);
 
+  // Noncontrolling interest and preferred stock (Fix 10 Task 5) at the SAME balance-sheet anchor as cash and debt. They
+  // are claims on the business ahead of common equity, so enterprise value adds them when the filing tags them. First
+  // tag that resolves wins (never summed: PreferredStockValueOutstanding is a narrower view of the same balance). Not
+  // tagged → null with the tag list in the reason, never 0. A filed 0 is a real 0. IFRS filers are not read here.
+  const pickTagged = (names) => { for (const n of names) { const v = bsPick([n]); if (v != null) return { value: v, tag: n }; } return null; };
+  const NCI_TAGS = ['MinorityInterest'];
+  const PREFERRED_TAGS = ['PreferredStockValue', 'PreferredStockValueOutstanding'];
+  const nciPick = useIfrs ? null : pickTagged(NCI_TAGS);
+  const preferredPick = useIfrs ? null : pickTagged(PREFERRED_TAGS);
+
   const revenueM = inM(revenue);
   // A class-summed cover count is carried exactly ($M to the share: HNGE 81.271302), so market cap = that count × price.
   // Every other path keeps its whole-million rounding unchanged.
@@ -849,6 +859,12 @@ async function fetchFromEDGAR(symbol, cik) {
     debtReason,                            // why debt is null ("—"), when the zero check ran and found no filed statement
     debtSource:     debtZero && debtZero.value === 0 ? debtZero.source : null,   // accession, as-of, concept or note sentence
     totalAssets:    totalAssets != null ? inM(totalAssets) : null, // total assets at the SAME balance-sheet anchor as cash/debt (2B-2); null if untagged there
+    // Enterprise-value claims (Fix 10 Task 5): $M at the balance-sheet anchor with the tag, or null with the reason.
+    noncontrollingInterest:    nciPick ? inM(nciPick.value) : null,
+    noncontrollingInterestTag: nciPick ? nciPick.tag : null,
+    preferredStock:            preferredPick ? inM(preferredPick.value) : null,
+    preferredStockTag:         preferredPick ? preferredPick.tag : null,
+    evClaimsReason:            useIfrs ? 'noncontrolling interest and preferred stock are not read for IFRS filers' : null,
     balanceSheetAsOf: bsAnchor,            // as-of date of the net-debt trio (2B-2): LTM latest-interim end, or annual end when no interim LTM
     balanceSheetBasis: bsInterim ? 'interim' : 'annual', // provenance: which anchor was used (faculty p6 "as-of date")
     sic:            sicData.sic,

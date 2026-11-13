@@ -6,7 +6,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, isGrossNm, grossNmNote, fmtAsOf } from '../shared/deckTokens';
 import { getCompanyProfile, PROFILES_AS_OF } from '../../../lib/companyProfiles';
-import { enterpriseValue, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { enterpriseValue, evClaimsNote, claimsOf, NET_DEBT_BASIS } from '../../../lib/netDebt';
 
 // US state full-name → 2-letter abbreviation for HQ display ("San Francisco, California" → "…, CA").
 const US_STATE_ABBR = { 'California':'CA','New York':'NY','Texas':'TX','Washington':'WA','Massachusetts':'MA','Illinois':'IL','Georgia':'GA','Florida':'FL','Virginia':'VA','Colorado':'CO','Pennsylvania':'PA','New Jersey':'NJ','Ohio':'OH','North Carolina':'NC','Michigan':'MI','Minnesota':'MN','Oregon':'OR','Arizona':'AZ','Tennessee':'TN','Maryland':'MD','Connecticut':'CT','Missouri':'MO','Indiana':'IN','Wisconsin':'WI','Utah':'UT','Nevada':'NV','Delaware':'DE','District of Columbia':'DC' };
@@ -88,7 +88,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     // `?? num(co.marketCap)` fallback — byte-identical to pre-split behavior.
     const tradingMcap = num(co.currentMarketCap);
     const ptbvMcap    = num(co.currentMarketCap) ?? num(co.marketCap);
-    const ev = enterpriseValue(tradingMcap, debt, cash, sti); // shared helper: cash bucket = cash + short-term marketable securities (b); null-aware
+    const ev = enterpriseValue(tradingMcap, debt, cash, sti, co.claims); // shared helper: cash bucket = cash + short-term marketable securities (b); null-aware
     const cols = pnl && Array.isArray(pnl.columns) ? pnl.columns : null;
     const fwd = cols ? cols.find(c => !c.actual) : null;
     const act = cols ? [...cols].reverse().find(c => c.actual) : null;
@@ -198,7 +198,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
   const tgtAsOf3 = asOfShort3(tgtQuote?.ltm?.trusted ? tgtQuote.ltm.asOf : null);
   const acqBs = fmtAsOf(acqQuote?.balanceSheetAsOf, acqQuote?.balanceSheetBasis);
   const tgtBs = fmtAsOf(tgtQuote?.balanceSheetAsOf, tgtQuote?.balanceSheetBasis);
-  sourceLine += `Key Financials — revenue, margins, FCF and EV/Revenue are LTM (trailing 12 months); equity value & EV are point-in-time; a company marked "· FY" keeps the latest fiscal year (interim not tagged — foreign). ${NET_DEBT_BASIS}${acqBs && tgtBs ? ` Balance-sheet items are as of each company's latest interim balance sheet (acquirer ${acqBs}, target ${tgtBs}) — the same date as its LTM revenue.` : ''} The LTM basis aligns each company's window to within about one month${acqAsOf3 && tgtAsOf3 ? ` (acquirer LTM to ${acqAsOf3}, target LTM to ${tgtAsOf3})` : ''}, far tighter than the fiscal-year-end offset. Rounding: $ in millions ($M) unless a $B scale is noted in the header; per-share figures to 2 decimals, multiples to one decimal. Verify against latest filings.`;
+  sourceLine += `Key Financials — revenue, margins, FCF and EV/Revenue are LTM (trailing 12 months); equity value & EV are point-in-time; a company marked "· FY" keeps the latest fiscal year (interim not tagged — foreign). ${NET_DEBT_BASIS} ${[acqQuote && evClaimsNote(claimsOf(acqQuote), acquirer?.ticker), tgtQuote && evClaimsNote(claimsOf(tgtQuote), target?.ticker)].filter(Boolean).join(' ')}${acqBs && tgtBs ? ` Balance-sheet items are as of each company's latest interim balance sheet (acquirer ${acqBs}, target ${tgtBs}) — the same date as its LTM revenue.` : ''} The LTM basis aligns each company's window to within about one month${acqAsOf3 && tgtAsOf3 ? ` (acquirer LTM to ${acqAsOf3}, target LTM to ${tgtAsOf3})` : ''}, far tighter than the fiscal-year-end offset. Rounding: $ in millions ($M) unless a $B scale is noted in the header; per-share figures to 2 decimals, multiples to one decimal. Verify against latest filings.`;
 
   // Qualitative attributes as a label→value map per company. The shared-row table below renders the UNION of
   // labels across both companies in FIELD_ORDER, so every field aligns horizontally regardless of prose length
