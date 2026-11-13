@@ -44,6 +44,10 @@ function stateOf(cell) {
   const t = String(cell == null ? '' : cell).trim();
   if (t === '') return S.BLANK;
   if (/^(—|–|‑|-|N\/?A|n\/?m|n\.m\.?)$/i.test(t)) return S.DASH;
+  // a blank that carries its reason in the cell ("— consensus is non-GAAP; no GAAP forecast", "n/m — above 100x (…)",
+  // "n/mᵇ") is still a DASH state — it used to fall through to VALUE as "non-numeric text", so value → "— reason"
+  // read as an ordinary text change and "— reason" → "—" (the reason deleted) read as nothing at all.
+  if (/^(—|–|n\/?m|N\/A)(?:\s*[—–:(-]\s*[A-Za-z]|\s+[A-Za-z]|[ᵃ-ᶻ*†‡§¹²³⁴⁵⁶⁷⁸⁹]$)/i.test(t)) return S.DASH;
   const num = parseFloat(t.replace(/[$,%()x]/gi, '').replace(/\s*[MB]\b/i, '').trim());
   if (Number.isFinite(num)) return num === 0 ? S.ZERO : S.VALUE;
   return S.VALUE; // non-numeric text (labels / prose) is a "value" for change-detection purposes
@@ -61,6 +65,38 @@ function classifyCell(oldCell, newCell) {
   if (os === S.DASH && ns === S.ZERO) { type = 'DASH_TO_ZERO'; flag = true; } // null-coerced-to-zero signature
   if (os === S.ZERO && ns === S.DASH) { type = 'ZERO_TO_DASH'; }
   return { type, flag, oldState: os, newState: ns };
+}
+
+// ── HONEST BLANK (Fix 7A/7B/10) — independent of analyze.js on purpose (see header) ───────────────────
+// A "—"/"n/m" whose reason is printed on the same section is the deck's correct output, not a dropped figure.
+// Reason = text in the cell, text in the row label after " — ", a footnote marker (on the label or glued to the
+// cell) whose printed note says the cell is blank, or a prose line that names the row and shows its blank.
+const SUPM = 'ᵃᵇᶜᵈᵉᶠᵍʰⁱʲᵏˡᵐⁿᵒᵖʳˢᵗᵘᵛʷˣʸᶻ*†‡§¹²³⁴⁵⁶⁷⁸⁹';
+const SAYS_BLANK = /["“]—["”]|\b(?:is|are|shows?|renders?|reads?)\s+["“]?—|not available|not meaningful|no consensus|\bn\/m\b/i;
+const rxEsc = x => x.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function blankReason(cell, row, sectionText) {
+  const t = String(cell == null ? '' : cell).trim();
+  const inl = t.match(/^(?:—|–|-|n\/?m|N\/A)\s*(?:[—–:-]\s*|\()\s*([A-Za-z].{7,})$/i) || t.match(/^(?:—|–|n\/?m|N\/A)\s+([A-Za-z].{7,})$/i);
+  if (inl) return inl[1];
+  const lab = label(row);
+  const li = lab.match(/\s—\s+([A-Za-z].{9,})$/); if (li) return li[1];
+  const prose = String(sectionText || '').split('\n').filter(x => !x.includes('\t')).join('\n');
+  const mk = (t.match(new RegExp(`([${SUPM}])$`, 'u')) || [])[1] || (lab.match(new RegExp(`\\s([a-z${SUPM}])$`, 'u')) || [])[1];
+  if (mk) {
+    const m = prose.match(new RegExp(`(?:^|[\\s.;])${rxEsc(mk)}\\s+([A-Z][^\\n]{20,}?)(?:$|\\n|(?<=\\.)\\s)`, 'mu'));
+    if (m && SAYS_BLANK.test(m[1])) return m[1];
+  }
+  const core = lab.replace(new RegExp(`\\s+[a-z${SUPM}]$`, 'u'), '').replace(/\([^)]*\)/g, '').replace(/[:%]/g, '').trim();
+  if (core.length >= 3) {
+    const subj = new RegExp(`${rxEsc(core)}[^.;"“]{0,80}?(?:\\b(?:is|are|shows?|renders?|reads?)\\s+["“]?—|\\bis n\\/m\\b)`, 'i');
+    for (const ln of prose.split(/\n|(?<=[.;])\s+/)) if (subj.test(ln)) return ln.trim();
+  }
+  if (/^n\/?m/i.test(t)) {
+    const key = core.toLowerCase().replace(/\s+/g, '');
+    for (const r of (prose.match(/[^.\n]*\bn\/m[ᵃ-ᶻ]?\s+(?:when|where|if|because)[^.\n]{10,}/gi) || []))
+      if (/\b(?:every|all|any)\s+multiples?\b/i.test(r) || (key.length >= 3 && r.toLowerCase().replace(/\s+/g, '').includes(key))) return r.trim();
+  }
+  return null;
 }
 
 // ── Layer 1 tokenizer ────────────────────────────────────────────────────────────────────────────────
@@ -111,7 +147,15 @@ function diffSection(id, bText, aText, maskedOut) {
     const w = Math.max(bRow.length, aRow.length);
     for (let c = 0; c < w; c++) {
       const ch = classifyCell(bRow[c], aRow[c]);
-      if (ch) cellChanges.push({ section: id, row: rowRef, cell: c, old: (bRow[c] ?? '').toString().trim(), new: (aRow[c] ?? '').toString().trim(), ...ch });
+      if (!ch) continue;
+      // HONEST BLANK: value → "—"/"n/m" with its reason on the AFTER section is the deck's correct output.
+      // A blank that LOSES its reason (old had one, new has none) is a defect even though both states are DASH.
+      if (ch.newState === S.DASH) {
+        const why = blankReason(aRow[c], aRow, aText);
+        if (ch.type === 'POPULATED_TO_BLANK' && why) { ch.type = 'POPULATED_TO_HONEST_BLANK'; ch.flag = false; ch.reason = why.slice(0, 200); }
+        else if (ch.oldState === S.DASH && !why && blankReason(bRow[c], bRow, bText)) { ch.type = 'BLANK_REASON_REMOVED'; ch.flag = true; }
+      }
+      cellChanges.push({ section: id, row: rowRef, cell: c, old: (bRow[c] ?? '').toString().trim(), new: (aRow[c] ?? '').toString().trim(), ...ch });
     }
   };
 
@@ -226,4 +270,4 @@ function main() {
 }
 
 if (require.main === module) main();
-module.exports = { stateOf, classifyCell, tokenize, lcsAlign, diffSection, diffOracle, analyzable, buildTransition };
+module.exports = { blankReason, stateOf, classifyCell, tokenize, lcsAlign, diffSection, diffOracle, analyzable, buildTransition };

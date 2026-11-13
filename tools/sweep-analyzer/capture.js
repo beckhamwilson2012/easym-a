@@ -114,13 +114,65 @@ async function loadTicker(page, idx, t) {
   }
 }
 
-async function runPair(browser, A, B, offerOverride) {
+// ── VARIANTS (opt-in) ────────────────────────────────────────────────────────────────────────────────
+// A pair entry may carry a 4th element {mode:'ltm'|'fy', basis:'gaap'|'nongaap'}. The deck's numbers depend
+// on both switches (Fix 7–10: the GAAP and Non-GAAP decks of one pair show different verdicts and different
+// honest blanks), so a pair captured on "whatever the default is" cannot grade either one. A variant deck
+// is its own sample: pair id `A/B+<variant>`, file `A_B+<variant>.json`, so before/after diffs and the
+// analyzable set compare the same variant to itself and never a GAAP deck to a Non-GAAP one.
+// An entry WITHOUT the 4th element takes the exact pre-existing path: same pair id, same file, no clicks.
+// A variant that cannot be honoured (LTM disabled, Non-GAAP unavailable) is a FAILED capture with
+// reason VARIANT, never a silent capture on the wrong basis graded as if it were the right one.
+function variantId(opts) { return opts ? [opts.mode, opts.basis].filter(Boolean).join('-') : ''; }
+function pairId(A, B, opts) { const v = variantId(opts); return `${A}/${B}${v ? '+' + v : ''}`; }
+function pairFile(A, B, opts) { const v = variantId(opts); return `${RAW}/${A}_${B}${v ? '+' + v : ''}.json`; }
+async function applyVariant(page, opts) {
+  const done = [];
+  const fail = (msg) => { const e = new Error(msg); e.reason = 'VARIANT'; throw e; };
+  if (opts.mode === 'ltm' || opts.mode === 'fy') {
+    for (const P of ['A', 'B']) {
+      const r = await page.evaluate((P, m) => {
+        const b = document.querySelector(`[data-testid="basis-${P}-${m}"]`);
+        if (!b) return { err: 'no button' };
+        if (b.disabled) { const why = document.querySelector(`[data-testid="basis-${P}-reason"]`); return { err: 'disabled' + (why ? ': ' + why.innerText : '') }; }
+        b.click(); return { ok: true };
+      }, P, opts.mode);
+      if (r.err) fail(`${opts.mode.toUpperCase()} card ${P}: ${r.err}`);
+      done.push(`${P}:${opts.mode}`);
+    }
+    await sleep(3000);
+  }
+  await page.waitForFunction(() => { const t = document.querySelector('[data-testid="basis-toggle"]'); return !t || t.getAttribute('data-state') !== 'loading'; }, { timeout: 60000 }).catch(() => {});
+  if (opts.basis) {
+    const id = opts.basis === 'gaap' ? 'basis-toggle-gaap' : 'basis-toggle-nongaap';
+    const r = await page.evaluate((id) => {
+      const b = document.querySelector(`[data-testid="${id}"]`);
+      if (!b) return { err: 'no toggle' };
+      if (b.disabled) { const why = document.querySelector('[data-testid="basis-toggle-reason"]'); return { err: 'disabled' + (why ? ': ' + why.innerText : '') }; }
+      b.click(); return { ok: true };
+    }, id);
+    if (r.err) fail(`basis ${opts.basis}: ${r.err}`);
+    await sleep(2000);
+    done.push(opts.basis);
+  }
+  // verify the switches actually READ as requested — a click is not proof
+  const st = await page.evaluate((opts) => {
+    const pressed = (id) => { const b = document.querySelector(`[data-testid="${id}"]`); return b ? b.getAttribute('aria-pressed') : null; };
+    return { A: opts.mode ? pressed(`basis-A-${opts.mode}`) : 'n/a', B: opts.mode ? pressed(`basis-B-${opts.mode}`) : 'n/a',
+             basis: opts.basis ? pressed(opts.basis === 'gaap' ? 'basis-toggle-gaap' : 'basis-toggle-nongaap') : 'n/a' };
+  }, opts);
+  for (const [k, v] of Object.entries(st)) if (v !== 'n/a' && v !== 'true') fail(`variant did not take: ${k} aria-pressed=${v}`);
+  return done;
+}
+
+async function runPair(browser, A, B, offerOverride, opts) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1440, height: 1000 });
   const cErr = [], cWarn = [], pErr = [];
   page.on('console', m => { const t = m.text(); if (m.type() === 'error') cErr.push(t); else if (m.type() === 'warning' && !NOISE.test(t)) cWarn.push(t); });
   page.on('pageerror', e => pErr.push(e.message));
-  const rec = { pair: `${A}/${B}`, A, B, offerOverride: offerOverride || null, ts: new Date().toISOString(), ok: false, stage: 'start' };
+  const rec = { pair: pairId(A, B, opts), A, B, offerOverride: offerOverride || null, ts: new Date().toISOString(), ok: false, stage: 'start' };
+  if (opts) rec.variant = variantId(opts);
   try {
     await page.goto(BASE, { waitUntil: 'domcontentloaded', timeout: 60000 });
     // POST-d1bfd2d ENTRY FLOW (re-pointed 2026-09-17). The old Auto-Lookup/Manual mode chooser is gone;
@@ -133,6 +185,7 @@ async function runPair(browser, A, B, offerOverride) {
     rec.stage = 'loadA'; await loadTicker(page, 0, A);
     rec.stage = 'loadB'; await loadTicker(page, 1, B);
     await sleep(1600);
+    if (opts) { rec.stage = 'variant'; rec.variantApplied = await applyVariant(page, opts); }
     // offer: explicit override (ground truth) OR the app's suggested 30% ("Use this")
     if (offerOverride != null) {
       rec.stage = 'offerOverride';
@@ -180,7 +233,7 @@ async function runPair(browser, A, B, offerOverride) {
   }
   // oracle right after build (minimise drift)
   try { rec.oracleA = await oracle(A); rec.oracleB = await oracle(B); } catch (e) { rec.oracleError = e.message; }
-  fs.writeFileSync(`${RAW}/${A}_${B}.json`, JSON.stringify(rec));
+  fs.writeFileSync(pairFile(A, B, opts), JSON.stringify(rec));
   return rec;
 }
 
@@ -207,8 +260,8 @@ function deckComplete(r) {
 const dirty = r => !deckComplete(r)
   || !(r.oracleA && r.oracleA._quoteStatus === 200) || !(r.oracleB && r.oracleB._quoteStatus === 200);
 // resumable: a pair already captured CLEANLY is skipped, so relaunches only fill gaps
-function alreadyClean(A, B) {
-  try { const r = JSON.parse(fs.readFileSync(`${RAW}/${A}_${B}.json`, 'utf8')); return !dirty(r); } catch (e) { return false; }
+function alreadyClean(A, B, opts) {
+  try { const r = JSON.parse(fs.readFileSync(pairFile(A, B, opts), 'utf8')); return !dirty(r); } catch (e) { return false; }
 }
 
 // Guarded so `require()`-ing this file for tests does NOT launch the batch. When run as a script
@@ -217,11 +270,11 @@ if (require.main === module) (async () => {
   if (COOLDOWN > 0) { process.stderr.write(`cooldown ${COOLDOWN / 1000}s...`); await sleep(COOLDOWN); }
   const browser = await puppeteer.launch({ executablePath: CHROME, headless: 'new', args: ['--no-sandbox'] });
   const retry = [];
-  const one = async (A, B, off, tag) => {
-    process.stderr.write(`\n>>> ${tag}${A}/${B}${off ? '@' + off : ''} ...`);
+  const one = async (A, B, off, tag, opts) => {
+    process.stderr.write(`\n>>> ${tag}${pairId(A, B, opts)}${off ? '@' + off : ''} ...`);
     let r;
-    try { r = await runPair(browser, A, B, off); }
-    catch (e) { r = { pair: `${A}/${B}`, ok: false, error: 'FATAL ' + e.message, stage: 'fatal' }; fs.writeFileSync(`${RAW}/${A}_${B}.json`, JSON.stringify(r)); }
+    try { r = await runPair(browser, A, B, off, opts); }
+    catch (e) { r = { pair: pairId(A, B, opts), ok: false, error: 'FATAL ' + e.message, stage: 'fatal' }; fs.writeFileSync(pairFile(A, B, opts), JSON.stringify(r)); }
     const d = dirty(r);
     const line = `${r.ok ? (d ? 'DIRTY' : 'OK ') : 'FAIL'} ${tag}${r.pair.padEnd(12)} pages=${r.pdfPages ?? '-'} cErr=${(r.consoleErrors || []).length} pErr=${(r.pageErrors || []).length} dbtA=${r.oracleA ? r.oracleA.debt : '?'} dbtB=${r.oracleB ? r.oracleB.debt : '?'} ${r.error ? ('ERR@' + r.stage + ':' + r.error.slice(0, 40)) : ''}`;
     fs.appendFileSync(STATUS, `[${new Date().toISOString()}] ${line}\n`);
@@ -230,12 +283,13 @@ if (require.main === module) (async () => {
   };
   let idx = 0; const total = pairs.length;
   plog(`  ${CAP_PHASE}: ${total} decks starting`);
-  for (const [A, B, off] of pairs) {
+  for (const [A, B, off, opts] of pairs) {
     idx++;
-    if (off == null && alreadyClean(A, B)) { process.stderr.write(`\n=== skip ${A}/${B} (already clean) ===`); fs.appendFileSync(STATUS, `[${new Date().toISOString()}] SKIP ${A}/${B} (already clean)\n`); plog(`  ${CAP_PHASE} ${idx}/${total} ${A}/${B} — skip (already clean)`); continue; }
-    const { r, d } = await one(A, B, off, '');
-    plog(`  ${CAP_PHASE} ${idx}/${total} ${A}/${B} — ${r.ok ? (d ? 'dirty' : 'ok') : 'FAILED'}`);
-    if (d) retry.push([A, B, off]);
+    const pid = pairId(A, B, opts);
+    if (off == null && alreadyClean(A, B, opts)) { process.stderr.write(`\n=== skip ${pid} (already clean) ===`); fs.appendFileSync(STATUS, `[${new Date().toISOString()}] SKIP ${pid} (already clean)\n`); plog(`  ${CAP_PHASE} ${idx}/${total} ${pid} — skip (already clean)`); continue; }
+    const { r, d } = await one(A, B, off, '', opts);
+    plog(`  ${CAP_PHASE} ${idx}/${total} ${pid} — ${r.ok ? (d ? 'dirty' : 'ok') : 'FAILED'}`);
+    if (d) retry.push([A, B, off, opts]);
     await sleep(GAP);
   }
   // retry-once pass — by now any window-boundary 429s have cleared
@@ -243,11 +297,11 @@ if (require.main === module) (async () => {
     process.stderr.write(`\n--- RETRY PASS (${retry.length}) after 90s ---`);
     fs.appendFileSync(STATUS, `[${new Date().toISOString()}] --- RETRY PASS ${retry.length}: ${retry.map(p => p[0] + '/' + p[1]).join(' ')} ---\n`);
     await sleep(90000);
-    for (const [A, B, off] of retry) { const { r, d } = await one(A, B, off, 'RETRY:'); plog(`  ${CAP_PHASE} retry ${A}/${B} — ${r.ok ? (d ? 'dirty' : 'ok') : 'FAILED'}`); await sleep(GAP); }
+    for (const [A, B, off, opts] of retry) { const { r, d } = await one(A, B, off, 'RETRY:', opts); plog(`  ${CAP_PHASE} retry ${pairId(A, B, opts)} — ${r.ok ? (d ? 'dirty' : 'ok') : 'FAILED'}`); await sleep(GAP); }
   }
   await browser.close();
   process.stderr.write('\nCAPTURE BATCH DONE\n');
   fs.appendFileSync(STATUS, `[${new Date().toISOString()}] CAPTURE BATCH DONE (retry=${retry.length})\n`);
 })().catch(e => { fs.appendFileSync(STATUS, `FATAL ${e.message}\n`); process.exit(1); });
 
-module.exports = { loadTicker, waitLoadedOrBail, runPair }; // test-only exports; no effect when run as a script
+module.exports = { loadTicker, waitLoadedOrBail, runPair, variantId, pairId, pairFile }; // test-only exports; no effect when run as a script

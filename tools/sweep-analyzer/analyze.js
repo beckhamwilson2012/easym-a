@@ -6,6 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const AL = require('./allowlist');
+const HB = require('./honestBlank');   // "—"/"n/m" WITH its reason on screen = correct output (Fix 7A/7B/10)
 // Captures default to the committed set; override with RAW_DIR. Outputs default to /tmp; override with OUT / FLAGS.
 const RAW = process.env.RAW_DIR || path.join(__dirname, '..', '..', 'docs', 'sweep-v2', 'captures');
 const OUT = process.env.OUT || '/tmp/sweep_v2_findings.md';
@@ -31,7 +32,9 @@ function money(tok) {
   if (!Number.isFinite(v)) return null;
   return (neg ? -v : v) * mult;
 }
-function mult(tok) { const t = clean(tok).trim(); if (/^(—|-|–|N\/A|n\/m|n\.m\.?)$/i.test(t)) return null; const m = t.match(/(-?[\d.]+)\s*x/i); return m ? parseFloat(m[1]) : null; }
+// A blank token is null BEFORE any number is looked for: "n/m — above 100x (…)" carries "100x" in its REASON,
+// and the old exact-match test let that reason parse as a 100.0x multiple.
+function mult(tok) { const t = clean(tok).trim(); if (/^(—|-|–|N\/A|n\/m|n\.m\.?)$/i.test(t) || HB.isBlankToken(t)) return null; const m = t.match(/(-?[\d.]+)\s*x/i); return m ? parseFloat(m[1]) : null; }
 function pct(tok) { const t = clean(tok).trim(); const m = t.match(/(-?[\d.]+)\s*%/); return m ? parseFloat(m[1]) : null; }
 // find a label line; return the money token on same line (after label) or the first non-empty next line
 function labeled(text, labelRe) {
@@ -101,6 +104,12 @@ function verifVal(vtext, labelRe) {
 }
 // §6/§7 standalone P&L are TAB rows: Line | FY-3 | FY-2 | FY-1 | LTM | FY+1E | FY+2E | FY+3E.
 // Return the LTM-column token (4th value after the label).
+// the rendered row label of the first tab row matching labelRe (for the honest-blank reason lookup)
+function rowLabel(text, labelRe) {
+  const line = clean(text).split('\n').find(l => labelRe.test(l) && /\t/.test(l));
+  if (!line) return '';
+  return (line.split('\t').find(z => labelRe.test(z)) || '').trim();
+}
 function plLTM(text, labelRe) {
   const line = clean(text).split('\n').find(l => labelRe.test(l) && /\t/.test(l));
   if (!line) return null;
@@ -115,6 +124,7 @@ function pfCols(text, labelRe) {
     const t = lines[i].trim();
     if (labelRe.test(t) && !/\d/.test(t)) {   // a LABEL line (no digits); proforma labels carry suffixes " e" / " %"
       const vals = [];
+      vals.label = t;                          // the row label as rendered (with any footnote marker) — honest-blank lookup
       for (let k = i + 1; k < lines.length && vals.length < 5; k++) {
         const v = lines[k].trim(); if (v === '') continue;
         if (/^(Revenue|Cost of Revenue|Gross Profit|Gross margin|Operating|EBIT|Net Income|Revenue growth|FY20|Line|Acq\.|Less|Operating synergies)/i.test(v)) break;
@@ -145,7 +155,12 @@ function analyze(rec) {
   const EXP = [];                     // by-design suppressions absorbed by the allowlist
   const L = [];                       // 24-item lines
   const A = rec.oracleA || {}, B = rec.oracleB || {};
-  const S = rec.sections || {};
+  // Fix 10 Task 8 renders negatives with U+2212 ("−$0.36"). Every parser below was written for "-", so the
+  // sign was dropped and −$0.36 read as +$0.36. Normalise the rendered text ONCE, here; the oracle is untouched.
+  const S = {}; for (const [k, v] of Object.entries(rec.sections || {})) S[k] = HB.normMinus(v);
+  rec = { ...rec, bodyText: HB.normMinus(rec.bodyText) };
+  // card period: a variant capture says which cards it set (capture.js applyVariant). Default capture = FY.
+  const ltmCards = /(^|-)ltm(-|$)/.test(rec.variant || '');
   const txn = S.txnstructure || '', cmp = S.comparables || '', body = rec.bodyText || '';
   const verif = (S.verification || '') + '\n' + (S.verification2 || '');
   const add = (n, s) => L.push(`${n}. ${s}`);
@@ -217,7 +232,7 @@ function analyze(rec) {
 
   // ===== RECOMPUTE 3-17 (target B is the acquired co; multiples on §2 are per-company current) =====
   // helper to print a recompute line + flag on >0.5%
-  const chk = (n, label, mine, rend, unit, extra, rawTok) => {
+  const chk = (n, label, mine, rend, unit, extra, rawTok, where) => {   // where = {label, sec}: the cell's row + section
     let r = rel(mine, rend);
     // Display-rounding floors: these recomputes are built from rendered components already rounded to $M / 2dp,
     // so accumulated rounding easily exceeds 0.5% on small values. Absolute floors keep only material deltas.
@@ -231,8 +246,14 @@ function analyze(rec) {
     if (r != null && Math.abs(r) > TOL) flag({ pair: rec.pair, sev: (/EV|Enterprise|accret|EPS|debt/i.test(label) ? 'high' : 'mid'), kind: 'WRONG', conf: 'probable', what: `${label}: mine ${unit === '$' ? fnum(mine) : mine} vs rendered ${unit === '$' ? fnum(rend) : rend} (Δ ${fpct(r)})` });
     // special: rendered null but data available — SKIP (a) net-debt/EV (dedicated detectors own those) and
     // (b) cells whose raw token is n/m — a DELIBERATE third state (no-D&A EV/EBITDA, negative-base P/E), not missing.
-    if (rend == null && mine != null && Math.abs(mine) > 0 && !/Net debt|Current EV/i.test(label) && stateOf(rawTok) !== 'NM')
-      flag({ pair: rec.pair, sev: 'high', kind: 'MISSING', conf: 'probable', what: `${label}: rendered "${clean(rawTok) || '—'}" but recompute = ${unit === '$' ? fnum(mine) : mine}` });
+    // HONEST BLANK (Fix 7A/7B/10): a "—" or "n/m" whose reason is on the same section is the correct output →
+    // EXPECTED, reason quoted. Without a reason it stays a defect — and that now includes a bare "n/m", which
+    // used to be exempt by token alone whether or not the deck said why.
+    if (rend == null && mine != null && Math.abs(mine) > 0 && !/Net debt|Current EV/i.test(label)) {
+      const why = (rawTok != null && HB.isBlankToken(rawTok)) ? HB.reasonFor(rawTok, where && where.label, where && where.sec) : null;
+      if (why) EXP.push({ pair: rec.pair, field: label, reason: `honest blank: ${why}`.slice(0, 200), desc: `rendered "${clean(rawTok)}"` });
+      else flag({ pair: rec.pair, sev: 'high', kind: 'MISSING', conf: 'probable', what: `${label}: rendered "${clean(rawTok) || '—'}"${stateOf(rawTok) === 'NM' ? ' with no reason on screen' : ''} but recompute = ${unit === '$' ? fnum(mine) : mine}` });
+    }
   };
 
   // 3. Net debt (target) = debt − cash − sti ; compare to §2 target net-debt
@@ -248,15 +269,16 @@ function analyze(rec) {
   // 6. EV/Revenue (target §2) = EV ÷ ltmRev
   const bLtmRev = (B.ltm && B.ltm.revenue != null) ? B.ltm.revenue : B.revenue;
   const evRevMine = (c.ev.t != null && bLtmRev) ? c.ev.t / bLtmRev : null;
-  chk(6, 'EV/Revenue (target §2)', evRevMine, c.evrev.t, 'x', `EV ${fnum(c.ev.t)} ÷ ltmRev ${fnum(bLtmRev)}`, c.evrev.tTok);
+  const in2 = (re) => ({ label: rowLabel(cmp, re), sec: cmp });
+  chk(6, 'EV/Revenue (target §2)', evRevMine, c.evrev.t, 'x', `EV ${fnum(c.ev.t)} ÷ ltmRev ${fnum(bLtmRev)}`, c.evrev.tTok, in2(/EV ?\/ ?Revenue/i));
   // 7. EV/EBITDA (target §2) = EV ÷ ltmEBITDA
   const bLtmEbitda = (B.ltm && B.ltm.ebitda != null) ? B.ltm.ebitda : B.ebitda;
   const evEbitdaMine = (c.ev.t != null && bLtmEbitda > 0) ? c.ev.t / bLtmEbitda : null;
-  chk(7, 'EV/EBITDA (target §2)', evEbitdaMine, c.evebitda.t, 'x', `EV ${fnum(c.ev.t)} ÷ ltmEBITDA ${fnum(bLtmEbitda)}`, c.evebitda.tTok);
+  chk(7, 'EV/EBITDA (target §2)', evEbitdaMine, c.evebitda.t, 'x', `EV ${fnum(c.ev.t)} ÷ ltmEBITDA ${fnum(bLtmEbitda)}`, c.evebitda.tTok, in2(/EV ?\/ ?EBITDA/i));
   // 8. P/E (target §2 LTM) = livePrice ÷ ltmEPS
   const bLtmEps = (B.ltm && B.ltm.eps != null) ? B.ltm.eps : B.eps;
   const peMine = (B.livePrice != null && bLtmEps > 0) ? B.livePrice / bLtmEps : null;
-  chk(8, 'P/E (target §2 LTM)', peMine, c.pe.t, 'x', `px ${B.livePrice} ÷ ltmEPS ${bLtmEps}`, c.pe.tTok);
+  chk(8, 'P/E (target §2 LTM)', peMine, c.pe.t, 'x', `px ${B.livePrice} ÷ ltmEPS ${bLtmEps}`, c.pe.tTok, in2(/P ?\/ ?E \(LTM\)/i));
   // 9. Combined revenue = A.ltmRev + B.ltmRev ; compare §2 rows sum vs any rendered combined
   const aLtmRev = (A.ltm && A.ltm.revenue != null) ? A.ltm.revenue : A.revenue;
   const combRevMine = (aLtmRev != null && bLtmRev != null) ? aLtmRev + bLtmRev : null;
@@ -291,15 +313,35 @@ function analyze(rec) {
   const afterTaxSynRend = tileVal(body, /After-Tax Synergies/i);
   const financingRend = tileVal(body, /After-Tax Financing Cost/i);
   const pfNIRend = tileVal(body, /Pro Forma Net Income/i);
-  const pfEPSRend = (() => { const m = body.match(/Pro Forma EPS[\s\S]{0,30}?(\$?-?[\d.]+)/); return m ? parseFloat(m[1].replace('$', '')) : null; })();
+  // sign-aware: the deck renders "-$0.36" (normalised from "−$0.36"); the old (\$?-?[\d.]+) skipped the leading
+  // "-" and matched "$0.36", so every negative pro forma EPS was graded as positive. N/A → null.
+  const pfEPSRend = (() => { const m = body.match(/Pro Forma EPS\s*\n(?:ⓘ\s*\n)?\s*(N\/A|—|\(?-?\$?-?[\d.]+\)?)/); if (!m || !/\d/.test(m[1])) return null; const neg = /-|\(/.test(m[1]); const v = parseFloat(m[1].replace(/[^\d.]/g, '')); return Number.isFinite(v) ? (neg ? -v : v) : null; })();
   const newSharesRend = (() => { const m = body.match(/New Shares Issued\s*\n?\s*([\d,]+)/i); return m ? parseFloat(m[1].replace(/,/g, '')) : null; })();
   const beforeEPS = (() => { const m = body.match(/Before\s*\n?\s*\$?(-?[\d.]+)/); return m ? parseFloat(m[1]) : ((A.ltm && A.ltm.eps != null) ? A.ltm.eps : A.eps); })();
   // 10 — combined EBITDA = A + B + Y1 syn, vs rendered
   const nonPosEbitdaClaim = /Combined EBITDA is non-positive/i.test(body);
   const synY1 = afterTaxSynRend != null ? afterTaxSynRend / (1 - 0.21) : null; // back out pre-tax Y1 from after-tax
-  const combEbitdaMine = (A.ebitda != null && B.ebitda != null) ? A.ebitda + B.ebitda + (synY1 || 0) : null;
-  const combEbitdaRend = tileVal(body, /Combined EBITDA \(incl\. Y1 synergies\)/i);
-  chk(10, 'Combined EBITDA (A+B+synY1)', combEbitdaMine, combEbitdaRend, '$', `A ${A.ebitda == null ? 'null' : fnum(A.ebitda)} + B ${B.ebitda == null ? 'null' : fnum(B.ebitda)} + synY1 ${synY1 == null ? '?' : fnum(synY1)}`);
+  // PERIOD: on LTM cards the deck combines LTM EBITDA (HNGE/TDOC LTM: 156 + 206 = $362M); the FY oracle figure
+  // (−541 + 101) is a different period, not a wrong number. Use LTM only when BOTH legs have it, else FY.
+  const ebA = (ltmCards && A.ltm && A.ltm.ebitda != null && B.ltm && B.ltm.ebitda != null) ? A.ltm.ebitda : A.ebitda;
+  const ebB = (ltmCards && A.ltm && A.ltm.ebitda != null && B.ltm && B.ltm.ebitda != null) ? B.ltm.ebitda : B.ebitda;
+  const ebPer = (ebA === A.ebitda && ebB === B.ebitda) ? 'FY' : 'LTM';
+  const combEbitdaMine = (ebA != null && ebB != null) ? ebA + ebB + (synY1 || 0) : null;
+  // LABEL: on Non-GAAP the tile reads "Combined EBITDA (computed, incl. Y1 synergies)"; the old exact label
+  // missed it and a rendered $362M was graded as "—".
+  // any basis qualifier the tile carries: (incl. …) · (computed, incl. …) · (non-GAAP, incl. …) · (n/a, incl. …)
+  const ebLab = /Combined EBITDA \((?:[^,()\n]+, )?incl\. Y1 synergies\)/i;
+  const combEbitdaRend = tileVal(body, ebLab);
+  const combEbitdaTok = (() => { const ls = body.split('\n'); const i = ls.findIndex(l => ebLab.test(l)); if (i < 0) return undefined; for (let k = i + 1; k < Math.min(i + 4, ls.length); k++) { const v = ls[k].trim(); if (!TILE_LAYOUT.test(v)) return v; } return undefined; })();
+  // BASIS: "Combined EBITDA (non-GAAP, incl. Y1 synergies)" is company-reported adjusted EBITDA, labeled as such on
+  // the tile, with its reconciliation cited on screen (RKLB/IRDM Non-GAAP: $394M vs computed $261M). The oracle
+  // is GAAP/computed, so there is nothing independent to recompute it against: recorded EXPECTED with the label
+  // as its reason, never compared to the GAAP sum. "computed" and unlabeled tiles are still recomputed.
+  const ebNonGaap = /Combined EBITDA \(non-GAAP, incl\. Y1 synergies\)/i.test(body);
+  if (ebNonGaap) {
+    add(10, `Combined EBITDA: tile is company-reported NON-GAAP (${combEbitdaTok || '?'}) — not recomputable from the GAAP oracle (${ebPer} computed sum ${fnum(combEbitdaMine)}); basis stated on screen`);
+    EXP.push({ pair: rec.pair, field: 'Combined EBITDA (A+B+synY1)', reason: 'basis on screen: tile labeled "non-GAAP" (company-reported adjusted EBITDA); oracle is GAAP — not recomputed', desc: `rendered ${combEbitdaTok} · computed ${fnum(combEbitdaMine)}` });
+  } else chk(10, 'Combined EBITDA (A+B+synY1)', combEbitdaMine, combEbitdaRend, '$', `${ebPer} A ${ebA == null ? 'null' : fnum(ebA)} + B ${ebB == null ? 'null' : fnum(ebB)} + synY1 ${synY1 == null ? '?' : fnum(synY1)}`, combEbitdaTok, { label: 'Combined EBITDA', sec: body });
   if (combEbitdaRend != null && combEbitdaRend > 0 && nonPosEbitdaClaim) flag({ pair: rec.pair, sev: 'mid', kind: 'WRONG', conf: 'confirmed', root: 'D-ebitdaMsg', what: `dashboard renders Combined EBITDA ${fnum(combEbitdaRend)} (>0) yet the Debt/EBITDA tile says "Combined EBITDA is non-positive" — real cause is null combined DEBT (target debt null), mislabeled`, falsifier: `void if rendered combined EBITDA ≤0; observed ${fnum(combEbitdaRend)}` });
   // 11 — pro forma NI: check the deck's INTERNAL sum (rendered acqNI + tgtNI + syn + financing = rendered PF NI).
   //    financing renders in parens = already negative; syn renders "+$X" = positive. Sum should tie.
@@ -314,9 +356,17 @@ function analyze(rec) {
   chk(11, 'Pro forma NI (acqNI+tgtNI+syn+fin)', pfNIMine, pfNIRend, '$', `acqNI ${fnum(acqNIrend)} + tgtNI ${fnum(tgtNIrend)} + syn ${fnum(synForNI)}(${synSrc}) + fin ${fnum(financingRend)}${pfNIComplete ? '' : ' [component missing → not checked]'}`);
   if (acqNIrend != null && A.netIncome != null && rel(A.netIncome, acqNIrend) != null && Math.abs(rel(A.netIncome, acqNIrend)) > 0.02) add(11, `  ↳ note: deck acquirer NI ${fnum(acqNIrend)} vs oracle ${fnum(A.netIncome)} (basis/period differs — informational)`);
   // 12 — pro forma EPS = PF NI ÷ PF shares (isolate the division: rendered PF NI ÷ recomputed shares)
-  const pfShares = (A.dilutedShares != null && newSharesRend != null) ? A.dilutedShares + newSharesRend : null;
+  // SHARE COUNT: Fix 10 Task 1 made the deck use ONE acquirer count and PRINT it ("Pro forma EPS, every year,
+  // uses one acquirer share count: 85.0M diluted (weighted average, latest interim period …)"). A count stated on
+  // screen is a count with its reason; the oracle's FY weighted average (HNGE 55M) is the one the app stopped
+  // using. No statement → the pre-existing rule exactly (oracle FY dilutedShares), so a deck that prints no count is
+  // graded as before.
+  const statedSh = (() => { const m = body.match(/uses one acquirer share count: ([\d,.]+)M diluted/); return m ? parseFloat(m[1].replace(/,/g, '')) : null; })();
+  const acqSh = statedSh != null ? statedSh : A.dilutedShares;
+  const shSrc = statedSh != null ? 'stated' : 'dil';
+  const pfShares = (acqSh != null && newSharesRend != null) ? acqSh + newSharesRend : null;
   const pfEPSMine = (pfNIRend != null && pfShares) ? pfNIRend / pfShares : null;
-  chk(12, 'Pro forma EPS (PFNI÷PFsh)', pfEPSMine, pfEPSRend, '', `PF NI ${fnum(pfNIRend)} ÷ PF shares ${pfShares == null ? '?' : Math.round(pfShares)} (dil ${A.dilutedShares}+new ${newSharesRend})`);
+  chk(12, 'Pro forma EPS (PFNI÷PFsh)', pfEPSMine, pfEPSRend, '', `PF NI ${fnum(pfNIRend)} ÷ PF shares ${pfShares == null ? '?' : Math.round(pfShares)} (${shSrc} ${acqSh}+new ${newSharesRend})`);
   // 13 — accretion % = (PF EPS − standalone) / standalone
   const accrMine = (pfEPSRend != null && beforeEPS > 0) ? ((pfEPSRend - beforeEPS) / beforeEPS) * 100 : null;
   const accrRendM = body.match(/Change\s*\n?\s*(N\/A|n\/m|-?[\d.]+%)/i);
@@ -338,6 +388,14 @@ function analyze(rec) {
     if (hasVal && hasDash) {
       const reason = allowlisted(field);
       if (reason) { EXP.push({ pair: rec.pair, field, reason, desc }); return { flagged: false, desc, reason }; }
+      // HONEST BLANK: every "—" cell explains itself on its own section (cell / row label / footnote / sentence).
+      // One unexplained "—" keeps the whole field a defect. A ⚠ cell is never a blank, so it never qualifies.
+      const blanks = st.filter(c => c.state === 'DASH' || c.state === 'FLAGGED');
+      const whys = blanks.map(c => (c.state === 'DASH' ? HB.reasonFor(c.tok, c.label, c.sec) : null));
+      if (whys.every(Boolean)) {
+        const r = `honest blank: ${blanks.map((c, i) => `${c.s} "${whys[i]}"`).join(' · ')}`.slice(0, 240);
+        EXP.push({ pair: rec.pair, field, reason: r, desc }); return { flagged: false, desc, reason: r };
+      }
       flag({ pair: rec.pair, sev: 'high', kind: 'MISSING', conf: 'confirmed', root: 'A-crossSurface',
         what: `${field}: value on one surface, "—" on another — ${desc}${extra ? ' · ' + extra : ''}`,
         falsifier: `void if the "—" surface legitimately lacks the concept (allowlist checked: banks/airlines/no-D&A/neg-base)` });
@@ -350,11 +408,15 @@ function analyze(rec) {
   // ===== 18 — revenue · cost of revenue · gross profit · gross margin (cross-surface) =====
   // target gross profit/margin: §2 (margin) · §7 plTarget (GP, LTM col) · §8 proforma (Tgt col)
   const pfGP = pfCols(pf, /^Gross Profit/i), pfRev = pfCols(pf, /^Revenue$/i), pfGM = pfCols(pf, /^Gross margin/i);
+  const pfCOGS = pfCols(pf, /^Cost of Revenue/i);
   const r18gp = xs('gross profit (target)', [
-    { s: '§2gm', tok: c.gm.tTok }, { s: '§7', tok: plLTM(plB, /Gross Profit/i) }, { s: '§8tgt', tok: pfGP[1] }
+    { s: '§2gm', tok: c.gm.tTok, label: rowLabel(cmp, /Gross Margin/i), sec: cmp },
+    { s: '§7', tok: plLTM(plB, /Gross Profit/i), label: rowLabel(plB, /Gross Profit/i), sec: plB },
+    { s: '§8tgt', tok: pfGP[1], label: pfGP.label, sec: pf }
   ], `oracle GP(B)=${fnum(B.grossProfit)}`);
   const r18cogs = xs('cost of revenue (target)', [
-    { s: '§7', tok: plLTM(plB, /Cost of Revenue/i) }, { s: '§8tgt', tok: (pfCols(pf, /^Cost of Revenue/i)[1]) }
+    { s: '§7', tok: plLTM(plB, /Cost of Revenue/i), label: rowLabel(plB, /Cost of Revenue/i), sec: plB },
+    { s: '§8tgt', tok: pfCOGS[1], label: pfCOGS.label, sec: pf }
   ]);
   // combined gross margin defect (c): §8 combined GP skips tgt's null but combined revenue keeps tgt revenue
   let cm18 = '';
@@ -371,8 +433,9 @@ function analyze(rec) {
   }
   add(18, `Rev/COGS/GP/GM cross-surface (target): rev Δ ${fpct(rel(bLtmRev, c.rev.t))} · GP ${r18gp.reason ? 'EXPECTED(' + r18gp.reason.slice(0, 24) + ')' : (r18gp.flagged ? '**ASYMMETRY**' : 'ok')} [${r18gp.desc}] · COGS ${r18cogs.flagged ? '**ASYMMETRY**' : (r18cogs.reason ? 'EXPECTED' : 'ok')}${cm18}`);
   // ===== 19 — operating income · EBITDA · net income · EPS (cross-surface: §7 LTM vs §8 proforma Tgt) =====
-  const r19oi = xs('operating income (target)', [{ s: '§7', tok: plLTM(plB, /Operating Income/i) }, { s: '§8tgt', tok: pfCols(pf, /EBIT \(Op Income\)|Operating Income/i)[1] }]);
-  const r19ni = xs('net income (target)', [{ s: '§7', tok: plLTM(plB, /Net Income/i) }, { s: '§8tgt', tok: pfCols(pf, /^Net Income/i)[1] }]);
+  const pfOI = pfCols(pf, /EBIT \(Op Income\)|Operating Income/i), pfNI = pfCols(pf, /^Net Income/i);
+  const r19oi = xs('operating income (target)', [{ s: '§7', tok: plLTM(plB, /Operating Income/i), label: rowLabel(plB, /Operating Income/i), sec: plB }, { s: '§8tgt', tok: pfOI[1], label: pfOI.label, sec: pf }]);
+  const r19ni = xs('net income (target)', [{ s: '§7', tok: plLTM(plB, /Net Income/i), label: rowLabel(plB, /Net Income/i), sec: plB }, { s: '§8tgt', tok: pfNI[1], label: pfNI.label, sec: pf }]);
   // EBITDA: §2 carries only the EV/EBITDA MULTIPLE (n/m for negative-EBITDA / no-D&A) — comparing the multiple's
   // presence to §7's EBITDA VALUE is a category error, so this leg is INFORMATIONAL, not flagged.
   const ebTok7 = plLTM(plB, /EBITDA/i);

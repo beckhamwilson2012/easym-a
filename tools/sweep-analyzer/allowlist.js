@@ -35,7 +35,7 @@ const RULES = [
 
 // Compute the per-pair context the rules gate on.
 function context(rec, A, B, body, negBase) {
-  const tks = (rec.pair || '').split('/');
+  const tks = (rec.pair || '').split('+')[0].split('/');   // a variant pair id is "A/B+ltm-gaap" (capture.js)
   return {
     isBank:    /Bank M&A Mode|CET1|P ?\/ ?TBV/i.test(body) || tks.some(t => /^(JPM|BAC|WFC|C|GS|MS|SCHW|AXP)$/.test(t)),
     isAirline: tks.some(t => /^(DAL|ALK|UAL|AAL|LUV|JBLU)$/.test(t)) || /^451[23]$/.test(String(A.sic)) || /^451[23]$/.test(String(B.sic)),

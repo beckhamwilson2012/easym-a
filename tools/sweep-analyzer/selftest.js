@@ -4,15 +4,17 @@
 //   node tools/sweep-analyzer/selftest.js
 //
 const { execSync } = require('child_process');
-const fs = require('fs'), path = require('path');
+const fs = require('fs'), path = require('path'), os = require('os');
 const DIR = __dirname;
 const CAP = path.join(DIR, '..', '..', 'docs', 'sweep-v2', 'captures');
 const CONTROLS = ['RKLB_IRDM', 'AAPL_VZ', 'SAP_NOW', 'GOOGL_AMZN', 'DAL_ALK'];
-const FLAGS = '/tmp/selftest_flags.json';
+// os.tmpdir() honours TMPDIR, so a run can keep its scratch out of the shared /tmp (CLAUDE.md: never /tmp)
+const TMP = os.tmpdir();
+const FLAGS = path.join(TMP, 'selftest_flags.json');
 
 const files = CONTROLS.map(c => path.join(CAP, c + '.json'));
 execSync(`${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(DIR, 'analyze.js'))} ${files.map(f => JSON.stringify(f)).join(' ')}`,
-  { stdio: 'ignore', env: { ...process.env, OUT: '/tmp/selftest_findings.md', FLAGS, EXPECTED: '/tmp/selftest_exp.json' } });
+  { stdio: 'ignore', env: { ...process.env, OUT: path.join(TMP, 'selftest_findings.md'), FLAGS, EXPECTED: path.join(TMP, 'selftest_exp.json') } });
 const F = JSON.parse(fs.readFileSync(FLAGS, 'utf8'));
 const has = fn => F.some(fn);
 
