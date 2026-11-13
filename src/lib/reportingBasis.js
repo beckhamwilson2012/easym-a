@@ -120,7 +120,6 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
 // such row; a figure the release prints but that does not tie to GAAP (TDOC's Adjusted EBITDA) is said so, never "not reported".
 const NOT_REPORTED = /^no (adjusted|non-gaap)\b|^no adjusted (eps|ebitda) reported$/i;
 function noChangeLine(a, b, tA, tB, epsNote) {
-  const parts = [];
   // Fix 10 Task 2: Non-GAAP now changes the EPS figures (Year 1 "—", forward years on consensus), so the line says that.
   const eps = [];
   if (a.eps && b.eps) eps.push(epsNote.replace(/^Year 1 non-GAAP EPS not available: /, ''));   // both report, but an LTM card has no non-GAAP period

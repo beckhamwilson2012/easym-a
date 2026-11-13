@@ -5,6 +5,7 @@ import { SynergyLines } from '../shared/SynergyLines';
 import { isNonGaapDeal, combinedEbitdaLabel } from '../../../lib/reportingBasis';
 import { fmtInterest } from '../shared/deckTokens';
 import { TAX_RATE, DEBT_INTEREST_RATE } from '../../../utils/dealCalc';
+import { multipleOf, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 
 // Phase 8 — Pro-Forma Credit Statistics. Leverage & coverage — the credit view that replaces the
 // market-based analysis (equity performance / analyst consensus / EPS accretion) for a private deal,
@@ -23,8 +24,9 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
   const combinedDebt = cap.proFormaDebt ?? null;
   const combinedCash = cap.proFormaCash ?? null;
   const netDebt = cap.proFormaNetDebt ?? null;
-  const netDebtEBITDA   = (netDebt != null && combinedEBITDA > 0) ? netDebt / combinedEBITDA : null;
-  const grossDebtEBITDA = (combinedDebt != null && combinedEBITDA > 0) ? combinedDebt / combinedEBITDA : null;
+  // Leverage goes through the one multiples rule (src/lib/multiples.js); interest coverage does not (see that file).
+  const netDebtEBITDA   = multipleOf(netDebt, combinedEBITDA, { denName: 'combined EBITDA', suffix: '×' });
+  const grossDebtEBITDA = multipleOf(combinedDebt, combinedEBITDA, { denName: 'combined EBITDA', suffix: '×' });
   const interestPreTax  = num(R.newInterestPreTax);   // dealCalc: new acquisition debt × the financing rate, full precision
   const coverage        = (combinedEBITDA != null && interestPreTax > 0) ? combinedEBITDA / interestPreTax : null;
 
@@ -34,8 +36,8 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
     { label: 'Pro-forma total debt (incl. acquisition financing; target debt repaid)', v: fmtM(combinedDebt) },
     { label: 'Pro-forma cash, equiv. & ST marketable sec. (after cash used in the deal)', v: fmtM(combinedCash) },
     { label: 'Net debt', v: fmtM(netDebt), bold: true },
-    { label: 'Gross debt / EBITDA', v: fmtX(grossDebtEBITDA) },
-    { label: 'Net debt / EBITDA', v: fmtX(netDebtEBITDA), bold: true },
+    { label: 'Gross debt / EBITDA', v: grossDebtEBITDA.text },
+    { label: 'Net debt / EBITDA', v: netDebtEBITDA.text, bold: true },
     { label: 'Pro-forma interest expense (pre-tax, on new debt)', v: fmtInterest(interestPreTax, { whole: fmtM }) },
     { label: 'Interest coverage (EBITDA / interest)', v: fmtX(coverage), bold: true },
   ];
@@ -55,7 +57,7 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
         </table>
         <SynergyLines deal={deal} title="Synergies ($M). Combined EBITDA above includes Year 1 only" style={{ marginTop: 12 }} />
         <div style={{ marginTop: 12, fontSize: 11, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
-          Pro-forma total debt is the acquirer's debt plus the acquisition financing (new debt raised for the cash consideration); the target's debt is assumed repaid on change of control. Debt, cash and net debt are the same figures as the pro-forma column on Transaction Structure. Interest is the new acquisition debt × the deck's {Math.round(DEBT_INTEREST_RATE * 100)}% financing rate, pre-tax; the after-tax financing cost in pro-forma net income is the same interest × (1 − {Math.round(TAX_RATE * 100)}%). Any component that is unavailable renders “—”, never a fabricated figure.
+          {MULTIPLE_RULE} Pro-forma total debt is the acquirer's debt plus the acquisition financing (new debt raised for the cash consideration); the target's debt is assumed repaid on change of control. Debt, cash and net debt are the same figures as the pro-forma column on Transaction Structure. Interest is the new acquisition debt × the deck's {Math.round(DEBT_INTEREST_RATE * 100)}% financing rate, pre-tax; the after-tax financing cost in pro-forma net income is the same interest × (1 − {Math.round(TAX_RATE * 100)}%). Any component that is unavailable renders “—”, never a fabricated figure.
         </div>
       </div>
     </PageFrame>

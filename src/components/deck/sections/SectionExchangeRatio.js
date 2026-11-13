@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
+import { multipleOf, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtPerShare, fmtShares, fmtPct, fmtPctFloor, fmtAsOf } from '../shared/deckTokens';
@@ -160,19 +161,19 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
   const yB = y2 ? `'${String(y2.fy).slice(-2)}` : 'FY+2';
 
   const bil  = (v) => (v == null ? '—' : `$${(v / 1000).toFixed(1)}B`);
-  const mult = (v) => (v == null || !Number.isFinite(v) ? '—' : `${v.toFixed(1)}x`);
+  const mult = (m) => (m ? m.text : '—');   // the one multiples rule (src/lib/multiples.js)
   const matrix = PREMS.map((prem) => {
     const o  = price != null ? price * (1 + prem) : null;
     const eq = (o != null && shares != null) ? o * shares : null;            // $M
     const ev = (eq != null && netDebt != null) ? eq + netDebt : null;        // $M
     return {
       prem, o, eq, ev,
-      evRevLtm: (ev != null && ltmRev != null && ltmRev > 0) ? ev / ltmRev : null,  // same EV, ÷ LTM revenue → ties to §2/§3 at 0%
-      evRevA: (ev != null && y1?.revenue) ? ev / y1.revenue : null,
-      evRevB: (ev != null && y2?.revenue) ? ev / y2.revenue : null,
-      evEbitB: (ev != null && y2?.ebitda > 0) ? ev / y2.ebitda : null,
-      peA: (o != null && y1?.eps > 0) ? o / y1.eps : null,
-      peB: (o != null && y2?.eps > 0) ? o / y2.eps : null,
+      evRevLtm: multipleOf(ev, ltmRev, { denName: 'LTM revenue' }),  // same EV, ÷ LTM revenue → ties to §2/§3 at 0%
+      evRevA: multipleOf(ev, y1?.revenue, { denName: 'revenue' }),
+      evRevB: multipleOf(ev, y2?.revenue, { denName: 'revenue' }),
+      evEbitB: multipleOf(ev, y2?.ebitda, { denName: 'EBITDA' }),
+      peA: multipleOf(o, y1?.eps, { denName: 'EPS' }),
+      peB: multipleOf(o, y2?.eps, { denName: 'EPS' }),
     };
   });
   // Highlight the row NEAREST the actual struck premium (tracks a user-changed deal, not a hardcoded 30%).
@@ -246,7 +247,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
           Highlighted row = the deck's struck deal{struckPrem != null ? ` (${struckPrem.toFixed(1)}% premium → ${dash(offer, fmtPerShare)}/share)` : ''}.{' '}
           Premium struck vs current {dash(price, fmtPerShare)} · 52-wk range {dash(w52Low, fmtPerShare)}–{dash(w52High, fmtPerShare)}
           {(w52High != null || w52Low != null) ? ` (high ${pctVs(w52High)} / low ${pctVs(w52Low)} vs current)` : ''}.
-          {' '}Equity = offer × shares; EV = equity + net debt. LTM EV/Rev = EV ÷ latest-twelve-month revenue (the same LTM figure as Exhibits A/B, so the 0% row reconciles to those pages); forward EV/Rev, EV/EBITDA and P/E use consensus estimates{y2 ? '' : ' (unavailable for this target — shown as "—")'}. {NET_DEBT_BASIS}{fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis) ? ` Net debt in EV is as of ${bName} ${fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis)}.` : ''}
+          {' '}{MULTIPLE_RULE} Equity = offer × shares; EV = equity + net debt. LTM EV/Rev = EV ÷ latest-twelve-month revenue (the same LTM figure as Exhibits A/B, so the 0% row reconciles to those pages); forward EV/Rev, EV/EBITDA and P/E use consensus estimates{y2 ? '' : ' (unavailable for this target — shown as "—")'}. {NET_DEBT_BASIS}{fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis) ? ` Net debt in EV is as of ${bName} ${fmtAsOf(target?.balanceSheetAsOf, target?.balanceSheetBasis)}.` : ''}
         </div>
       </div>
 

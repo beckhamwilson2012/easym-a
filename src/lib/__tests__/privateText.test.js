@@ -35,10 +35,10 @@ describe('headline', () => {
 });
 
 describe('P/E', () => {
-  test('a profitable private target gets its multiple on totals: 300 ÷ 2 = 150.0x', () => {
+  test('a profitable private target gets its multiple on totals: 300 ÷ 2 = 150x, n/m above 100x (Fix 10 Task 4)', () => {
     const r = calculate(tuckin);
-    expect(r.peRatio).toBe('150.0');
-    expect(r.peReason).toBeNull();
+    expect(r.peRatio).toBe('N/A');
+    expect(r.peReason).toBe('above 100x (Target net income is near zero)');
     expect(r.peBasis).toBe('equity value ÷ net income');
   });
   test('the fixture: 90,000 ÷ 2,000 = 45.0x', () => {

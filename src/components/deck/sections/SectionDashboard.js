@@ -258,7 +258,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // "n/m" (not meaningful): a multiple off a negative EBITDA has no economic meaning.
               value: results.evEBITDA === 'N/A' ? 'n/m' : `${results.evEBITDA}x`,
               note:  results.evEBITDA === 'N/A'
-                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (inputs.companyBEBITDA <= 0 ? 'Target EBITDA is negative' : 'not available'))
+                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || (inputs.companyBEBITDA <= 0 ? 'Target EBITDA is negative' : 'not available')))
                 : (ebB ? `on ${ebitdaBasisText(ebB)}` : null),
               explain: () => explainEvEbitda({ ev, ebitda: inputs.companyBEBITDA, multiple: results.evEBITDA }),
             },
@@ -277,7 +277,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // Branch on WHY the ratio is N/A (dealCalc: combinedEBITDA > 0 && combinedDebt != null) — a null
               // combined debt with positive EBITDA is "debt not available", never "EBITDA is non-positive".
               note:  results.debtEBITDA === 'N/A'
-                ? ((results.basesDiffer || ebDiffer) ? DIFFERENT_BASES : results.combinedEBITDA == null ? 'Combined EBITDA not available'
+                ? ((results.basesDiffer || ebDiffer) ? DIFFERENT_BASES : results.debtEBITDAAboveCap ? results.debtEBITDAReason : results.combinedEBITDA == null ? 'Combined EBITDA not available'
                   : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
                   : 'Combined debt not available')
                 : (combinedEbitdaBasis ? `on ${combinedEbitdaBasis} combined EBITDA` : null),

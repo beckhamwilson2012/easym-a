@@ -2,6 +2,7 @@ import { cashBucket } from '../lib/netDebt';
 import { synergySchedule } from '../lib/synergies';
 import { basesDiffer, combination } from '../lib/companyBasis';
 import { ebitdaBasesDiffer } from '../lib/reportingBasis';
+import { multipleOf } from '../lib/multiples';
 
 // ── Sensitivity table constants ───────────────────────────────────────────────
 export const PRICE_MULTS  = [0.8, 0.9, 1.0, 1.1, 1.2];
@@ -273,17 +274,21 @@ export function calculate(inputs) {
   // the metric is unavailable (null → 'N/A') — never let null coerce to 0 (silent $0 EV / understated
   // leverage that could mute the ">5×" flag). Non-stale deals pass real numbers → unchanged.
   const enterpriseValue  = (companyBDebt != null && companyBCash != null) ? totalPurchasePrice + companyBDebt - companyBCash : null;
-  const evEBITDA         = (companyBEBITDA > 0 && enterpriseValue != null) ? enterpriseValue / companyBEBITDA : null;
+  // The one multiples rule (src/lib/multiples.js): n/m with the reason for a zero or negative denominator or above 100x.
+  const evM              = enterpriseValue != null ? multipleOf(enterpriseValue, companyBEBITDA, { denName: 'Target EBITDA' }) : { value: null, reason: null };
+  const evEBITDA         = evM.value;
   // P/E: a public target's offer per share ÷ its EPS. A PRIVATE target has no share count, so no EPS: its P/E is the
   // same multiple on totals, purchase equity value ÷ net income. peReason names why the multiple is n/m (null when it
   // computes). `companyBEPS <= 0` alone was pattern C: a private target's EPS is the default 0 and a null EPS is <= 0,
   // so a +$2M earner read "Target earnings are negative".
   const _bNi             = parseFloat(companyBNetIncome);
   const _bEps            = parseFloat(companyBEPS);
-  const peRatio          = _privateTotal != null
-    ? (Number.isFinite(_bNi) && _bNi > 0 ? totalPurchasePrice / _bNi : null)
-    : (companyBEPS > 0 ? offerPricePerShare / companyBEPS : null);
+  const peM              = _privateTotal != null
+    ? multipleOf(totalPurchasePrice, Number.isFinite(_bNi) ? _bNi : null, { denName: 'Target net income' })
+    : multipleOf(offerPricePerShare, Number.isFinite(_bEps) ? _bEps : null, { denName: 'Target EPS' });
+  const peRatio          = peM.value;
   const peReason         = peRatio != null ? null
+    : (peM.raw != null) ? `${peM.reason}`
     : _privateTotal != null
       ? (!Number.isFinite(_bNi) ? 'Target net income not available' : _bNi < 0 ? 'Target earnings are negative' : 'Target earnings are zero')
       : (!Number.isFinite(_bEps) ? 'not available' : _bEps < 0 ? 'Target earnings are negative' : 'Target earnings are zero');
@@ -292,7 +297,8 @@ export function calculate(inputs) {
   // matched neither Transaction Structure nor Credit Stats.
   const cap              = proFormaCapitalization(inputs, sources);
   const combinedDebt     = cap.proFormaDebt;
-  const debtEBITDA       = (combinedEBITDA > 0 && combinedDebt != null) ? combinedDebt / combinedEBITDA : null;
+  const debtM            = combinedDebt != null ? multipleOf(combinedDebt, combinedEBITDA, { denName: 'Combined EBITDA' }) : { value: null, reason: null };
+  const debtEBITDA       = debtM.value;
 
   return {
     isAccretive,
@@ -322,6 +328,9 @@ export function calculate(inputs) {
     bankFinancing:     sources.bank,
     acquirerSharePrice: acqPrice === null ? 'N/A' : acqPrice.toFixed(2),
     evEBITDA:          evEBITDA   === null ? 'N/A' : evEBITDA.toFixed(1),
+    evEBITDAReason:    evM.reason || null,                // why EV/EBITDA is n/m (multiples rule), or null
+    debtEBITDAReason:  debtM.reason || null,
+    debtEBITDAAboveCap: debtM.raw != null,               // n/m because above 100x: leverage is still extreme (flag)
     peRatio:           peRatio    === null ? 'N/A' : peRatio.toFixed(1),
     peReason,                                            // why P/E is n/m, or null
     peBasis:           _privateTotal != null ? 'equity value ÷ net income' : null,   // a private target's P/E is on totals
@@ -427,6 +436,8 @@ export function computeFlags(results, inputs) {
     flags.push({ level: 'critical', icon: '🚨', text: 'Deal size exceeds $500B — likely to face significant antitrust scrutiny' });
   if (results.debtEBITDA !== 'N/A' && parseFloat(results.debtEBITDA) > 5)
     flags.push({ level: 'critical', icon: '🚨', text: 'Combined leverage is very high — debt burden may be unsustainable' });
+  else if (results.debtEBITDAAboveCap)   // Debt/EBITDA is n/m above 100x: the debt burden is extreme, not unknown
+    flags.push({ level: 'critical', icon: '🚨', text: 'Combined leverage is very high — Debt/EBITDA is above 100x (n/m: combined EBITDA is near zero)' });
   if (inputs.companyAShares > 0 && parseFloat(results.newSharesIssued) / inputs.companyAShares > 0.2)
     flags.push({ level: 'warning', icon: '⚠️', text: 'Significant share dilution — existing shareholders may be negatively impacted' });
   if (parseFloat(results.purchasePremium) > 50)

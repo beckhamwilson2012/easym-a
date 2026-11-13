@@ -1,4 +1,5 @@
 import { apiUrl } from '../../../api';
+import { multipleFromRatio } from '../../../lib/multiples';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -134,7 +135,8 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
   const trendMax = Math.max(...trendCols.map(c => c.revenue || 0), 1);
 
   // Key operating metrics (TTM ratios — currency-neutral). EV/EBITDA & negatives that read absurd → n/m.
-  const evEbitda = (km?.evToEBITDA != null && km.evToEBITDA > 0 && km.evToEBITDA < 100) ? `${km.evToEBITDA.toFixed(1)}x` : (km?.ok ? 'n/m' : '—');
+  const evEbitdaM = km?.ok ? multipleFromRatio(km.evToEBITDA, { denName: 'EBITDA', nonPositiveReason: 'EBITDA is zero or negative' }) : null;
+  const evEbitda = evEbitdaM ? (evEbitdaM.nm ? `n/m — ${evEbitdaM.reason}` : evEbitdaM.text) : '—';
   // Faculty (7D-5): every ratio carries an explicit period, consistent with the rest of the deck (LTM / FY).
   // The four return/yield ratios are trailing-twelve-month (FMP key-metrics-ttm) — labeled LTM; the balance-
   // sheet AS-OF instant for the return denominators is in the footnote. TTM→LTM to match §2/§3/§6/§7 wording.

@@ -1,4 +1,5 @@
 import { apiUrl } from '../../../api';
+import { multipleOf } from '../../../lib/multiples';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -124,7 +125,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
       assets: assets != null ? Number(assets) : null,   // total assets at the balance-sheet anchor (7A Item 2) — from /quote, same instant as cash/debt
 
       ev,                // point-in-time (mktcap + net debt) — unchanged
-      evRev: (ev != null && revA) ? ev / revA : null,   // current EV ÷ (LTM|FY) revenue
+      evRevM: multipleOf(ev, revA, { denName: 'revenue' }),   // current EV ÷ (LTM|FY) revenue, under the one multiples rule
       // bank view
       ppnr, ptbv, cet1, deposits,
     };
@@ -144,7 +145,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     { label: 'Cash & equivalents',   fmt: (f) => f.cash != null ? fmtMoneyTable(f.cash) : '—', get: (f) => f.cash },
     { label: 'Total assets',         fmt: (f) => f.assets != null ? fmtMoneyTable(f.assets) : '—', get: (f) => f.assets },
     { label: 'Enterprise value',     fmt: (f) => f.ev != null ? fmtMoneyTable(f.ev) : '—', get: (f) => f.ev },
-    { label: 'EV / Revenue',         fmt: (f) => f.evRev != null ? `${f.evRev.toFixed(1)}x` : '—', get: (f) => f.evRev },
+    { label: 'EV / Revenue',         fmt: (f) => f.evRevM.text, get: (f) => f.evRevM.value },
   ];
   // Bank view — banks have no meaningful gross/op margin, EBITDA or EV; suppress those and show the
   // bank income/capital metrics instead, reusing the same bank-facts fields §4/§5 render. Same formatters

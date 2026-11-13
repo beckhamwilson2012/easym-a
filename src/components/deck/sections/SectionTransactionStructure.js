@@ -8,6 +8,7 @@ import { epsAccretionPct, privateConsideration } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
 import { SynergyLines } from '../shared/SynergyLines';
+import { multipleOf, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 import { isNonGaapDeal, combinedEbitdaLabel } from '../../../lib/reportingBasis';
 
 // Transaction Structure — Sources & Uses + pro-forma capitalization. The FUNDING / balance-sheet view of the
@@ -98,7 +99,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const combinedEBITDA = num(deal?.combinedEBITDA);          // SAME combined EBITDA as §6/§7 (incl. Y1 synergies), on the deal's EBITDA basis
   const ngEb = isNonGaapDeal(deal) ? combinedEbitdaLabel(deal.reportingBasis) : null;   // null on a GAAP deal
   const bankDeal       = isBankDeal(target, acquirer);
-  const lev  = (v) => bankDeal ? 'n/m' : ((v != null && combinedEBITDA > 0) ? `${(v / combinedEBITDA).toFixed(1)}x` : '—');
+  const lev  = (v) => bankDeal ? 'n/m' : multipleOf(v, combinedEBITDA, { denName: 'combined EBITDA' }).text;   // the one multiples rule
 
   // Robustness (the real defense): the accretion conclusion is unchanged across the plausible min-cash range —
   // computed from the model at minCash = 0 vs the struck %. Only for non-bank deals (banks don't net cash).
@@ -199,7 +200,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
         ) : (
           <>New acquisition debt <strong>= cash consideration, less total combined cash, plus minimum cash kept by the combined company, plus {bTk} debt repaid on change of control (assumed 100%), floored at zero</strong>. Equivalently — the collapsed form the Sources &amp; Uses "Excess cash on hand used" line ties to — this is cash consideration + {bTk} debt repaid − excess cash on hand, where excess cash on hand = combined cash less minimum cash kept. Combined cash above the retained minimum funds part of the deal, so the financing drag reflects net funding rather than a 100%-debt assumption. Stock consideration is newly issued {aTk} equity, so <strong>Sources = Uses</strong>. <strong style={{ color: '#374151' }}>Assumption:</strong> minimum cash kept by the combined company is set at <strong>{minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% of pro-forma {minCashBasisText ? 'revenue' : 'LTM revenue'}</strong>{minCashBasisText ? ` (${minCashBasisText})` : ''}{minCashRetained != null ? ` (${fmtMoneyTable(minCashRetained)})` : ''} — a modeling assumption, not a sourced figure. <strong style={{ color: '#374151' }}>Assumption:</strong> 100% of {bTk}'s debt is assumed repaid on change of control — a stated assumption, not sourced. {accAtCurrent != null && accAtZero != null ? <><strong style={{ color: '#374151' }}>Robustness:</strong> the accretion/(dilution) conclusion does not depend on the min-cash assumption — at min cash = 0 the pro-forma EPS impact is <strong>{accAtZero >= 0 ? '+' : ''}{accAtZero.toFixed(1)}%</strong> and at the assumed {minCashPct != null ? (minCashPct * 100).toFixed(1) : '2.0'}% it is <strong>{accAtCurrent >= 0 ? '+' : ''}{accAtCurrent.toFixed(1)}%</strong>, {(accAtZero < 0) === (accAtCurrent < 0) ? `${accAtCurrent < 0 ? 'dilutive' : 'accretive'} across the full range` : 'the sign is stable across the range'}. </> : null}</>
         )}
-        {!bankDeal && <>Leverage is <strong>net debt (and total debt) ÷ combined EBITDA</strong> — the same EBITDA basis used on the Pro Forma slides (includes Year-1 synergies). </>}
+        {!bankDeal && <>Leverage is <strong>net debt (and total debt) ÷ combined EBITDA</strong> — the same EBITDA basis used on the Pro Forma slides (includes Year-1 synergies). {MULTIPLE_RULE} </>}
         {!bankDeal && ngEb && (ngEb.note ? <>Leverage ratios are “—”: combined EBITDA is not added because the {ngEb.note}. </> : <>Combined EBITDA is on a {ngEb.basis} basis. </>)}{NET_DEBT_BASIS}{aBsAsOf && bBsAsOf ? ` Balance-sheet items (cash, debt, marketable securities) are as of ${aTk} ${aBsAsOf} and ${bTk} ${bBsAsOf}.` : ''} Figures are illustrative transaction assumptions — not negotiated terms.
       </div>
     </PageFrame>
