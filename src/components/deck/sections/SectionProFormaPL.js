@@ -6,7 +6,7 @@ import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote, fmtInterest } from '../shared/deckTokens';
 import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, forwardYearInputs, TAX_RATE } from '../../../utils/dealCalc';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence } from '../../../lib/synergies';
-import { formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
+import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { isNonGaapDeal } from '../../../lib/reportingBasis';
 
 // ── §6 — Pro Forma & Accretion (one logical exhibit, split across two pages) ─────────────────────────────
@@ -333,7 +333,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
             </div>
           )}
         </div>
-        <BasisNote acquirer={acquirer} target={target} deal={deal} fixed="Forward years are consensus for both companies, so their combined columns stay on one basis." style={{ padding: '6px 20px 0' }} />
+        <BasisNote acquirer={acquirer} target={target} deal={deal} fixed={['Forward years are consensus for both companies, so their combined columns stay on one basis.', accretionShareCountLabel(inputs)].filter(Boolean).join(' ')} style={{ padding: '6px 20px 0' }} />
         <div style={{ padding: '6px 20px 32px', fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
           <strong style={{ color: NAVY }}>Basis: </strong>
           {grossNmNote(acquirer, target) ? <>{grossNmNote(acquirer, target)} </> : null}

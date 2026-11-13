@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
+import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { isNonGaapDeal, epsBasisLabel, combinedEbitdaLabel } from '../../../lib/reportingBasis';
@@ -197,7 +198,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
         subtitle={aTk && bTk ? `${aTk} / ${bTk} · deal snapshot, rationale & certainty of close` : 'Deal snapshot, rationale & certainty of close'}
       />
       <div style={{ padding: '12px 22px 40px' }}>
-        <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ marginBottom: 8 }} />
+        <BasisNote acquirer={acquirer} target={target} deal={deal} fixed={accretionShareCountLabel(deal?._inputs)} style={{ marginBottom: 8 }} />
         <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 4, padding: '8px 10px', marginBottom: 10 }}>
           <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.8, color: SF_BLUE, textTransform: 'uppercase', marginBottom: 3 }}>Deal verdict</div>
           <VerdictBlock verdict={verdict} size={16} />

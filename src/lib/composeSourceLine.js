@@ -1,3 +1,5 @@
+import { acquirerDilutedShares } from '../utils/dealCalc';
+
 // sourceCatalog maps internal source name → human label
 const SOURCE_LABELS = {
   edgar:        'SEC EDGAR (10-K/10-Q filings)',
@@ -46,13 +48,23 @@ const formatDate = formatDeckDate;
 
 // The one wording of how forward pro forma EPS gets the acquirer's net income (SectionProFormaPL's forward
 // loop), shown on the slide and on Sources. The share count is today's, so the label names its period.
-export function forwardNetIncomeLabel(inputs) {
+function sharePeriod(inputs) {
   const p = inputs?.companyADilutedSharesPeriod;
   const date = formatDeckDate(p?.end);
-  const period = date
+  return date
     ? `${p.basis}, ${p.basis === 'cover page' ? 'as of' : p.interim ? 'latest interim period ended' : 'fiscal year ended'} ${date}`
     : 'period not available';
-  return `Acquirer net income = consensus EPS × current diluted shares (${period})`;
+}
+const fmtShM = (n) => (n > 0 ? `${n.toFixed(1)}M` : null);
+export function forwardNetIncomeLabel(inputs) {
+  const sh = fmtShM(acquirerDilutedShares(inputs || {}).shares);
+  return `Acquirer net income = consensus EPS × current diluted shares (${sh ? `${sh}, ` : ''}${sharePeriod(inputs)})`;
+}
+// The one acquirer share count behind every pro forma EPS on the deck (Year 1 and each forward year), for the basis note
+// of each slide that shows accretion. null when there is no count.
+export function accretionShareCountLabel(inputs) {
+  const sh = fmtShM(acquirerDilutedShares(inputs || {}).shares);
+  return sh ? `Pro forma EPS, every year, uses one acquirer share count: ${sh} diluted (${sharePeriod(inputs)}) plus the new shares issued.` : null;
 }
 
 /**

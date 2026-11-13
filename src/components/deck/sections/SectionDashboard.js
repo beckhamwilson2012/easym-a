@@ -17,6 +17,7 @@ import { useWindowWidth } from '../../../hooks/useWindowWidth';
 import { ExplainButton } from '../../shared/ExplainButton';
 import { SynergyLines } from '../shared/SynergyLines';
 import { BasisNote } from '../shared/BasisNote';
+import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { isNonGaapDeal, FY_ONLY } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
@@ -213,7 +214,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         {/* Narrative */}
         <div style={{ ...cardStyle, marginBottom: 24, background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
           <p style={{ margin: 0, fontSize: 14, color: '#1E3A5F', lineHeight: 1.7 }}>{narrative}</p>
-          <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ marginTop: 6, fontSize: 11 }} />
+          <BasisNote acquirer={acquirer} target={target} deal={deal} fixed={accretionShareCountLabel(deal?._inputs)} style={{ marginTop: 6, fontSize: 11 }} />
         </div>
 
         {/* Key metrics */}

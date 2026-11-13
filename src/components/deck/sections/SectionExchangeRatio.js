@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
+import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtPerShare, fmtShares, fmtPct, fmtPctFloor, fmtAsOf } from '../shared/deckTokens';
 import { netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
@@ -249,7 +250,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
         </div>
       </div>
 
-      <BasisNote acquirer={acquirer} target={target} deal={deal} fixed="The LTM EV/Rev column uses LTM revenue whichever basis the card is on." style={{ padding: '0 20px 6px' }} />
+      <BasisNote acquirer={acquirer} target={target} deal={deal} fixed={['The LTM EV/Rev column uses LTM revenue whichever basis the card is on.', accretionShareCountLabel(deal?._inputs)].filter(Boolean).join(' ')} style={{ padding: '0 20px 6px' }} />
       <div style={{ padding: '0 20px 32px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
         The headline offer reflects {struckIs30
           ? 'an illustrative 30% control premium (industry median, user-adjustable)'

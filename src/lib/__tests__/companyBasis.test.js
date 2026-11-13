@@ -39,7 +39,8 @@ describe('the switch', () => {
     expect(f.companyARevenue).toBe(602);
     expect(f.companyAEPS).toBe(-0.37);
     expect(f.companyAPeriodLabel).toBe('FY ended Dec 31, 2025');
-    expect(f.companyADilutedSharesPeriod.interim).toBeUndefined();
+    // Fix 10 Task 1: the share count is the latest filed diluted count (the trusted LTM leg's) on either card.
+    expect(f.companyADilutedSharesPeriod.interim).toBe(true);
   });
   test('LTM reads data.ltm, every flow figure', () => {
     const f = companyInputs('A', rklb, BASIS_LTM);
@@ -107,6 +108,7 @@ describe('combining', () => {
   });
   test('the forward share label names an interim period on LTM', () => {
     expect(forwardNetIncomeLabel(deal(BASIS_LTM, BASIS_FY))).toContain('latest interim period ended June 30, 2026');
-    expect(forwardNetIncomeLabel(deal(BASIS_FY, BASIS_FY))).toContain('fiscal year ended December 31, 2025');
+    // Fix 10 Task 1: the FY card uses the same latest interim count as the LTM card.
+    expect(forwardNetIncomeLabel(deal(BASIS_FY, BASIS_FY))).toContain('latest interim period ended June 30, 2026');
   });
 });

@@ -39,12 +39,18 @@ function figures(data, basis) {
       GrossProfitBasis: L.grossProfit != null ? (L.audit?.breakdown?.grossProfit?.derived ? 'calculated' : 'filed') : null,
     };
   }
+  // The one diluted share count for pro forma EPS, Year 1 and every forward year (Fix 10 Task 1): the LATEST filed
+  // weighted-average diluted count, which is the trusted LTM leg's (latest interim period) when there is one, else the
+  // fiscal year's. An older fiscal-year average is never used once a later period is filed: HNGE's FY2025 average is
+  // 54.6M, from before its IPO converted the preferred, against 85.1M for the nine months to 9/30/2026.
+  const latestDil = data.ltm?.trusted && data.ltm.dilutedShares != null;
   return {
     Revenue: data.revenue, EBITDA: data.ebitda, NetIncome: data.epsNetIncome ?? data.netIncome, OperatingIncome: data.operatingIncome,
     NetIncomeToCommon: data.epsNetIncome != null && data.epsNetIncome !== data.netIncome,
     EpsLabel: null, EpsReason: null,
-    GrossProfit: data.grossProfit ?? null, FreeCashFlow: data.freeCashFlow ?? null, EPS: data.eps, DilutedShares: data.dilutedShares,
-    DilutedSharesPeriod: data.dilutedSharesPeriod ?? null,
+    GrossProfit: data.grossProfit ?? null, FreeCashFlow: data.freeCashFlow ?? null, EPS: data.eps,
+    DilutedShares: latestDil ? data.ltm.dilutedShares : data.dilutedShares,
+    DilutedSharesPeriod: latestDil ? { basis: 'weighted average', end: data.ltm.asOf, interim: true } : (data.dilutedSharesPeriod ?? null),
     CostOfRevenue: data.costOfRevenue ?? null, CostOfRevenueSource: data.costOfRevenueSource ?? null,
     GrossProfitSource: data.grossProfitSource ?? null, GrossProfitBasis: data.grossProfitBasis ?? null,
   };
