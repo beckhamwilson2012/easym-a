@@ -1,0 +1,6 @@
+[
+  ["HNGE", "TDOC", null, { "mode": "ltm", "basis": "gaap" }],
+  ["HNGE", "TDOC", null, { "mode": "ltm", "basis": "nongaap" }],
+  ["HNGE", "OMDA", null, { "basis": "gaap" }],
+  ["HNGE", "OMDA", null, { "basis": "nongaap" }]
+]

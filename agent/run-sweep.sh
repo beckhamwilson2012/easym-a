@@ -73,7 +73,15 @@ APP_PORT="${BASE_URL##*:}"                      # port the app server (and captu
 SWEEP_APP_PORT="$APP_PORT"; export SWEEP_APP_PORT
 BASE_BRANCH="${BASE_BRANCH:-$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
-RUN_DIR="$AGENT_DIR/runs/$RUN_ID"
+# RUNS_DIR: where run dirs + the lock live. Default unchanged. sweep-launch.sh runs this script from a
+# throwaway worktree and points RUNS_DIR at the MAIN checkout's agent/runs/ (gitignored there), so the run
+# logs and the dashboard survive the worktree's removal and every runner, in any tree, shares ONE lock.
+RUNS_DIR="${SWEEP_RUNS_DIR:-$AGENT_DIR/runs}"
+RUN_DIR="$RUNS_DIR/$RUN_ID"
+# DRY_RUN=1: the whole pipeline (preflight, build, server, capture, grade) with NO agent and NO git writes:
+# no restore tag, no sweep/auto-* branch, no ledger commit. MAX_ITER is forced to 0 so `claude -p` never runs.
+DRY_RUN="${DRY_RUN:-0}"
+[[ "$DRY_RUN" == "1" ]] && MAX_ITER=0
 # ── RAW is RUN-SCOPED ────────────────────────────────────────────────────────────────────────────────
 # It used to be one directory, /tmp/sweep_v2_raw, shared by every run that ever executed. Run
 # 20260816-212606's orphaned capture kept writing failure stubs into it while run -222441 was capturing,
@@ -86,10 +94,11 @@ RAW="$RAW_ROOT/$RUN_ID"
 # Worker scratch: repo-local and gitignored (agent/runs/ is in .gitignore), so `git clean -fd` spares it —
 # and unlike /tmp it is neither reboot-mortal nor shared between runs. See ITERATION_PROMPT.md.
 SCRATCH_DIR="$RUN_DIR/scratch"
-SERVER_LOG="/tmp/server-$RUN_ID.log"           # the restarted app server's stdout/stderr (Part 1)
-BUILD_LOG="/tmp/build-$RUN_ID.log"             # `npm run build` stdout/stderr (Part 2)
+LOG_TMP="${SWEEP_LOG_TMP:-/tmp}"                  # where the two per-run logs below go; default unchanged
+SERVER_LOG="$LOG_TMP/server-$RUN_ID.log"           # the restarted app server's stdout/stderr (Part 1)
+BUILD_LOG="$LOG_TMP/build-$RUN_ID.log"             # `npm run build` stdout/stderr (Part 2)
 SERVER_PID=""                                   # PID of the server WE start (kill only our own + the port holder)
-LOCK_FILE="${SWEEP_LOCK:-$AGENT_DIR/runs/.sweep.lock}"  # single-runner mutex; runs/ is gitignored so `git clean -fd` cannot eat it
+LOCK_FILE="${SWEEP_LOCK:-$RUNS_DIR/.sweep.lock}"  # single-runner mutex; runs/ is gitignored so `git clean -fd` cannot eat it
 LOCK_HELD=0                                     # 1 once WE own the lock — release_lock refuses to delete another run's
 CAPTURE_PID=""                                  # PID of the capture.js we are running right now, if any
 RUN_PHASE="startup"                             # where we are; named in the ledger row if we die abnormally
@@ -156,7 +165,7 @@ release_lock() {                               # only ever removes a lock WE own
 reap_stale_capture() {                         # $1 = the stale run's RUN_ID
   local rid="$1" pf cpid cmd
   [[ -n "$rid" && "$rid" != "<unknown>" ]] || return 0
-  pf="$AGENT_DIR/runs/$rid/capture.pid"
+  pf="$RUNS_DIR/$rid/capture.pid"
   [[ -f "$pf" ]] || return 0                   # it exited cleanly and cleared its own pidfile
   cpid="$(head -1 "$pf" 2>/dev/null | tr -dc '0-9')"
   rm -f "$pf" 2>/dev/null || true
@@ -301,19 +310,27 @@ PAIRS_JSON=""; REPRO_PAIRS=""
 build_pairs_json() {
   # repro pairs FIRST and uncapped (they are what the run is measured on); the on-disk pair list is filler.
   REPRO_PAIRS="$(repro_pair queue "$QUEUE" | grep -v '^-$' | sort -u | tr '\n' ' ')"
+  # agent/sweep-pairs.json: the MANDATORY variant decks (pair × card period × reporting basis), e.g.
+  # ["HNGE","TDOC",null,{"mode":"ltm","basis":"gaap"}]. They follow the repro pairs and come before the filler;
+  # PAIRS_LIMIT never drops them (only SWEEP_PAIRS, the demo cap, does). Pair id = "A/B+<variant>" (capture.js).
   PAIRS_JSON="$(REPRO="$REPRO_PAIRS" node -e '
-    const fs=require("fs"),p=process.argv[1],lim=+process.argv[2]||0;
+    const fs=require("fs"),p=process.argv[1],lim=+process.argv[2]||0,xf=process.argv[3];
     const seed=fs.readdirSync(p).filter(f=>f.endsWith(".json"))
       .map(f=>{try{return JSON.parse(fs.readFileSync(p+"/"+f)).pair}catch(e){return null}}).filter(Boolean);
+    const vid=o=>o?[o.mode,o.basis].filter(Boolean).join("-"):"";
+    const key=e=>e[0]+"/"+e[1]+(vid(e[3])?"+"+vid(e[3]):"");
+    const plain=x=>{const i=x.indexOf("/");return [x.slice(0,i),x.slice(i+1),null];};
+    let extra=[]; try{ if(fs.existsSync(xf)) extra=JSON.parse(fs.readFileSync(xf,"utf8")); }catch(e){ console.error("sweep-pairs.json unreadable: "+e.message); process.exit(3); }
     const seen=new Set(), out=[];
-    for(const x of (process.env.REPRO||"").trim().split(/\s+/).filter(Boolean)) if(!seen.has(x)){seen.add(x);out.push(x);}
+    const push=e=>{const k=key(e); if(!seen.has(k)){seen.add(k);out.push(e);}};
+    for(const x of (process.env.REPRO||"").trim().split(/\s+/).filter(Boolean)) push(plain(x));
+    for(const e of extra) push([e[0],e[1],e[2]??null,e[3]||undefined].slice(0,e[3]?4:3));
     let filler=seed.filter(x=>!seen.has(x));
-    if(lim>0) filler=filler.slice(0,lim);       // PAIRS_LIMIT caps the FILLER only — never a repro pair
-    for(const x of filler) if(!seen.has(x)){seen.add(x);out.push(x);}
+    if(lim>0) filler=filler.slice(0,lim);       // PAIRS_LIMIT caps the FILLER only — never a repro or listed pair
+    for(const x of filler) push(plain(x));
     const cap=+process.env.SWEEP_PAIRS||0;      // SWEEP_PAIRS caps the WHOLE set (demo mode), repro included
-    const capped = cap>0 ? out.slice(0,cap) : out;
-    process.stdout.write(JSON.stringify(capped.map(x=>{const i=x.indexOf("/");return [x.slice(0,i),x.slice(i+1),null];})));
-  ' "$ROOT/docs/sweep-v2/captures" "$PAIRS_LIMIT")"
+    process.stdout.write(JSON.stringify(cap>0 ? out.slice(0,cap) : out));
+  ' "$ROOT/docs/sweep-v2/captures" "$PAIRS_LIMIT" "$AGENT_DIR/sweep-pairs.json")" || die "pair list could not be built (agent/sweep-pairs.json unreadable?)"
 }
 do_capture() {                                 # $1 = dest snapshot dir, $2 = phase label; rc 2 = capture failed
   local dest="$1" phase="$2" t0 rc; t0="$(date +%s)"
@@ -862,6 +879,7 @@ finalize() {                                   # $1=status $2=marker (x=done · 
 finalize_abnormal() {
   [[ "$RUN_COMPLETED" -eq 1 ]] && return 0     # normal end: finalize() already wrote every row
   [[ "$RUN_PHASE" == "startup" ]] && return 0  # never got past setup (e.g. lock refused) — nothing to report
+  [[ "${DRY_RUN:-0}" == "1" ]] && { log "DRY RUN ended abnormally during $RUN_PHASE — no ledger row, no commit (dry runs write no git state)"; return 0; }
   [[ -n "${RUN_ID:-}" && -n "${CALIB:-}" ]] || return 0
   calib_hdr
   local wall cost phase
@@ -1091,7 +1109,10 @@ CAFFEINATE_PID=$!
 log "sleep guard: caffeinate -i -w $$ started (pid $CAFFEINATE_PID) — idle sleep blocked for this run"
 
 mkdir -p "$RUN_DIR/cap"
-echo "$$" > "$RUN_DIR/run.pid"   # liveness marker — the dashboard checks kill -0 on this to tell RUNNING from DIED
+echo "$$" > "$RUN_DIR/run.pid"
+# WHAT IS UNDER TEST, stated once: the tree this script runs from and the commit it has checked out.
+log "testing $(gitr rev-parse --short HEAD 2>/dev/null) ($(gitr log -1 --format=%s HEAD 2>/dev/null | cut -c1-80)) in $ROOT · base $BASE_BRANCH · runs dir $RUNS_DIR${SWEEP_WORKTREE:+ · worktree from sweep-launch.sh}"
+[[ "$DRY_RUN" == "1" ]] && log "DRY RUN: no agent (MAX_ITER=0), no restore tag, no sweep/auto branch, no ledger commit"   # liveness marker — the dashboard checks kill -0 on this to tell RUNNING from DIED
 build_pairs_json
 NPAIRS="$(node -e 'process.stdout.write(String(JSON.parse(process.argv[1]).length))' "$PAIRS_JSON")"
 # A Discovered entry with a full repro (pair/observed/expected/source, and a pair naming a real deck) is a
@@ -1102,9 +1123,11 @@ while IFS= read -r _pl; do [[ -n "$_pl" ]] && log "$_pl"; done < <(node "$AGENT_
 
 QCOUNT="$(node -e 'const fs=require("fs"),t=fs.readFileSync(process.argv[1],"utf8");const o=(t.split(/^## Open/m)[1]||"").split(/^## /m)[0];process.stdout.write(String((o.match(/^- \[ \] /mg)||[]).length));' "$QUEUE")"
 
+if [[ "$DRY_RUN" != "1" ]]; then
 gitr rev-parse -q --verify "refs/tags/restore/pre-sweep-$RUN_ID" >/dev/null 2>&1 && die "restore tag already exists"
 _tagerr="$(gitr tag "restore/pre-sweep-$RUN_ID" 2>&1 >/dev/null)" || die "git tag restore/pre-sweep-$RUN_ID FAILED (${_tagerr:-no stderr})"
 gitr checkout -q -b "sweep/auto-$RUN_ID" || die "could not create branch sweep/auto-$RUN_ID"
+fi
 cat > "$RUN_DIR/UNDO.txt" <<EOF
 # Discard the ENTIRE night's work in one line (run from $ROOT):
 git checkout $BASE_BRANCH && git branch -D sweep/auto-$RUN_ID && git tag -d restore/pre-sweep-$RUN_ID
