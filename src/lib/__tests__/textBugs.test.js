@@ -31,8 +31,8 @@ describe('buildNarrative', () => {
   });
 
   test('private target: the deck name, never "Company B"; no "$0.00/share"; "non-positive" only for a non-positive base', () => {
-    const t = buildNarrative({ ...base, totalPurchasePrice: 300, companyAEPS: 1.98, proFormaEPS: 1.99, epsChangePct: null }, { offerPricePerShare: 0 }, 'Hinge Health, Inc.', 'Target Company', []);
-    expect(t).toBe("Hinge Health, Inc.'s acquisition of Target Company ($300M total) moves pro forma EPS from $1.98 to $1.99.");
+    const t = buildNarrative({ ...base, totalPurchasePrice: 300, companyAEPS: 1.98, proFormaEPS: 1.99, epsChangePct: null }, { offerPricePerShare: 0, offerValueTotal: 300 }, 'Hinge Health, Inc.', 'Target Company', []);
+    expect(t).toBe("Hinge Health, Inc.'s acquisition of Target Company for $300M moves pro forma EPS from $1.98 to $1.99.");   // Fix 7b: "for $300M"
     expect(t).not.toMatch(/Company B|\$0\.00|non-positive/);
   });
 

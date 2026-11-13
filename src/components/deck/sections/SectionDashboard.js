@@ -4,7 +4,7 @@ import { VerifiedValue, StatusDot } from '../../shared/VerifiedValue';
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
 import {
-  computeFlags, buildNarrative,
+  computeFlags, buildNarrative, newSharesLabel,
   calcProFormaEPS, SYN_MULTS, SYN_LABELS,
   acquirerSharePrice, targetMarketPrice, acquirerStandaloneEPS,
 } from '../../../utils/dealCalc';
@@ -84,6 +84,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // Enterprise value / combined debt (for explainers) — dealCalc's own numerators, null when a leg is unavailable.
   const ev = results.enterpriseValue;
   const combinedDebtForExplain = results.combinedDebt;
+  // P/E explainer: per share for a public target; equity value ÷ net income for a private one (dealCalc peBasis).
+  const peExplainArgs = results.peBasis
+    ? { equityValue: parseFloat(results.totalPurchasePrice), netIncome: inputs.companyBNetIncome, multiple: results.peRatio }
+    : { offerPrice: inputs.offerPricePerShare, eps: inputs.companyBEPS, multiple: results.peRatio };
+  const newSharesText = newSharesLabel(results);   // "—" with the reason, never "nullM"
 
   // Cash sensitivity strip: pro forma EPS at 100/80/60/40/20% cash
   const cashSensitivity = [100, 80, 60, 40, 20].map(cp => ({
@@ -228,8 +233,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             {
               label: 'P / E Ratio',
               value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
-              note:  results.peRatio === 'N/A' ? (inputs.companyBEPS <= 0 ? 'Target earnings are negative' : 'not available') : null,
-              explain: () => explainPeRatio({ offerPrice: inputs.offerPricePerShare, eps: inputs.companyBEPS, multiple: results.peRatio }),
+              note:  results.peRatio === 'N/A' ? results.peReason : null,   // dealCalc names the real reason
+              explain: () => explainPeRatio(peExplainArgs),
             },
             {
               label: 'CET1 (Combined)',
@@ -259,9 +264,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             {
               label: 'P / E Ratio',
               value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
-              note:  results.peRatio === 'N/A' ? (inputs.companyBEPS <= 0 ? 'Target earnings are negative' : 'not available')
+              // The reason is dealCalc's (peReason): `companyBEPS <= 0` read a private target's default 0 EPS as negative earnings.
+              note:  results.peRatio === 'N/A' ? results.peReason
+                : results.peBasis ? results.peBasis
                 : (ngPlan ? (ngPlan.eps.nonGaap ? 'on adjusted EPS (non-GAAP)' : 'on GAAP EPS') : null),
-              explain: () => explainPeRatio({ offerPrice: inputs.offerPricePerShare, eps: inputs.companyBEPS, multiple: results.peRatio }),
+              explain: () => explainPeRatio(peExplainArgs),
             },
             {
               label: 'Debt / EBITDA',
@@ -386,7 +393,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'Total Purchase Price', value: fmtMoneyDual(results.totalPurchasePrice), explain: () => explainDealSize({ offerPrice: inputs.offerPricePerShare, shares: inputs.companyBShares, targetName: nameB }) },
               { label: 'Cash Portion',         value: fmtMoneyTable(results.cashPortion), explain: () => explainCashPercent({ cashPercent: inputs.cashPercent, dealSize: results.totalPurchasePrice }) },
               { label: 'Stock Portion',        value: fmtMoneyTable(results.stockPortion)      },
-              { label: 'New Shares Issued',    value: `${results.newSharesIssued}M`            },
+              { label: 'New Shares Issued',    value: newSharesText                             },
               { label: 'Purchase Premium',     value: (() => {
                 const pp = parseFloat(results.purchasePremium);
                 return (!isFinite(pp) || Math.abs(pp) > 200) ? 'N/A' : `${pp >= 0 ? '+' : ''}${pp.toFixed(1)}%`;
@@ -449,7 +456,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                     <td style={{ padding: '8px 10px', background: isCurRow ? '#E8EFFE' : '#F9FAFB', borderBottom: '1px solid #F3F4F6', color: isCurRow ? '#0F2244' : '#6B7280', fontWeight: isCurRow ? 700 : 400 }}>
                       <span>{prem}% premium</span>
                       <span style={{ fontSize: 10, display: 'block', color: '#9CA3AF' }}>
-                        ${offerPriceAtRow.toFixed(2)}/share
+                        {offerPriceAtRow > 0 ? `$${offerPriceAtRow.toFixed(2)}/share` : '— (no share price)'}
                       </span>
                     </td>
                     {SYN_MULTS.map((_, j) => {

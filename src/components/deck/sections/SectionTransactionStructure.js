@@ -4,7 +4,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf } from '../shared/deckTokens';
 import { netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
-import { epsAccretionPct } from '../../../utils/dealCalc';
+import { epsAccretionPct, privateConsideration } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
 import { SynergyLines } from '../shared/SynergyLines';
@@ -49,6 +49,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const d = model?.derived || {};
   const r = deal?._results || {};
   const inp = deal?._inputs || {};
+  const privateTgt = privateConsideration(inp) != null;   // no per-share offer: the price is the total consideration
 
   // ── Sources & Uses ($M) — MUST foot. SAME sources-of-funds construction as §8/§9/§11 (one drag) ──────
   const bankFin  = !!r.bankFinancing;                     // Guard 1: bank deal → legacy 100%-debt behavior
@@ -71,7 +72,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const foots = (totalUses != null && totalSources != null) ? Math.abs(totalUses - totalSources) < 1 : null;   // null = cannot be footed (input unavailable)
 
   const usesRows = [
-    { k: `Purchase of ${bTk} equity (offer × shares)`, v: equityPurchase },
+    { k: `Purchase of ${bTk} equity (${privateTgt ? 'total consideration' : 'offer × shares'})`, v: equityPurchase },
     ...((targetDebtRepaid || (!bankFin && targetDebtRepaid == null)) ? [{ k: `Repay ${bTk} debt (assumed 100%)`, v: targetDebtRepaid }] : []),
   ];
   const sourcesRows = [
@@ -133,13 +134,13 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
         {/* Stated inputs up top (faculty: minimum cash kept, premium, consideration mix) + deal-size summary */}
         <div style={{ display: 'flex', gap: 18, alignItems: 'baseline', flexWrap: 'wrap', marginBottom: 12,
           padding: '8px 12px', background: '#F9FAFB', border: `1px solid ${GRAY_BORDER}`, borderLeft: `4px solid ${SF_BLUE}`, borderRadius: 4 }}>
-          <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Offer </span><strong style={{ color: NAVY }}>{offerP != null ? `$${offerP.toFixed(2)}` : '—'}</strong></span>
+          <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Offer </span><strong style={{ color: NAVY }}>{offerP > 0 ? `$${offerP.toFixed(2)}` : (privateTgt ? '— (private target: total consideration)' : '—')}</strong></span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Premium </span><strong style={{ color: NAVY }}>{prem != null ? `${prem.toFixed(1)}%` : '—'}</strong></span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Consideration </span><strong style={{ color: NAVY }}>{cashPct != null ? `${cashPct}% cash / ${stockPct}% stock` : '—'}</strong></span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>{MIN_CASH_LABEL} </span><strong style={{ color: NAVY }}>{minCashRetained != null ? dash(minCashRetained) : (bankFin ? 'n/a (bank)' : '—')}</strong>{minCashPct != null ? <span style={{ color: '#9CA3AF', fontSize: 9.5 }}> ({(minCashPct * 100).toFixed(1)}%{minCashBasisText ? ` of ${minCashBasisText}` : ''})</span> : null}</span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>Equity value </span><strong style={{ color: NAVY }}>{dash(equityPurchase)}</strong></span>
           <span style={{ fontSize: 11 }}><span style={{ color: '#6B7280' }}>EV </span><strong style={{ color: NAVY }}>{dash(txnEV)}</strong></span>
-          <span style={{ fontSize: 9, color: '#9CA3AF' }}>Exchange ratio &amp; sensitivity: <strong style={{ color: SF_BLUE }}>{exhibitLabelOf('exchange')}</strong>; historical implied ratio: <strong style={{ color: SF_BLUE }}>{exhibitLabelOf('exchangeratio')}</strong>.</span>
+          <span style={{ fontSize: 9, color: '#9CA3AF' }}>Exchange ratio &amp; sensitivity: <strong style={{ color: SF_BLUE }}>{exhibitLabelOf('exchange')}</strong>{exhibitLabelOf('exchangeratio') ? <>; historical implied ratio: <strong style={{ color: SF_BLUE }}>{exhibitLabelOf('exchangeratio')}</strong></> : null}.</span>
         </div>
 
         {/* Block 1 — Sources & Uses (must foot) */}

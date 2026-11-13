@@ -88,6 +88,16 @@ describe('Transaction Structure and Credit Stats print the same figures', () => 
     expect(row(cs, 'Net debt')).toBe('$50,500M');
   });
 
+  test('Task 4: a private target has no "$0.00" offer, no "offer × shares", no empty "historical implied ratio: ."', () => {
+    const deal = deckOf(fixture);
+    const html = renderToStaticMarkup(<SectionTransactionStructure deal={deal} acquirer={{ name: 'Acquirer' }} target={{ name: 'Target Company' }} model={{ derived: {} }} pageNum={1} exhibitLabel="G" />).replace(/<[^>]+>/g, '');
+    expect(html).not.toMatch(/\$0\.00/);
+    expect(html).toMatch(/Offer — \(private target: total consideration\)/);
+    expect(html).toMatch(/Purchase of Target Company equity \(total consideration\)/);
+    expect(html).not.toMatch(/offer × shares/);
+    expect(html).not.toMatch(/historical implied ratio: \./);
+  });
+
   test('HNGE tuck-in: debt "—" on both slides, cash identical', () => {
     const deal = deckOf(tuckin);
     const ts = text(<SectionTransactionStructure deal={deal} acquirer={{ ticker: 'HNGE' }} target={{ name: 'Target Company' }} model={{ derived: {} }} pageNum={1} exhibitLabel="G" />);

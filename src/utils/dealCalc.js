@@ -271,7 +271,19 @@ export function calculate(inputs) {
   // leverage that could mute the ">5×" flag). Non-stale deals pass real numbers → unchanged.
   const enterpriseValue  = (companyBDebt != null && companyBCash != null) ? totalPurchasePrice + companyBDebt - companyBCash : null;
   const evEBITDA         = (companyBEBITDA > 0 && enterpriseValue != null) ? enterpriseValue / companyBEBITDA : null;
-  const peRatio          = companyBEPS    > 0 ? offerPricePerShare / companyBEPS : null;
+  // P/E: a public target's offer per share ÷ its EPS. A PRIVATE target has no share count, so no EPS: its P/E is the
+  // same multiple on totals, purchase equity value ÷ net income. peReason names why the multiple is n/m (null when it
+  // computes). `companyBEPS <= 0` alone was pattern C: a private target's EPS is the default 0 and a null EPS is <= 0,
+  // so a +$2M earner read "Target earnings are negative".
+  const _bNi             = parseFloat(companyBNetIncome);
+  const _bEps            = parseFloat(companyBEPS);
+  const peRatio          = _privateTotal != null
+    ? (Number.isFinite(_bNi) && _bNi > 0 ? totalPurchasePrice / _bNi : null)
+    : (companyBEPS > 0 ? offerPricePerShare / companyBEPS : null);
+  const peReason         = peRatio != null ? null
+    : _privateTotal != null
+      ? (!Number.isFinite(_bNi) ? 'Target net income not available' : _bNi < 0 ? 'Target earnings are negative' : 'Target earnings are zero')
+      : (!Number.isFinite(_bEps) ? 'not available' : _bEps < 0 ? 'Target earnings are negative' : 'Target earnings are zero');
   // Debt / EBITDA is on the ONE pro-forma debt figure every slide shows (proFormaCapitalization): acquirer debt + new
   // acquisition debt, target debt repaid. It was acquirer + target debt + the whole cash portion, a third copy that
   // matched neither Transaction Structure nor Credit Stats.
@@ -308,6 +320,8 @@ export function calculate(inputs) {
     acquirerSharePrice: acqPrice === null ? 'N/A' : acqPrice.toFixed(2),
     evEBITDA:          evEBITDA   === null ? 'N/A' : evEBITDA.toFixed(1),
     peRatio:           peRatio    === null ? 'N/A' : peRatio.toFixed(1),
+    peReason,                                            // why P/E is n/m, or null
+    peBasis:           _privateTotal != null ? 'equity value ÷ net income' : null,   // a private target's P/E is on totals
     debtEBITDA:        debtEBITDA === null ? 'N/A' : debtEBITDA.toFixed(1),
     // The numerators of the two multiples above, exposed so explainers show the SAME figure the multiple
     // was built from — null (never a $0-debt rebuild) whenever a leg is unavailable.
@@ -349,7 +363,11 @@ export function calculate(inputs) {
 export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const { companyANetIncome, companyBShares, companyBNetIncome, cashPercent } = inputs;
   const acqPrice = acquirerSharePrice(inputs);
-  if (!(acqPrice > 0) || companyBShares === 0) return null; // !(x>0) catches null AND 0 (=== 0 missed null → NaN)
+  if (!(acqPrice > 0)) return null; // !(x>0) catches null AND 0 (=== 0 missed null → NaN)
+  // A target with no share count has no purchase price — unless it is PRIVATE, whose total consideration is the price
+  // (privateConsideration), exactly as in calculate(). `companyBShares === 0` returned null for every private target
+  // (its share count is the default 0) while calculate() printed the same deal's pro forma EPS: pattern C.
+  if (privateConsideration(inputs) == null && !(parseFloat(companyBShares) > 0)) return null;
   if (companyANetIncome == null || companyBNetIncome == null) return null; // partial input → null (→ '—'), never a 0-coerced EPS
   if (basesDiffer(inputs)) return null; // one on LTM, one on FY: not added
   const stockPercent = 100 - cashPercent;
@@ -422,6 +440,14 @@ export function formatDollars(m) {
   return `$${v.toFixed(0)}M`;
 }
 
+// New Shares Issued, as the Deal Summary prints it. No stock part → "— (all-cash deal)"; a stock part with no acquirer
+// share price → "— (no acquirer share price)"; never "nullM" (the private fixture printed that).
+export function newSharesLabel(results) {
+  if (parseFloat(results.stockPortion) === 0) return '— (all-cash deal)';
+  if (results.newSharesIssued == null) return '— (no acquirer share price)';
+  return `${results.newSharesIssued}M`;
+}
+
 // ── Narrative ─────────────────────────────────────────────────────────────────
 
 export function buildNarrative(results, inputs, nameA, nameB, flags) {
@@ -433,7 +459,10 @@ export function buildNarrative(results, inputs, nameA, nameB, flags) {
   const offer = parseFloat(inputs.offerPricePerShare);
   const priceClause = offer > 0 ? ` at $${offer.toFixed(2)}/share` : '';
   const total = parseFloat(results.totalPurchasePrice);
-  const totalClause = Number.isFinite(total) ? ` (${formatDollars(total)} total)` : '';
+  // A private target has no share price: its consideration is the total itself, "for $300M" (Fix 7b).
+  const totalClause = !Number.isFinite(total) ? ''
+    : (privateConsideration(inputs) != null && !(offer > 0)) ? ` for ${formatDollars(total)}`
+    : ` (${formatDollars(total)} total)`;
   const deal = `${a}'s acquisition of ${b}${priceClause}${totalClause}`;
   const direction = results.isAccretive ? 'accretive' : 'dilutive';
   const known = (v) => v != null && v !== '' && Number.isFinite(parseFloat(v));

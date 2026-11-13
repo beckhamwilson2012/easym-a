@@ -1,4 +1,4 @@
-import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE } from '../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration } from '../utils/dealCalc';
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
 import { NON_GAAP } from './reportingBasis';
 
@@ -119,7 +119,11 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   } else if (k >= 0) {
     missing.push(`${T} has no consensus EPS for ${label(aF[k])}`);
   } else {
-    missing.push(n === 0 ? `no forecast EPS for ${A}` : `${A}'s consensus EPS is not positive in any forecast year`);
+    // n is the PAIRED year count, min(acquirer, target): when the acquirer has forecast years and the target has none
+    // (every private target), n is 0 because of the target. Name the side that is actually missing.
+    missing.push(aF.length === 0 ? `no forecast EPS for ${A}`
+      : bF.length === 0 ? `${T} has no forecast EPS${privateConsideration(inputs) != null ? ' (a private company has no analyst consensus)' : ''}`
+      : `${A}'s consensus EPS is not positive in any forecast year`);
   }
 
   // ── 3. Synergies vs premium ──

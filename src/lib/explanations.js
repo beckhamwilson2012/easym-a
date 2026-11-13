@@ -89,7 +89,19 @@ export function explainEvEbitda({ ev, ebitda, multiple }) {
   };
 }
 
-export function explainPeRatio({ offerPrice, eps, multiple }) {
+export function explainPeRatio({ offerPrice, eps, multiple, equityValue, netIncome }) {
+  // A private target has no per-share figures: its P/E is purchase equity value ÷ net income (dealCalc peBasis).
+  if (equityValue != null) {
+    return {
+      formula: 'P/E = Purchase Equity Value ÷ Target Net Income (private target: no share count)',
+      inputs: [
+        { label: 'Purchase equity value', value: fmtMoney(equityValue) },
+        { label: 'Target net income', value: netIncome != null && Number.isFinite(parseFloat(netIncome)) ? fmtMoney(parseFloat(netIncome)) : '—' },
+      ],
+      result: multiple != null && multiple !== 'N/A' ? `${parseFloat(multiple).toFixed(1)}x` : 'N/A',
+      notes: 'The same multiple as offer price ÷ EPS, on totals: a private company has no share count, so it has no EPS.',
+    };
+  }
   return {
     formula: 'P/E = Offer Price ÷ Target EPS',
     inputs: [
