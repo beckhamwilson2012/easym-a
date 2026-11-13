@@ -105,6 +105,70 @@ test('unreadable instance or submissions → null, never a guess, never throws',
   assert.strictEqual(await multiClassCoverShares('1', {}, { readSubmissions: async () => { throw new Error('503'); } }), null);
 });
 
+// ── Fix 7b Task 8: classes with no economic stake ──
+// ASTS's Q3 2026 10-Q (0001193125-26-453759): cover Class A 300,731,460 / B 11,215,111 / C 78,163,078 at 2026-11-05;
+// EPS is tagged on CommonClassAMember only; Note 9 says B and C "are non-economic", Note 12 that they "do not participate
+// in the earnings or losses of the Company".
+const eps = (id, val, name = 'EarningsPerShareBasic') => `<us-gaap:${name} contextRef="${id}" decimals="2" unitRef="usdPerShare">${val}</us-gaap:${name}>`;
+const ASTS_Q3 = `<xbrl>${ctx('c-a', '2026-11-05', 'us-gaap:CommonClassAMember')}${ctx('c-b', '2026-11-05', 'us-gaap:CommonClassBMember')}${ctx('c-c', '2026-11-05', 'us-gaap:CommonClassCMember')}
+  ${ctx('d-a', null, 'us-gaap:CommonClassAMember')}
+  ${fact('c-a', 300731460)}${fact('c-b', 11215111)}${fact('c-c', 78163078)}${eps('d-a', -0.42)}${eps('d-a', -0.42, 'EarningsPerShareDiluted')}</xbrl>`;
+const ASTS_TEXT = 'Shares of Class B Common Stock were issued to then existing equity holders of AST LLC and are non-economic, but entitle the holder to one vote per share. '
+  + 'Shares of Class C Common Stock were issued to Mr. Avellan and are non-economic, but entitle the holder to ten votes per share. '
+  + 'Shares of Class B Common Stock and Class C Common Stock do not participate in the earnings or losses of the Company and are therefore not participating securities.';
+const ASTS_FILING = { form: '10-Q', accn: '0001193125-26-453759', filed: '2026-11-09', reportDate: '2026-09-30' };
+const { epsClassMembers, nonEconomicClassesInText, economicClasses, needsEconomicCheck } = require('../coverShares');
+
+test('ASTS: XBRL reports EPS for Class A only AND the text calls B and C non-economic → Class A alone, 300,731,460', () => {
+  const p = parseCoverShares(ASTS_Q3);
+  assert.deepStrictEqual(p.epsMembers, ['us-gaap:CommonClassAMember']);
+  assert.strictEqual(needsEconomicCheck(p), true);
+  const r = sumCoverClasses(p, ASTS_FILING, economicClasses(p, ASTS_TEXT));
+  assert.strictEqual(r.value, 300731460);
+  assert.strictEqual(r.label, 'Class A, cover of 10-Q filed 2026-11-09; Class B and Class C excluded: non-economic (no share of earnings or dividends, per the 10-Q)');
+  assert.deepStrictEqual(r.excludedClasses.map((x) => x.label), ['Class B', 'Class C']);
+});
+
+test('one signal is never enough: the XBRL gap without the text keeps every class (390,109,649)', () => {
+  const p = parseCoverShares(ASTS_Q3);
+  assert.strictEqual(sumCoverClasses(p, ASTS_FILING, economicClasses(p, 'Holders of Class B vote with Class A.')).value, 390109649);
+  assert.strictEqual(sumCoverClasses(p, ASTS_FILING, economicClasses(p, null)).value, 390109649);
+});
+
+test('one signal is never enough: the text without an XBRL gap keeps every class (HNGE: one combined EPS)', () => {
+  const xml = HNGE_Q3.replace('</xbrl>', `${ctx('d-0', null, null)}${eps('d-0', 0.66)}</xbrl>`);
+  const p = parseCoverShares(xml);
+  assert.deepStrictEqual(p.epsMembers, []);
+  assert.strictEqual(needsEconomicCheck(p), false);
+  assert.strictEqual(sumCoverClasses(p, Q3_FILING, economicClasses(p, 'Class B shares are non-economic.')).value, 81271302);
+});
+
+test('EPS reported for every class (DDOG two-class, equal amounts) → nothing to check, both classes count', () => {
+  const xml = `<xbrl>${ctx('c-a', '2026-10-28', 'us-gaap:CommonClassAMember')}${ctx('c-b', '2026-10-28', 'us-gaap:CommonClassBMember')}
+    ${ctx('d-a', null, 'us-gaap:CommonClassAMember')}${ctx('d-b', null, 'us-gaap:CommonClassBMember')}
+    ${fact('c-a', 337307033)}${fact('c-b', 23735512)}${eps('d-a', 0.33)}${eps('d-b', 0.33)}</xbrl>`;
+  const p = parseCoverShares(xml);
+  assert.strictEqual(needsEconomicCheck(p), false);
+  assert.strictEqual(sumCoverClasses(p, Q3_FILING, economicClasses(p, null)).value, 361042545);
+});
+
+test('the text reader attributes "non-economic" only to the classes named in that sentence', () => {
+  const said = nonEconomicClassesInText('Class A common stock carries one vote. ' + ASTS_TEXT);
+  assert.deepStrictEqual(Object.keys(said).sort(), ['B', 'C']);
+  assert.deepStrictEqual(epsClassMembers('<xbrl></xbrl>', {}), []);
+});
+
+test('end to end: the filing text is read only when the XBRL singles a class out', async () => {
+  const sub = async () => ({ filings: { recent: { form: ['10-Q'], accessionNumber: [ASTS_FILING.accn], filingDate: [ASTS_FILING.filed], reportDate: [ASTS_FILING.reportDate] } } });
+  let reads = 0;
+  const r = await multiClassCoverShares('1780312', {}, { readSubmissions: sub, readCover: async () => parseCoverShares(ASTS_Q3), readText: async () => { reads++; return ASTS_TEXT; } });
+  assert.strictEqual(r.value, 300731460);
+  assert.strictEqual(reads, 1);
+  const h = await multiClassCoverShares('1673743', {}, { readSubmissions: sub, readCover: async () => parseCoverShares(HNGE_Q3), readText: async () => { reads++; return ''; } });
+  assert.strictEqual(h.value, 81271302);
+  assert.strictEqual(reads, 1);   // HNGE: no EPS by class → no text read
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); }

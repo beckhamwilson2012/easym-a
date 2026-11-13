@@ -12,7 +12,7 @@
 // Nothing here estimates. An unreadable filing, or a cover with fewer than two classes, returns null with the reason,
 // and the caller keeps its existing chain.
 
-const { latestPeriodicFiling, readInstanceXml, readSubmissions, parseContexts, numericFacts } = require('./filingInstance');
+const { latestPeriodicFiling, readInstanceXml, readPrimaryDocument, readSubmissions, parseContexts, numericFacts } = require('./filingInstance');
 
 const COVER_CONCEPT = 'EntityCommonStockSharesOutstanding';
 const CLASS_AXIS = 'StatementClassOfStockAxis';
@@ -49,16 +49,74 @@ function parseCoverShares(xml) {
   const onDate = byClass.filter((x) => x.date === date);
   const seen = new Set();
   const classes = onDate.filter((x) => (seen.has(x.member) ? false : seen.add(x.member)));
-  return { date, classes, undimensioned };
+  return { date, classes, undimensioned, epsMembers: epsClassMembers(xml, contexts) };
 }
 
-// Pure: parsed cover + filing → the summed count with its label, or { value: null, reason }.
-function sumCoverClasses(parsed, filing) {
+// ── Classes with no economic stake (Fix 7b Task 8) ──
+// An Up-C filer (ASTS) reports voting-only classes on its cover: Class B and Class C "are non-economic" and "do not
+// participate in the earnings or losses of the Company"; their holders' economics sit in operating-company units.
+// Such a class is not part of the equity a market cap prices, so it is left out of the count. Two filed signals are
+// required, never one:
+//   (1) the XBRL reports EPS by class (an EPS fact on the class-of-stock axis) and reports none for this class; and
+//   (2) the filing's own text calls this class non-economic / not participating in earnings.
+// A filer that reports one combined EPS (HNGE, SDGR, ECHO) or EPS for every class (NET, DDOG, HSY) keeps every class.
+// The holders' economic units are not added: no filing read so far gives a count for them, and none is estimated.
+const EPS_CONCEPTS = ['EarningsPerShareBasic', 'EarningsPerShareDiluted', 'EarningsPerShareBasicAndDiluted'];
+const NON_ECONOMIC = /non-economic|no economic rights|do(?:es)? not participate in (?:the )?(?:earnings|net income|net loss)/i;
+
+// Pure: the class members the filing reports EPS for. Empty when its EPS carries no class dimension.
+function epsClassMembers(xml, contexts) {
+  const out = new Set();
+  for (const name of EPS_CONCEPTS) {
+    for (const f of numericFacts(xml, 'us-gaap', name)) {
+      const c = contexts[f.ctx];
+      if (!c) continue;
+      for (const m of c.members) if (m.dimension.split(':').pop() === CLASS_AXIS) out.add(m.member);
+    }
+  }
+  return [...out];
+}
+
+// Pure: plain text of a filing → the class letters its own sentences call non-economic. { B: 'sentence', ... }
+function nonEconomicClassesInText(text) {
+  const out = {};
+  for (const s of String(text || '').split(/(?<=[.;])\s+/)) {
+    if (!NON_ECONOMIC.test(s)) continue;
+    for (const m of s.matchAll(/\bClass ([A-Z])\b/g)) if (!out[m[1]]) out[m[1]] = s.trim().slice(0, 300);
+  }
+  return out;
+}
+
+// Pure: cover classes → { kept, excluded }. `text` is the filing's plain text, or null when it was not read.
+function economicClasses(parsed, text) {
+  const eps = new Set(parsed.epsMembers || []);
+  const none = { kept: parsed.classes, excluded: [] };
+  if (!eps.size || !text) return none;
+  const said = nonEconomicClassesInText(text);
+  const letter = (c) => (c.label.match(/^Class ([A-Z])$/) || [])[1];
+  const excluded = parsed.classes.filter((c) => !eps.has(c.member) && letter(c) && said[letter(c)]);
+  if (!excluded.length || excluded.length === parsed.classes.length) return none;
+  return { kept: parsed.classes.filter((c) => !excluded.includes(c)), excluded };
+}
+
+// True when the cover has a class the XBRL reports no EPS for while it reports EPS for others: the only case the
+// filing's text is read for (one extra cached request, for that filer only).
+function needsEconomicCheck(parsed) {
+  const eps = new Set((parsed && parsed.epsMembers) || []);
+  return !!parsed && eps.size > 0 && parsed.classes.length >= 2 && parsed.classes.some((c) => !eps.has(c.member));
+}
+
+// Pure: parsed cover + filing → the summed count with its label, or { value: null, reason }. `split` (economicClasses)
+// leaves out voting-only classes; without it every class counts, as before.
+function sumCoverClasses(parsed, filing, split = null) {
   if (!parsed) return { value: null, reason: 'filing instance unreadable' };
   if (parsed.classes.length < 2) return { value: null, reason: `cover reports ${parsed.classes.length} share class(es); not a multi-class cover` };
-  const value = parsed.classes.reduce((s, x) => s + x.shares, 0);
-  const label = `${parsed.classes.map((x) => x.label).join(' + ')}, cover of ${filing.form} filed ${filing.filed}`;
-  return { value, date: parsed.date, label, form: filing.form, filed: filing.filed, accn: filing.accn, classes: parsed.classes };
+  const kept = split ? split.kept : parsed.classes;
+  const excluded = split ? split.excluded : [];
+  const value = kept.reduce((s, x) => s + x.shares, 0);
+  const label = `${kept.map((x) => x.label).join(' + ')}, cover of ${filing.form} filed ${filing.filed}`
+    + (excluded.length ? `; ${excluded.map((x) => x.label).join(' and ')} excluded: non-economic (no share of earnings or dividends, per the ${filing.form})` : '');
+  return { value, date: parsed.date, label, form: filing.form, filed: filing.filed, accn: filing.accn, classes: kept, excludedClasses: excluded };
 }
 
 // True when companyfacts already carries an undimensioned cover count from that filing: the single-class case, where
@@ -73,6 +131,14 @@ async function readCover(cik, filing) {
   return xml ? parseCoverShares(xml) : null;
 }
 
+// The filing's primary document as plain text (same decoding as debtZero), or null when it can't be read.
+async function readFilingText(cik, filing) {
+  const html = await readPrimaryDocument(cik, filing);
+  if (!html) return null;
+  const decode = (s) => s.replace(/&#160;|&nbsp;/g, ' ').replace(/&#x2019;|&#8217;/gi, "'").replace(/&amp;/g, '&');
+  return decode(html).replace(/<[^>]+>/g, ' ').replace(/&#?\w+;/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
 // The one entry point (/quote and §16 both call it). Returns { value (raw shares), date, label, ... } for a multi-class
 // cover, or null: single-class (companyfacts has the cover count), no periodic filing, unreadable, or < 2 classes.
 // Never throws.
@@ -82,7 +148,9 @@ async function multiClassCoverShares(cik, dei, deps = {}) {
     const filing = latestPeriodicFiling(sub);
     if (!filing || coverInCompanyFacts(dei, filing)) return null;
     const parsed = await (deps.readCover || readCover)(cik, filing);
-    const r = sumCoverClasses(parsed, filing);
+    // Voting-only classes (Fix 7b): read the filing's text only when the XBRL already singles a class out.
+    const text = needsEconomicCheck(parsed) ? await (deps.readText || readFilingText)(cik, filing) : null;
+    const r = sumCoverClasses(parsed, filing, parsed ? economicClasses(parsed, text) : null);
     return r.value != null ? r : null;
   } catch (e) {
     console.error(`[coverShares] CIK ${cik}: ${e.message}`);
@@ -90,4 +158,5 @@ async function multiClassCoverShares(cik, dei, deps = {}) {
   }
 }
 
-module.exports = { classLabel, parseCoverShares, sumCoverClasses, latestPeriodicFiling, coverInCompanyFacts, multiClassCoverShares };
+module.exports = { classLabel, parseCoverShares, sumCoverClasses, latestPeriodicFiling, coverInCompanyFacts, multiClassCoverShares,
+  epsClassMembers, nonEconomicClassesInText, economicClasses, needsEconomicCheck };
