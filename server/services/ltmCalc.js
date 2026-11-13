@@ -41,6 +41,7 @@ const NAMES = {
     operatingIncome: ['OperatingIncomeLoss'],
     netIncome: ['NetIncomeLoss', 'NetIncomeLossAvailableToCommonStockholdersBasic'],
     nonOperating: ['NonoperatingIncomeExpense'],   // net non-operating income/(expense): interest, FX, securities gains — the OI→NI reconciling line
+    incomeTax: ['IncomeTaxExpenseBenefit'],        // filed income tax expense (+) / benefit (−): with non-operating, foots OI → NI (Fix 10 Task 7)
     ocf: OPERATING_CASH_FLOW_CONCEPTS,
     dilutedShares: ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted'],
     cash: ['CashAndCashEquivalentsAtCarryingValue'],
@@ -55,6 +56,7 @@ const NAMES = {
     operatingIncome: ['OperatingProfitLoss', 'ProfitLossFromOperatingActivities'],
     netIncome: ['ProfitLossAttributableToOwnersOfParent', 'ProfitLoss'],
     nonOperating: [],   // no clean IFRS non-operating total — renders "—" (no test ticker is IFRS)
+    incomeTax: ['IncomeTaxExpenseContinuingOperations'],
     ocf: ['CashFlowsFromUsedInOperatingActivities'],
     dilutedShares: ['WeightedAverageShares'],
     cash: ['CashAndCashEquivalents'],
@@ -397,7 +399,8 @@ function computeLTM(facts, floorEnd = null) {
   const gp = costCorrected ? noLtm(gpTagged) : (gpTagged.ltm != null ? gpTagged : (grossFromCostOfRevenue(rev, cogs) || gpTagged));
   const oi  = ltmFlow(ns, N.operatingIncome, P);
   const niF = ltmFlow(ns, N.netIncome, P);
-  const noi = ltmFlow(ns, N.nonOperating, P);   // net non-operating income/(expense) LTM — same P, same selector, disclosure only (does NOT touch NI)
+  const noi = ltmFlow(ns, N.nonOperating, P);
+  const taxF = ltmFlow(ns, N.incomeTax, P);    // income tax LTM — same P, same selector (Fix 10 Task 7)   // net non-operating income/(expense) LTM — same P, same selector, disclosure only (does NOT touch NI)
   const cashFlowStatement = facts.filingStatements?.cashFlow ?? null;
   const daAnnual = resolveDepreciationAt(ns, P.annualEnd, { useIfrs, statement: cashFlowStatement });
   const daRes = ltmDA(ns, DEPRECIATION_CONCEPTS[useIfrs ? 'ifrs' : 'gaap'], P, daAnnual);   // same basis as annual EBITDA, a reconciled alternate, or none
@@ -448,6 +451,7 @@ function computeLTM(facts, floorEnd = null) {
       grossProfit:     { ...flow(gp), reason: costCorrected ? LTM_COST_DISAGREES_REASON : null },
       operatingIncome: flow(oi),
       nonOperatingIncome: flow(noi),   // disclosure line (§6/§7 LTM column) — reconciles operating income → net income; NEVER an adjustment to NI
+      incomeTax:       flow(taxF),     // filed income tax expense (+) / benefit (−), LTM
       ebitda:          { ltmM: inM(ebitdaLtm), daFound: daRes.ltm != null, daConcept: daRes.concept, note: daRes.note, reason: ebitdaResult.reason },
       netIncome:       flow(niF),
       freeCashFlow:    { ltmM: inM(fcfLtm), note: 'OCF(LTM) − CapEx(LTM)', reason: fcfResult.reason, ocfConcept: ocf.conceptName, ocfFellThrough: ocf.fellThrough, capexConcept: cpx.conceptName, capexFellThrough: cpx.fellThrough },

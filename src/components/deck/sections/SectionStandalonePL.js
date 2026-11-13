@@ -92,6 +92,8 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
     { label: 'Operating Expense',  get: c => c.operatingExpense, fmt: fmtExp, indent: true },
     { label: 'Operating Income',   get: c => c.operatingIncome,  fmt: fmtM,   bold: true },
     { label: 'Non-operating income/(expense)', get: c => c.nonOperatingIncome, fmt: fmtM, indent: true },
+    // Filed income tax (Fix 10 Task 7), shown with the sign that foots: operating income + non-operating − tax = net income.
+    { label: 'Income tax (expense) / benefit', get: c => (c.incomeTax != null ? (c.incomeTax === 0 ? 0 : -c.incomeTax) : null), fmt: fmtM, indent: true },   // a filed 0 prints $0, never "$-0"
     { label: 'Net Income',         get: c => c.netIncome,        fmt: fmtM,   bold: true },
     { label: 'EBITDA',             get: c => c.ebitda,           fmt: fmtM },
     { label: 'Wtd. Avg. Diluted Shares (M)', get: c => c.dilutedShares, fmt: fmtSh, noConsensus: true },
@@ -141,7 +143,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
     revenue: L.revenue, costOfRevenue: L.costOfRevenue ?? null, grossProfit: L.grossProfit,
     // LTM OpEx = LTM gross − LTM operating income (reported GAAP identity, same as the FY actuals) — unflagged.
     operatingExpense: (L.grossProfit != null && L.operatingIncome != null) ? L.grossProfit - L.operatingIncome : null, operatingExpenseEst: false,
-    operatingIncome: L.operatingIncome, nonOperatingIncome: L.nonOperatingIncome?.ltmM ?? null, netIncome: L.netIncome,
+    operatingIncome: L.operatingIncome, nonOperatingIncome: L.nonOperatingIncome?.ltmM ?? null, incomeTax: L.incomeTax?.ltmM ?? null, netIncome: L.netIncome,
     ebitda: L.ebitda, ebitdaDaFound: L.ebitdaDaFound, dilutedShares: L.dilutedShares, eps: L.eps,
     _growth: (lastActual && lastActual.revenue && L.revenue != null) ? ((L.revenue - lastActual.revenue) / lastActual.revenue * 100) : null,
     _growthBase: lastActual ? `vs ${lastActual.label}` : null,
@@ -562,7 +564,9 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
               <>
                 <PLRow label="Cash &amp; Equivalents" value={fmtUSDm(cash)} />
                 <PLRow label="Total Debt"              value={fmtUSDm(debt)} alt />
-                <PLRow label="Net Debt / (Cash)"       value={fmtUSDmAcct(netDebt)} bold />
+                {/* The label names what it nets (Fix 10 Task 7), so the row visibly ties to the lines above it: DDOG showed cash $881M,
+                    debt $987M and net debt ($4,246M), with the $4,352M of short-term investments behind it nowhere on the slide. */}
+                <PLRow label={sti != null && Number.isFinite(Number(sti)) ? `Net Debt / (Cash): debt − cash − ST investments ${fmtUSDmAcct(Number(sti))}` : 'Net Debt / (Cash): debt − cash'} value={fmtUSDmAcct(netDebt)} bold />
                 <PLRow label="Shares Outstanding (M)"  value={shares > 0 ? `${shares.toFixed(0)}M` : 'N/A'} alt />
               </>
             )}

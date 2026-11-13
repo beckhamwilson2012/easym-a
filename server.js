@@ -1785,7 +1785,9 @@ app.get('/api/pnl/:ticker', async (req, res) => {
     const sNet = pnlLineSeries(ns, C.netInc);
     const sSh = pnlLineSeries(ns, C.dilSh, 'shares');
     const sEps = pnlLineSeries(ns, C.eps, 'USD/shares');
-    const sNoi = pnlLineSeries(ns, ['NonoperatingIncomeExpense']);   // net non-operating income/(expense) — the OI→NI reconciling line (§6/§7 disclosure)
+    const sNoi = pnlLineSeries(ns, ['NonoperatingIncomeExpense']);
+    // Filed income tax expense (+) / benefit (−): with non-operating income it foots operating income → net income (Fix 10 Task 7).
+    const sTax = pnlLineSeries(ns, useIfrs ? ['IncomeTaxExpenseContinuingOperations'] : ['IncomeTaxExpenseBenefit']);   // net non-operating income/(expense) — the OI→NI reconciling line (§6/§7 disclosure)
 
     // Anchor the actual columns on revenue's fiscal-year-ends (last 3 reported full years).
     const actualEnds = Object.keys(sRev).sort().slice(-3); // ascending
@@ -1824,7 +1826,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         grossProfitBasis: grossRes.basis, grossProfitLabel: lines.grossProfit.label,
         incomeTrace: { revenueUsd: sRev[end] ?? null, costOfRevenueUsd: lines.costOfRevenue.value, grossProfitUsd: lines.grossProfit.value, costComponents: lines.costOfRevenue.components },
         operatingExpense: opEx, operatingExpenseEst: false,
-        operatingIncome: opInc, nonOperatingIncome: sNoi[end] != null ? inM(sNoi[end]) : null, netIncome: netInc, ebitda,
+        operatingIncome: opInc, nonOperatingIncome: sNoi[end] != null ? inM(sNoi[end]) : null, incomeTax: orNull(sTax, end), netIncome: netInc, ebitda,
         dilutedShares: sSh[end] != null ? inM(scaleShares(sSh[end])) : null, // scaleShares: MCD-class filers tag shares in millions (val 716.4) → normalize so the row isn't "0"
         eps: sEps[end] != null ? sEps[end] : null,
       };
@@ -1886,7 +1888,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
         // as the annual columns do; grossProfitDerived says WHICH of the two GP sources the row came from.
         costOfRevenue: lr.flows.costOfRevenue.ltmM, costOfRevenueSource: lr.flows.costOfRevenue.sourceLabel,
         grossProfit: grossNotMeaningful ? null : lr.flows.grossProfit.ltmM, grossProfitDerived: lr.flows.grossProfit.derived,
-        operatingIncome: lr.flows.operatingIncome.ltmM, nonOperatingIncome: lr.flows.nonOperatingIncome, netIncome: lr.flows.netIncome.ltmM,
+        operatingIncome: lr.flows.operatingIncome.ltmM, nonOperatingIncome: lr.flows.nonOperatingIncome, incomeTax: lr.flows.incomeTax, netIncome: lr.flows.netIncome.ltmM,
         ebitda: lr.flows.ebitda.ltmM, ebitdaDaFound: lr.flows.ebitda.daFound, ebitdaReason: lr.flows.ebitda.reason,
         eps: lr.epsDiluted.ltm, dilutedShares: lr.epsDiluted.dilutedSharesM,
         audit: { window: lr.window, periods: lr.periods, tieOut: lr.tieOut },
@@ -1896,7 +1898,7 @@ app.get('/api/pnl/:ticker', async (req, res) => {
           revenue: fy.revenue, costOfRevenue: fy.costOfRevenue, costOfRevenueSource: fy.costOfRevenueSource,
           grossProfit: fy.grossProfit, grossProfitDerived: fy.grossProfitBasis === 'calculated',
           // nonOperatingIncome keeps the LTM block's shape ({ ltmM }), which the P&L slide reads.
-          operatingIncome: fy.operatingIncome, nonOperatingIncome: { ltmM: fy.nonOperatingIncome }, netIncome: fy.netIncome,
+          operatingIncome: fy.operatingIncome, nonOperatingIncome: { ltmM: fy.nonOperatingIncome }, incomeTax: { ltmM: fy.incomeTax }, netIncome: fy.netIncome,
           ebitda: fy.ebitda, ebitdaDaFound: fy.ebitda != null, ebitdaReason: fy.ebitdaReason,
           eps: fy.eps, dilutedShares: fy.dilutedShares, ltmLabel: lr.fyAsLtm.label });
       })() : { trusted: false, fallback: lr.fallback || 'annual', reason: lr.reason || null };

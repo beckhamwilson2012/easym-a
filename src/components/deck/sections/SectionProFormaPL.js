@@ -4,7 +4,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote, fmtInterest } from '../shared/deckTokens';
-import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, forwardYearInputs, TAX_RATE, privateConsideration } from '../../../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, acquirerSharePrice, forwardYearInputs, TAX_RATE, privateConsideration } from '../../../utils/dealCalc';
 import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST } from '../../../lib/forwardYears';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
@@ -127,7 +127,11 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
       const margin = (num, rev) => (num != null && rev) ? num / rev * 100 : null;
       const growth = (cur, base) => (cur != null && base) ? (cur - base) / base * 100 : null;
       const cRev = sum(a.revenue, b.revenue), cGross = sum(a.grossProfit, b.grossProfit);
-      const cEbit = sum(a.operatingIncome, b.operatingIncome), cNi = sum(a.netIncome, b.netIncome);
+      // One net income per company (Fix 10 Task 7): the strip's own — consensus EPS × the one diluted share count
+      // (forwardYearInputs) — never FMP's separate net-income mean beside it (HNGE FY2026E was $206M here, $214M in the strip).
+      const fwdNi = (slot.a?.eps != null && slot.b?.eps != null) ? forwardYearInputs(deal?._inputs || {}, slot.a.eps, slot.b.eps) : null;
+      const aNi = fwdNi ? fwdNi.companyANetIncome : null, bNi = fwdNi ? fwdNi.companyBNetIncome : null;
+      const cEbit = sum(a.operatingIncome, b.operatingIncome), cNi = sum(aNi, bNi);
       // Utility or insurer on either side: n/m in its own column and in Combined and PF, which it would otherwise be part of.
       const grossNm = { nmA: isGrossNm(acquirer), nmB: isGrossNm(target), nmC: isGrossNm(acquirer) || isGrossNm(target) };
       years.push({
@@ -159,7 +163,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           // subtraction is made visible. finDrag = deal._results.newInterestAfterTax, the SAME value the §6b
           // accretion bridge shows (surfaced, not recomputed). Deal-level → "—" in Acq/Tgt/Comb/Syn; the
           // value shows only in PF Total, as a banker-parens negative.
-          { label: 'Net Income',        a: a.netIncome,      b: b.netIncome,      c: cNi,    syn: atSyn,   pf: (cNi != null && finDrag != null) ? cNi + atSyn - finDrag : null, bold: true },
+          { label: 'Net Income (consensus EPS × diluted shares)', a: aNi, b: bNi, c: cNi,    syn: atSyn,   pf: (cNi != null && finDrag != null) ? cNi + atSyn - finDrag : null, bold: true },
           { label: 'Less: Acq. financing interest (after-tax)', a: null, b: null, c: null, syn: null, pf: (cNi != null && finDrag != null) ? -finDrag : null, fin: true },
         ],
       });
@@ -202,6 +206,10 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
         // 7E: ex-synergy PF EPS / accretion — SAME dealCalc calls with synergies = 0 (no new path).
         pfEPSExSyn: calcProFormaEPS(offer, 0, fwdInputs),
         pctExSyn:   epsAccretionPct(offer, 0, fwdInputs),
+        // The table's PF net income for this year and the share count it is divided by (Fix 10 Task 7): the tie the
+        // footnote prints, PF net income ÷ (diluted + new shares) = this row's PF EPS.
+        tieNi: (finDrag != null) ? fwdInputs.companyANetIncome + fwdInputs.companyBNetIncome + syn * (1 - TAX_RATE) - finDrag : null,
+        tieSh: (() => { const px = acquirerSharePrice(inputs); const sp = parseFloat(deal?._results?.stockPortion); return (px > 0 && Number.isFinite(sp)) ? acqDilSh + sp / px : null; })(),
         analysts,
       });
     }
@@ -339,6 +347,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                 <div style={{ marginTop: 3, fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.3 }}>
                   Ex-syn./w-syn. exclude/include the deal's entered synergies (same split as Combined vs PF above); Each year is measured on its own standalone EPS: Year 1 {inputs.year1Reason ? '“—”' : ngPlan ? 'non-GAAP (company reported)' : 'GAAP'}, Years 2–4 {sel.gaap ? '“—”' : CONSENSUS_BASIS}.{sel.gaap ? <> Years 2–4 are "—" on a GAAP deck: {NO_GAAP_FORECAST}.</> : null} Year 2 is the first fiscal year that begins after Year 1 ends{sel.firstFy.A != null ? <> ({aTk}: FY{sel.firstFy.A})</> : null}, so no forward year overlaps Year 1.
                   {forwardRows.some(r => !r.na) && <> {forwardNetIncomeLabel(inputs)}.</>}
+                  {forwardRows.some(r => !r.na && r.tieNi != null && r.tieSh > 0) && <> Ties to the table above: {forwardRows.filter(r => !r.na && r.tieNi != null && r.tieSh > 0).map(r => `FY${r.acqFY}E PF net income ${fmtM(r.tieNi)} ÷ ${r.tieSh.toFixed(1)}M shares = ${fmtPerShare(r.tieNi / r.tieSh)}`).join('; ')}.</>}
                 </div>
               </div>
               )}
