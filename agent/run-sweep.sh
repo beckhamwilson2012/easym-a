@@ -96,7 +96,10 @@ RUN_PHASE="startup"                             # where we are; named in the led
 RUN_COMPLETED=0                                 # 1 only after the run ends normally — gates finalize_abnormal
 
 log()  { local l; l="$(printf '[%s] %s' "$(date +%H:%M:%S)" "$*")"; printf '%s\n' "$l"; if [[ -n "${RUN_DIR:-}" ]]; then mkdir -p "$RUN_DIR" 2>/dev/null; printf '%s\n' "$l" >> "$RUN_DIR/loop.log"; fi; }  # tee to stdout AND runs/<id>/loop.log (appended live, per call)
-die()  { printf '[FATAL] %s\n' "$*" >&2; exit 1; }
+# die() also appends to THIS run's loop.log when that file already exists. Run 20261112-000000 died with
+# loop.log ending on a normal promote line and the reason only in launchd's sweep.err, so the dashboard
+# showed DIED with no cause. Append-only to an existing file: a refused start (lock held) creates nothing.
+die()  { printf '[FATAL] %s\n' "$*" >&2; [[ -n "${RUN_DIR:-}" && -f "$RUN_DIR/loop.log" ]] && printf '[%s] FATAL: %s\n' "$(date +%H:%M:%S)" "$*" >> "$RUN_DIR/loop.log"; exit 1; }
 gitr() { git -C "$ROOT" "$@"; }
 
 # ── single-runner lock (Part 1) ──────────────────────────────────────────────────────────────────────
@@ -1068,7 +1071,15 @@ CHROME_BIN="$(node -e 'const fs=require("fs");const m=fs.readFileSync(process.ar
 [[ -x "$CHROME_BIN" ]] || die "Chrome is not executable at $CHROME_BIN (path read from capture.js:8) — every deck would fail at browser launch. Fix: install Google Chrome at that path, or update the CHROME constant in $CAPTURE_JS"
 acquire_lock                                   # Part 1: FIRST — before we touch the port, the tree, or the tag
 reap_stale_raw                                 # sweep up abandoned per-run capture dirs before making ours
-[[ -z "$(gitr status --porcelain)" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
+# GIT MUST RUN BEFORE ANY GIT ANSWER IS BELIEVED. Run 20261112-000000: Xcode.app updated (Nov 11 18:06) and
+# its license was unaccepted, so /usr/bin/git refused every call ("You have not agreed to the Xcode license
+# agreements"). The DIRTY guard below read git's EMPTY stdout as a CLEAN tree (Pattern C — a guard holding
+# by accident), BASE_BRANCH came back empty, and the tag step then died as "restore tag already exists"
+# with no such tag. Probe once, show git's own stderr, and test the status call's exit code separately.
+_giterr="$(gitr rev-parse --git-dir 2>&1 >/dev/null)" || die "git is not runnable (${_giterr:-no stderr}) — every git answer this run would read is unreliable. If this is the Xcode license: sudo xcodebuild -license accept"
+[[ -n "$BASE_BRANCH" ]] || die "BASE_BRANCH is empty — git rev-parse at startup returned nothing"
+_gitst="$(gitr status --porcelain 2>&1)" || die "git status FAILED (${_gitst}) — cannot tell a clean tree from a dirty one"
+[[ -z "$_gitst" ]] || die "working tree is DIRTY — commit or stash first, then re-run"
 # NO SLEEPING MID-RUN. Run 20260916-124247 lost all 50 decks to "FATAL Connection closed." when the Mac
 # slept during the baseline capture: the browser died with it and 409 minutes produced nothing analyzable.
 # `caffeinate -i -w $$` blocks IDLE sleep for the lifetime of THIS shell and exits when it does, so no trap
@@ -1091,7 +1102,8 @@ while IFS= read -r _pl; do [[ -n "$_pl" ]] && log "$_pl"; done < <(node "$AGENT_
 
 QCOUNT="$(node -e 'const fs=require("fs"),t=fs.readFileSync(process.argv[1],"utf8");const o=(t.split(/^## Open/m)[1]||"").split(/^## /m)[0];process.stdout.write(String((o.match(/^- \[ \] /mg)||[]).length));' "$QUEUE")"
 
-gitr tag "restore/pre-sweep-$RUN_ID" >/dev/null 2>&1 || die "restore tag already exists"
+gitr rev-parse -q --verify "refs/tags/restore/pre-sweep-$RUN_ID" >/dev/null 2>&1 && die "restore tag already exists"
+_tagerr="$(gitr tag "restore/pre-sweep-$RUN_ID" 2>&1 >/dev/null)" || die "git tag restore/pre-sweep-$RUN_ID FAILED (${_tagerr:-no stderr})"
 gitr checkout -q -b "sweep/auto-$RUN_ID" || die "could not create branch sweep/auto-$RUN_ID"
 cat > "$RUN_DIR/UNDO.txt" <<EOF
 # Discard the ENTIRE night's work in one line (run from $ROOT):
