@@ -387,7 +387,9 @@ do_capture() {                                 # $1 = dest snapshot dir, $2 = ph
   local foreign
   foreign="$(PAIRS="$PAIRS_JSON" node -e '
     const fs=require("fs"),d=process.argv[1];
-    const want=new Set(JSON.parse(process.env.PAIRS||"[]").map(p=>`${p[0]}_${p[1]}.json`));
+    // a variant entry [A,B,off,{mode,basis}] is written as A_B+<mode>-<basis>.json (capture.js pairFile)
+    const vid=o=>o?[o.mode,o.basis].filter(Boolean).join("-"):"";
+    const want=new Set(JSON.parse(process.env.PAIRS||"[]").map(p=>`${p[0]}_${p[1]}${vid(p[3])?"+"+vid(p[3]):""}.json`));
     const bad=fs.readdirSync(d).filter(f=>f.endsWith(".json")&&f!=="status.log"&&!want.has(f));
     process.stdout.write(bad.join(" "));' "$RAW" 2>/dev/null || true)"
   if [[ -n "$foreign" ]]; then
@@ -1128,7 +1130,7 @@ gitr rev-parse -q --verify "refs/tags/restore/pre-sweep-$RUN_ID" >/dev/null 2>&1
 _tagerr="$(gitr tag "restore/pre-sweep-$RUN_ID" 2>&1 >/dev/null)" || die "git tag restore/pre-sweep-$RUN_ID FAILED (${_tagerr:-no stderr})"
 gitr checkout -q -b "sweep/auto-$RUN_ID" || die "could not create branch sweep/auto-$RUN_ID"
 fi
-cat > "$RUN_DIR/UNDO.txt" <<EOF
+[[ "$DRY_RUN" == "1" ]] || cat > "$RUN_DIR/UNDO.txt" <<EOF
 # Discard the ENTIRE night's work in one line (run from $ROOT):
 git checkout $BASE_BRANCH && git branch -D sweep/auto-$RUN_ID && git tag -d restore/pre-sweep-$RUN_ID
 # (if you already left the branch: git reset --hard restore/pre-sweep-$RUN_ID)
@@ -1142,7 +1144,7 @@ EST_S=$(( SWEEPS * PER_SWEEP_S + QCOUNT * 120 ))
 END_HUMAN="$(date -v +"${EST_S}"S '+%Y-%m-%d %H:%M:%S' 2>/dev/null || date -d "+${EST_S} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo '?')"
 # MAX_ITER and BUDGET_USD are the two halt conditions the loop can hit without anything going wrong,
 # and the dashboard could not show how far a run had left to go without them (QUEUE.md Discovered).
-log "RUN $RUN_ID · branch sweep/auto-$RUN_ID · $NPAIRS pairs · $QCOUNT open items · mode $CAP_MODE · max_iter $MAX_ITER · budget \$$BUDGET_USD · sweep_pairs $SWEEP_PAIRS"
+log "RUN $RUN_ID · branch $([[ "$DRY_RUN" == "1" ]] && echo "<none: dry run, detached $(gitr rev-parse --short HEAD)>" || echo "sweep/auto-$RUN_ID") · $NPAIRS pairs · $QCOUNT open items · mode $CAP_MODE · max_iter $MAX_ITER · budget \$$BUDGET_USD · sweep_pairs $SWEEP_PAIRS"
 NREPRO="$(printf '%s' "$REPRO_PAIRS" | wc -w | tr -d ' ')"
 NOPAIR="$(repro_pair queue "$QUEUE" | grep -c '^-$' || true)"
 log "capture set: $NPAIRS pairs = $NREPRO mandatory repro + filler (PAIRS_LIMIT=$PAIRS_LIMIT caps filler only)"

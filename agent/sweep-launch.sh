@@ -89,12 +89,15 @@ SWEEP_RUNS_DIR="$RUNS_DIR" SWEEP_WORKTREE=1 BASE_BRANCH="$TARGET_BRANCH" RUN_ID=
 rc=$?
 say "run-sweep.sh exited rc=$rc (log: $RUNS_DIR/$RUN_ID/loop.log)"
 
-# 5. stop the app server the run left behind — by IDENTITY: listening on the sweep port AND cwd inside RUN_WT
+# 5. stop the app server the run left behind — by IDENTITY: listening on the sweep port AND its command line is
+#    this worktree's server.js. (Not its cwd: run-sweep.sh starts `node "$ROOT/server.js"` from the caller's
+#    cwd, so the cwd is wherever launchd started us — the dry run of 2026-11-12 left pid 58328 up that way.)
 port="${SWEEP_APP_PORT:-3001}"
 for pid in $(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null); do
-  cwd="$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')"
-  [[ "$cwd" == "$RUN_WT"* ]] && { kill "$pid" 2>/dev/null && say "stopped run server pid $pid on :$port (cwd $cwd)"; }
+  cmd="$(ps -o command= -p "$pid" 2>/dev/null)"
+  [[ "$cmd" == *"$RUN_WT/server.js"* ]] && { kill "$pid" 2>/dev/null && say "stopped run server pid $pid on :$port ($cmd)"; }
 done
+[[ -n "$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null)" ]] && say "note: :$port is still held by a process that is not this run's server — left alone"
 if [[ -z "$(git -C "$RUN_WT" status --porcelain 2>/dev/null)" || "${DRY_RUN:-0}" == "1" ]]; then
   # DRY_RUN writes no commits by design, so anything it left (ledger rows) is disposable
   g worktree remove --force "$RUN_WT" >/dev/null 2>&1 && say "removed worktree $RUN_WT" || say "WARNING: could not remove $RUN_WT"
