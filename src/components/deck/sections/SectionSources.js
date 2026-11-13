@@ -240,7 +240,7 @@ function nonGaapSourceBullets(plan, acquirer, target) {
   if (plan.eps.nonGaap) {
     out.push(`Reporting basis selected: Non-GAAP. Net income, diluted EPS, pro forma EPS, accretion and the verdict use company-reported non-GAAP figures for both companies: ${A} “${plan.eps.A.rowLabel}” (${plan.eps.A.label}); ${B} “${plan.eps.B.rowLabel}” (${plan.eps.B.label}). Each was read from the reconciliation table in the company’s fiscal-year earnings release and ties to GAAP there (GAAP + each filed adjustment = the non-GAAP total).`);
   } else {
-    out.push(`Reporting basis selected: Non-GAAP. EPS, pro forma EPS, accretion and the verdict stay on GAAP for both companies: ${plan.eps.note}.`);
+    out.push(`Reporting basis selected: Non-GAAP. Year 1 EPS, pro forma EPS and accretion are “—”, never GAAP: ${plan.eps.note}. The forward years use FMP consensus (non-GAAP); the verdict uses only the years that computed.`);
   }
   const eb = (e, t) => (e.nonGaap
     ? (e.value == null ? `${t}: ${e.name} — (non-GAAP available for fiscal year only)` : `${t}: ${e.name} (${e.label}), tied to GAAP net income in the filed reconciliation table`)

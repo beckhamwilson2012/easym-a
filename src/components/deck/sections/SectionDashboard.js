@@ -419,7 +419,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 16px', lineHeight: 1.6 }}>
             Pro forma EPS at varying premium levels (rows) and synergy realization (columns). 100% = {synergyY1Entered ? `${fmtSynergy(results.synergiesY1)} Year 1 total synergies as entered` : `${NONE_ENTERED}: no synergies assumed`}.<br />
             {breakevenEPS > 0 && <>Breakeven: <strong style={{ color: '#374151' }}>${breakevenEPS.toFixed(2)}</strong> (acquirer standalone EPS).<br /></>}
-            {breakevenEPS > 0
+            {inputs.year1Reason
+              ? `Year 1 pro forma EPS is "—": ${inputs.year1Reason}.`
+              : breakevenEPS > 0
               ? 'Cells above breakeven are accretive; below are dilutive.'
               : 'Cells shaded green sit above the current acquirer EPS (a smaller loss); accretion/(dilution) is not meaningful from a non-positive EPS base.'}
           </p>
@@ -502,7 +504,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         <div style={{ ...cardStyle, marginBottom: 24 }}>
           <h3 style={{ color: '#0F2244', marginTop: 0, marginBottom: 4 }}>Cash Structure Sensitivity</h3>
           <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 12px' }}>
-            Pro Forma EPS at different cash/stock splits (offer price and synergies held constant). Green = {breakevenEPS > 0 ? 'accretive vs. current acquirer EPS.' : 'above (better than) the current acquirer EPS; accretion/(dilution) is not meaningful from a non-positive base.'}
+            Pro Forma EPS at different cash/stock splits (offer price and synergies held constant). {inputs.year1Reason ? `Year 1 pro forma EPS is "—": ${inputs.year1Reason}.` : <>Green = {breakevenEPS > 0 ? 'accretive vs. current acquirer EPS.' : 'above (better than) the current acquirer EPS; accretion/(dilution) is not meaningful from a non-positive base.'}</>}
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
             {cashSensitivity.map(({ cashPct, eps }) => {

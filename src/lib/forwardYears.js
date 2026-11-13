@@ -57,6 +57,9 @@ export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerNam
     const a = find(acquirerFwd, fyA), b = find(targetFwd, fyB);
     let reason = null;
     if (gaap) reason = NO_GAAP_FORECAST;
+    // For a private deal the verdict hook loads no forecasts at all (acquirerFwd is null, not []): that is not the
+    // acquirer's gap and must not be blamed on it (CHECK4/FIX7B "no forecast EPS for HNGE"). A loaded, empty list is.
+    else if (privateTarget && !Array.isArray(acquirerFwd)) reason = `${T} has no forecast EPS (a private company has no analyst consensus)`;
     else if (!Array.isArray(acquirerFwd) || !acquirerFwd.length) reason = `no forecast EPS for ${A}`;
     else if (privateTarget) reason = `${T} has no forecast EPS (a private company has no analyst consensus)`;
     else if (fyA == null) reason = `${A}'s Year 1 period or fiscal year end is not known`;

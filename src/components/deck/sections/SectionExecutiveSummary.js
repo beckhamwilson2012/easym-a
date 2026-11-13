@@ -125,7 +125,8 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   // non-positive (accretionMeaningful === false), so a null there means "not meaningful", not
   // "unknown". Distinguish them rather than printing one dash for both.
   const accPct = d.accretion ? d.accretion.pct : null;
-  const accText = R.basesDiffer ? `n/m — ${DIFFERENT_BASES}` : R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
+  const y1Reason = deal?._inputs?.year1Reason || null;   // Year 1 absent on a Non-GAAP deal (Fix 10 Task 2): say why, not "non-positive"
+  const accText = R.basesDiffer ? `n/m — ${DIFFERENT_BASES}` : y1Reason ? `— (${y1Reason})` : R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
 
   const snapshot = [
     { label: 'Acquirer', value: A.name ? `${A.name}${aTk ? ` (${aTk})` : ''}` : DASH },
@@ -174,6 +175,8 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   }
   rationale.push(R.basesDiffer
     ? `Earnings: Year-1 accretion / (dilution) is not shown — ${DIFFERENT_BASES}.`
+    : y1Reason
+    ? `Earnings: Year-1 accretion / (dilution) is not shown — ${y1Reason}.`
     : R.accretionMeaningful === false
     ? `Earnings: Year-1 accretion / (dilution) is not meaningful — the acquirer's or pro-forma EPS base is non-positive, so a percentage change carries no signal.`
     : `Earnings: Year-1 pro forma EPS moves ${pcS(accPct)} against the acquirer's standalone reported-diluted EPS.`);

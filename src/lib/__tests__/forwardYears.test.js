@@ -82,3 +82,10 @@ describe('Fix 10 Task 3 — no overlapping years', () => {
     expect([s.slots[0].a.fy, s.slots[0].b.fy]).toEqual([2027, 2026]);
   });
 });
+
+describe('Fix 10 Task 2 follow-up — a private deal never blames the acquirer', () => {
+  test('forecasts not loaded (null) beside a private target → the target is named', () => {
+    const s = selectForwardYears({ inputs: { reportingBasis: NON_GAAP }, acquirerFwd: null, targetFwd: null, acquirerName: 'HNGE', targetName: 'Target Company', privateTarget: true });
+    expect(s.slots[0].reason).toBe('Target Company has no forecast EPS (a private company has no analyst consensus)');
+  });
+});
