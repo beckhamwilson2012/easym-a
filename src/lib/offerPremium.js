@@ -70,7 +70,7 @@ export function highestAccretivePremium({ calcInputs, spot, synergyY1, acquirerF
   const tEps = targetFwd?.eps ?? null;
   if (aEps == null) return none(`There is no Year 2 consensus EPS for ${A}.`);
   if (tEps == null) return none(`There is no Year 2 consensus EPS for ${T}.`);
-  if (!(aEps > 0)) return none(`${A}'s Year 2 consensus EPS is ${aEps < 0 ? '-' : ''}$${Math.abs(aEps).toFixed(2)}. Accretion can't be measured from an EPS that isn't positive.`);
+  if (!(aEps > 0)) return none(`${A}'s Year 2 consensus EPS is ${aEps < 0 ? '−' : ''}$${Math.abs(aEps).toFixed(2)}. Accretion can't be measured from an EPS that isn't positive.`);
   if (acquirerSharePrice(calcInputs) == null) return none(`There is no live price for ${A}, so the new shares can't be counted.`);
   if (!(acquirerDilutedShares(calcInputs).shares > 0)) return none(`${A}'s diluted share count is missing.`);
   if (!(parseFloat(calcInputs.companyBShares) > 0)) return none(`${T}'s share count is missing.`);

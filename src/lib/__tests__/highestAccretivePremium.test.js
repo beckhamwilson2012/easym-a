@@ -20,7 +20,7 @@ describe('highest premium still accretive in Year 2', () => {
   });
 
   test.each([
-    ['negative acquirer EPS', { acquirerFwd: { eps: -0.29 } }, /AAA's Year 2 consensus EPS is -\$0\.29/],
+    ['negative acquirer EPS', { acquirerFwd: { eps: -0.29 } }, /AAA's Year 2 consensus EPS is −\$0\.29/],
     ['zero acquirer EPS', { acquirerFwd: { eps: 0 } }, /isn't positive/],
     ['no acquirer consensus', { acquirerFwd: null }, /no Year 2 consensus EPS for AAA/],
     ['no target consensus', { targetFwd: { eps: null } }, /no Year 2 consensus EPS for BBB/],

@@ -435,6 +435,9 @@ export function forwardYearInputs(inputs, acquirerEps, targetEps) {
 
 // ── Risk flags ────────────────────────────────────────────────────────────────
 
+// A per-share dollar figure with its sign before the dollar: "−$0.36", never "$-0.36" (Fix 10 Task 8).
+const usd2 = (v) => { const n = parseFloat(v); if (!Number.isFinite(n)) return 'N/A'; return n < 0 && Math.abs(n) >= 0.005 ? `−$${Math.abs(n).toFixed(2)}` : `$${Math.abs(n) < 0.005 ? '0.00' : n.toFixed(2)}`; };
+
 export function computeFlags(results, inputs) {
   const flags = [];
   if (parseFloat(results.totalPurchasePrice) > 500000)
@@ -498,10 +501,10 @@ export function buildNarrative(results, inputs, nameA, nameB, flags) {
     text = `${deal}.`;
   } else if (pct === null || isNaN(pct)) {
     const nonPositive = parseFloat(results.companyAEPS) <= 0 || parseFloat(results.proFormaEPS) <= 0;
-    text = `${deal} moves pro forma EPS from $${results.companyAEPS} to $${results.proFormaEPS}${nonPositive ? ' — accretion/(dilution) is not meaningful from a non-positive EPS base' : ''}.`;
+    text = `${deal} moves pro forma EPS from ${usd2(results.companyAEPS)} to ${usd2(results.proFormaEPS)}${nonPositive ? ' — accretion/(dilution) is not meaningful from a non-positive EPS base' : ''}.`;
   } else {
     const epsDir = results.isAccretive ? 'increasing' : 'decreasing';
-    text = `${deal} would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from $${results.companyAEPS} to $${results.proFormaEPS}.`;
+    text = `${deal} would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from ${usd2(results.companyAEPS)} to ${usd2(results.proFormaEPS)}.`;
   }
   if (flags.length > 0) {
     text += ` ${flags[0].text.split('—')[0].trim()} represents the deal's biggest structural risk.`;

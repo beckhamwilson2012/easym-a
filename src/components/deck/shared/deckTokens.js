@@ -158,7 +158,8 @@ export function fmtMult(v) {
 export function fmtPerShare(v) {
   const n = parseFloat(v);
   if (isNaN(n) || v === null || v === undefined) return 'N/A';
-  return `$${n.toFixed(2)}`;
+  // A negative per-share figure prints "−$0.36", never "$-0.36" (Fix 10 Task 8); one that rounds to zero prints "$0.00".
+  return n < 0 && Math.abs(n) >= 0.005 ? `−$${Math.abs(n).toFixed(2)}` : `$${Math.abs(n) < 0.005 ? '0.00' : n.toFixed(2)}`;
 }
 
 // Single standalone-EPS basis for the WHOLE deck: the company's REPORTED DILUTED EPS (the filed

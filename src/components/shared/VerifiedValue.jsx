@@ -12,8 +12,10 @@ function formatValue(value, unit) {
   if (value == null) return '—';
   const n = parseFloat(value);
   if (isNaN(n)) return String(value);
-  if (unit === '$/sh') return `$${n.toFixed(2)}`;
-  if (unit === '$') return n >= 1000 ? `$${(n / 1000).toFixed(1)}B` : `$${n.toFixed(0)}M`;
+  // Negative figures print "−$…", never "$-…" (Fix 10 Task 8).
+  const sign = n < 0 ? '−' : '', a = Math.abs(n);
+  if (unit === '$/sh') return a < 0.005 ? '$0.00' : `${sign}$${a.toFixed(2)}`;
+  if (unit === '$') return Math.round(a) === 0 ? '$0M' : (a >= 1000 ? `${sign}$${(a / 1000).toFixed(1)}B` : `${sign}$${a.toFixed(0)}M`);
   if (unit === 'sh') return `${n.toFixed(0)}M`;
   return String(value);
 }

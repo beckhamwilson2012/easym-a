@@ -490,7 +490,7 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
       <PageHeader
         title={`Standalone P&L — ${role || 'Target'}: ${target.name || 'N/A'}`}
         subtitle={pnl
-          ? `${pnl.columns.length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''} · $M · actuals GAAP (SEC EDGAR), forward FMP consensus (non-GAAP)${ngPlan && (ng || ngEbitda) ? ', non-GAAP rows company reported (earnings 8-K)' : ''}`
+          ? `${pnl.columns.filter(c => c.actual).length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''}${pnl.columns.some(c => !c.actual) ? ` + ${pnl.columns.filter(c => !c.actual).length} forecast years` : ''} · $M · actuals GAAP (SEC EDGAR), forward FMP consensus (non-GAAP)${ngPlan && (ng || ngEbitda) ? ', non-GAAP rows company reported (earnings 8-K)' : ''}`
           : `${fyLabel} · $ in millions · profitability Non-GAAP where labeled (see basis note)`}
       />
 

@@ -155,7 +155,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     } else {
       const breakMult = SYN_MULTS[firstAccretiveIdx];
       const breakPct = Math.round(breakMult * 100);
-      sensitivityFooter = `Synergy realization can fall to ~${breakPct}% of the announced figure before the deal turns dilutive (breakeven EPS: $${breakevenEPS.toFixed(2)}).`;
+      sensitivityFooter = `Synergy realization can fall to ~${breakPct}% of the announced figure before the deal turns dilutive (breakeven EPS: ${fmtPerShare(breakevenEPS)}).`;
     }
   }
 

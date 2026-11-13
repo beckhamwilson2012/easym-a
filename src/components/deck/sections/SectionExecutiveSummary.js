@@ -44,7 +44,7 @@ const pc    = (v, d = 1) => (num(v) == null ? DASH : fmtPct(num(v), d));
 const pcS   = (v) => (num(v) == null ? DASH : fmtPctSigned(num(v)));
 const pcF   = (v) => (num(v) == null ? DASH : fmtPctFloor(num(v)));
 const sh    = (v) => (num(v) == null ? DASH : fmtShares(num(v)));
-const ps    = (v) => (num(v) == null ? DASH : `$${num(v).toFixed(2)}`);
+const ps    = (v) => (num(v) == null ? DASH : `${num(v) < 0 ? '−' : ''}$${Math.abs(num(v)).toFixed(2)}`);   // "−$0.36", never "$-0.36"
 
 // Exported for unit tests only — nothing else imports this. The slide is registered
 // showInPdf:false, so it never enters the hidden PDF tree the no-op A/B harness captures: the

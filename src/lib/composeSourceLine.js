@@ -40,6 +40,12 @@ function joinList(arr) {
 // formatter, no day-level skew between slides (Fix B). "2026-06-03..." → "June 3, 2026".
 export function formatDeckDate(iso) {
   if (!iso) return null;
+  // A timestamp (data pulled at 02:16 UTC on Nov 13 is still Nov 12 evening in Mountain time) is shown on the viewer's
+  // LOCAL date (Fix 10 Task 8); a bare date (a balance-sheet or period end) is a calendar date and stays as filed.
+  if (/T\d{2}:\d{2}/.test(String(iso))) {
+    const t = new Date(String(iso));
+    if (!isNaN(t.getTime())) return t.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  }
   const d = new Date(String(iso).substring(0, 10) + 'T12:00:00Z'); // date portion, noon UTC → no tz-flip
   if (isNaN(d.getTime())) return null;
   return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
