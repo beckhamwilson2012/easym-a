@@ -84,6 +84,19 @@ export function privateConsideration(inputs) {
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 
+// ── Minimum-cash revenue basis, one company ───────────────────────────────────
+// The retained minimum scales with each company's LTM revenue. A company with no LTM revenue (a private company has
+// none here) uses its fiscal-year revenue instead, labeled FY_NO_LTM. A company with neither has no basis: the
+// result is null with the reason, and the minimum and every funding figure it drives are unknown, never a $0 minimum.
+export const FY_NO_LTM = 'FY revenue (no LTM)';
+export function minCashRevenue(ltmRevenue, fyRevenue) {
+  const n = (v) => { const x = parseFloat(v); return Number.isFinite(x) ? x : null; };
+  const ltm = n(ltmRevenue), fy = n(fyRevenue);
+  if (ltm != null) return { value: ltm, basis: 'LTM', label: 'LTM revenue' };
+  if (fy != null) return { value: fy, basis: 'FY', label: FY_NO_LTM };
+  return { value: null, basis: null, label: null, reason: 'no LTM or FY revenue' };
+}
+
 // ── Sources of funds: acquisition new debt ────────────────────────────────────
 // Faculty's construction: combined cash is a real funding source (subject to a retained minimum) and target
 // debt is assumed repaid on change of control, so
@@ -117,20 +130,30 @@ export function acquisitionNewDebt(inputs, offerOverride) {
   const aBucket = cashBucket(num(inputs.companyACash), num(inputs.companyASti)).value;
   const bBucket = cashBucket(num(inputs.companyBCash), num(inputs.companyBSti)).value;
   const combinedCash = (aBucket != null && bBucket != null) ? aBucket + bBucket : null;
-  // Guard 3 — min cash scales with pro-forma LTM revenue (LTM, not FY — same figure §2/§3/§11 use).
-  const pfLtmRevenue = (num(inputs.companyALtmRevenue) || 0) + (num(inputs.companyBLtmRevenue) || 0);
+  // Guard 3 — min cash scales with pro-forma revenue: each company's LTM revenue (same figure §2/§3/§11 use), or its
+  // fiscal-year revenue when it has no LTM (minCashRevenue). Either side with neither → the minimum is unknown (null).
+  const revA = minCashRevenue(inputs.companyALtmRevenue, inputs.companyARevenue);
+  const revB = minCashRevenue(inputs.companyBLtmRevenue, inputs.companyBRevenue);
+  const pfLtmRevenue = (revA.value != null && revB.value != null) ? revA.value + revB.value : null;
   const pct = Number.isFinite(num(inputs.minCashPct)) ? num(inputs.minCashPct) : MIN_CASH_PCT_DEFAULT;
-  const minCash = pfLtmRevenue * pct;
-  const excessCashAvail  = combinedCash != null ? Math.max(0, combinedCash - minCash) : 0; // above the retained min
+  const minCash = pfLtmRevenue != null ? pfLtmRevenue * pct : null;
+  // Above the retained min. Unknown combined cash or an unknown minimum → unknown excess, never a $0 excess.
+  const excessCashAvail  = (combinedCash != null && minCash != null) ? Math.max(0, combinedCash - minCash) : null;
   // Faculty assumption: 100% repaid. Unavailable target debt stays null (never "$0 repaid"), and every sum that
   // takes it as an addend goes null with it — a coerced 0 here produced newDebt identical to a debt-free target.
   const targetDebtRepaid = num(inputs.companyBDebt);
-  const newDebt = targetDebtRepaid != null
+  const newDebt = (targetDebtRepaid != null && excessCashAvail != null)
     ? Math.max(0, cashConsideration + targetDebtRepaid - excessCashAvail) : null;       // Guard 2 — zero floor
   const excessCashUsed = newDebt != null
     ? cashConsideration + targetDebtRepaid - newDebt : null;                            // = min(avail, need); surplus stays on B/S
+  // Why the funding is unknown, first missing input in build order (null when it is known). The slides phrase it.
+  const fundingGap = newDebt != null ? null
+    : targetDebtRepaid == null ? 'targetDebt'
+    : combinedCash == null ? 'cash'
+    : 'minCash';
   return { newDebt, cashConsideration, targetDebtRepaid, combinedCash, minCash,
-           excessCashAvail, excessCashUsed, pfLtmRevenue, minCashPct: pct, bank: false };
+           excessCashAvail, excessCashUsed, pfLtmRevenue, minCashPct: pct, bank: false,
+           minCashBasis: { A: revA, B: revB }, fundingGap };
 }
 
 // ── Core calculation ──────────────────────────────────────────────────────────
@@ -247,6 +270,8 @@ export function calculate(inputs) {
     totalSources:      totalSources == null ? null : totalSources.toFixed(0),
     pfLtmRevenue:      sources.pfLtmRevenue  == null ? null : sources.pfLtmRevenue.toFixed(0),
     minCashPct:        sources.minCashPct,
+    minCashBasis:      sources.minCashBasis || null,   // { A, B }: each side's revenue basis (LTM, or FY_NO_LTM), or its reason
+    fundingGap:        sources.fundingGap || null,     // why new debt is unknown: 'targetDebt' | 'cash' | 'minCash'; null when known
     bankFinancing:     sources.bank,
     acquirerSharePrice: acqPrice === null ? 'N/A' : acqPrice.toFixed(2),
     evEBITDA:          evEBITDA   === null ? 'N/A' : evEBITDA.toFixed(1),
