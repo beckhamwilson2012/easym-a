@@ -16,11 +16,12 @@ const TAX = 0.21;   // mirrors dealCalc TAX_RATE — used only to gross the afte
 export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const R = (deal && deal._results) || {};
   const combinedEBITDA = num(R.combinedEBITDA) ?? num(deal?.combinedEBITDA);
-  const aDebt = num(acquirer?.debt), tDebt = num(target?.debt), newDebt = num(R.newDebt);
-  const combinedDebt = (aDebt != null && tDebt != null) ? aDebt + tDebt + (newDebt || 0) : null;
-  const aCash = num(acquirer?.cash), tCash = num(target?.cash);
-  const combinedCash = (aCash != null && tCash != null) ? aCash + tCash : null;
-  const netDebt = (combinedDebt != null && combinedCash != null) ? combinedDebt - combinedCash : null;
+  // Pro-forma debt, cash and net debt are dealCalc's ONE capitalization result (proFormaCapitalization), the same
+  // figures as Transaction Structure's pro-forma column: target debt repaid, cash after the excess cash used.
+  const cap = R.capitalization || {};
+  const combinedDebt = cap.proFormaDebt ?? null;
+  const combinedCash = cap.proFormaCash ?? null;
+  const netDebt = cap.proFormaNetDebt ?? null;
   const netDebtEBITDA   = (netDebt != null && combinedEBITDA > 0) ? netDebt / combinedEBITDA : null;
   const grossDebtEBITDA = (combinedDebt != null && combinedEBITDA > 0) ? combinedDebt / combinedEBITDA : null;
   const interestPreTax  = num(R.newInterestAfterTax) != null ? num(R.newInterestAfterTax) / (1 - TAX) : null;
@@ -29,8 +30,8 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
   const ngEb = isNonGaapDeal(deal) ? combinedEbitdaLabel(deal.reportingBasis) : null;   // null on a GAAP deal
   const rows = [
     { label: ngEb ? `Combined EBITDA (${ngEb.basis || 'n/a'})` : 'Combined EBITDA', v: ngEb && ngEb.note ? `— (${ngEb.note})` : fmtM(combinedEBITDA) },
-    { label: 'Combined total debt (incl. acquisition financing)', v: fmtM(combinedDebt) },
-    { label: 'Combined cash & equivalents', v: fmtM(combinedCash) },
+    { label: 'Pro-forma total debt (incl. acquisition financing; target debt repaid)', v: fmtM(combinedDebt) },
+    { label: 'Pro-forma cash, equiv. & ST marketable sec. (after cash used in the deal)', v: fmtM(combinedCash) },
     { label: 'Net debt', v: fmtM(netDebt), bold: true },
     { label: 'Gross debt / EBITDA', v: fmtX(grossDebtEBITDA) },
     { label: 'Net debt / EBITDA', v: fmtX(netDebtEBITDA), bold: true },
@@ -53,7 +54,7 @@ export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLab
         </table>
         <SynergyLines deal={deal} title="Synergies ($M). Combined EBITDA above includes Year 1 only" style={{ marginTop: 12 }} />
         <div style={{ marginTop: 12, fontSize: 11, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.4 }}>
-          Combined total debt includes the acquisition financing (new debt raised for the cash consideration). Interest is grossed up from the after-tax financing drag at the deck's {Math.round(TAX * 100)}% tax rate. Any component that is unavailable renders “—”, never a fabricated figure.
+          Pro-forma total debt is the acquirer's debt plus the acquisition financing (new debt raised for the cash consideration); the target's debt is assumed repaid on change of control. Debt, cash and net debt are the same figures as the pro-forma column on Transaction Structure. Interest is grossed up from the after-tax financing drag at the deck's {Math.round(TAX * 100)}% tax rate. Any component that is unavailable renders “—”, never a fabricated figure.
         </div>
       </div>
     </PageFrame>

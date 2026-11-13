@@ -156,11 +156,36 @@ export function acquisitionNewDebt(inputs, offerOverride) {
            minCashBasis: { A: revA, B: revB }, fundingGap };
 }
 
+// ── Pro-forma capitalization: ONE debt and cash figure for every slide ────────
+// Deal Summary (Debt / EBITDA), Transaction Structure (capitalization table) and Credit Stats all read this result
+// from calculate(); none of them sums debt or cash itself. Built on the same sources of funds as the drag:
+//   pro-forma debt = acquirer debt + new acquisition debt (target debt repaid on change of control, assumed 100%);
+//   bank deals (Guard 1) keep target debt outstanding: pre-deal debt + new debt.
+//   cash = cash & equivalents + short-term marketable securities (cashBucket), less the excess cash used in the deal.
+// Every leg is null-propagating: an unknown debt or cash figure makes each total it feeds unknown, never $0-based.
+export function proFormaCapitalization(inputs, sources) {
+  const num = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const sub = (x, y) => (x != null && y != null ? x - y : null);
+  const aDebt = num(inputs.companyADebt), bDebt = num(inputs.companyBDebt);
+  const aCash = cashBucket(num(inputs.companyACash), num(inputs.companyASti)).value;
+  const bCash = cashBucket(num(inputs.companyBCash), num(inputs.companyBSti)).value;
+  const preDebt = (aDebt != null && bDebt != null) ? aDebt + bDebt : null;
+  const preCash = (aCash != null && bCash != null) ? aCash + bCash : null;
+  const newDebt = sources.newDebt;
+  const proFormaDebt = newDebt == null ? null
+    : sources.bank ? (preDebt != null ? preDebt + newDebt : null)
+    : (aDebt != null ? aDebt + newDebt : null);
+  // A bank deal draws no excess cash by construction (Guard 1): a genuine 0, not an absent figure.
+  const cashUsed = sources.bank ? 0 : sources.excessCashUsed;
+  const proFormaCash = (preCash != null && cashUsed != null) ? preCash - cashUsed : null;
+  return { preDebt, proFormaDebt, preCash, proFormaCash, cashUsed,
+           preNetDebt: sub(preDebt, preCash), proFormaNetDebt: sub(proFormaDebt, proFormaCash) };
+}
+
 // ── Core calculation ──────────────────────────────────────────────────────────
 
 export function calculate(inputs) {
   const {
-    companyADebt,
     companyBShares, companyBEPS, companyBCash, companyBDebt,
     companyARevenue, companyAEBITDA, companyANetIncome,
     companyBRevenue, companyBEBITDA, companyBNetIncome,
@@ -247,7 +272,11 @@ export function calculate(inputs) {
   const enterpriseValue  = (companyBDebt != null && companyBCash != null) ? totalPurchasePrice + companyBDebt - companyBCash : null;
   const evEBITDA         = (companyBEBITDA > 0 && enterpriseValue != null) ? enterpriseValue / companyBEBITDA : null;
   const peRatio          = companyBEPS    > 0 ? offerPricePerShare / companyBEPS : null;
-  const combinedDebt     = (companyADebt != null && companyBDebt != null) ? companyADebt + companyBDebt + cashPortion : null;
+  // Debt / EBITDA is on the ONE pro-forma debt figure every slide shows (proFormaCapitalization): acquirer debt + new
+  // acquisition debt, target debt repaid. It was acquirer + target debt + the whole cash portion, a third copy that
+  // matched neither Transaction Structure nor Credit Stats.
+  const cap              = proFormaCapitalization(inputs, sources);
+  const combinedDebt     = cap.proFormaDebt;
   const debtEBITDA       = (combinedEBITDA > 0 && combinedDebt != null) ? combinedDebt / combinedEBITDA : null;
 
   return {
@@ -281,6 +310,9 @@ export function calculate(inputs) {
     // was built from — null (never a $0-debt rebuild) whenever a leg is unavailable.
     enterpriseValue:   enterpriseValue === null ? null : enterpriseValue.toFixed(0),
     combinedDebt:      combinedDebt    === null ? null : combinedDebt.toFixed(0),
+    // Full precision, so each slide rounds once at display: { preDebt, proFormaDebt, preCash, proFormaCash, cashUsed,
+    // preNetDebt, proFormaNetDebt }, each null when a leg is unavailable.
+    capitalization:    cap,
     totalPurchasePrice: totalPurchasePrice.toFixed(0),
     cashPortion:        cashPortion.toFixed(0),
     stockPortion:       stockPortion.toFixed(0),

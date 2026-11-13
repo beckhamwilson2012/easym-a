@@ -103,9 +103,9 @@ export function explainPeRatio({ offerPrice, eps, multiple }) {
 
 export function explainDebtEbitda({ combinedDebt, combinedEbitda, multiple }) {
   return {
-    formula: 'Debt/EBITDA = Combined Net Debt ÷ Combined EBITDA (post-synergies)',
+    formula: 'Debt/EBITDA = Pro-forma Total Debt ÷ Combined EBITDA (post-synergies)',
     inputs: [
-      { label: 'Combined debt (incl. cash used)', value: fmtMoney(combinedDebt) },
+      { label: 'Pro-forma debt (acquirer debt + new acquisition debt; target debt repaid)', value: fmtMoney(combinedDebt) },
       { label: 'Combined EBITDA', value: fmtMoney(parseFloat(combinedEbitda) || 0) },
     ],
     result: multiple != null && multiple !== 'N/A' ? `${parseFloat(multiple).toFixed(1)}x` : 'N/A',

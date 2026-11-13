@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf } from '../shared/deckTokens';
-import { cashBucket, netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { netCashDebt, NET_DEBT_BASIS } from '../../../lib/netDebt';
 import { epsAccretionPct } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
@@ -66,9 +66,6 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   const minCashBasisText = (!bankFin && mcb && (mcb.A.basis !== 'LTM' || mcb.B.basis !== 'LTM'))
     ? `${mcbPart(aTk, mcb.A)} + ${mcbPart(bTk, mcb.B)}` : null;
 
-  // Banks: target debt is not repaid and no excess cash is drawn — a genuine 0 in the sums. Non-bank: null means
-  // the target's debt is unavailable (dealCalc propagates it), so every total it feeds is unknown, never $0-based.
-  const excessUsedAmt = bankFin ? (excessCashUsed || 0) : excessCashUsed;
   const totalUses    = num(r.totalUses);
   const totalSources = num(r.totalSources);
   const foots = (totalUses != null && totalSources != null) ? Math.abs(totalUses - totalSources) < 1 : null;   // null = cannot be footed (input unavailable)
@@ -84,21 +81,19 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   ];
 
   // ── Pro-forma capitalization / leverage ─────────────────────────────────────────────────────────────
-  // Both null-preserving: an acquirer with no filed debt figure (HNGE) is unknown, not $0 — every total it feeds is "—".
-  const aDebt = num(inp.companyADebt), bDebt = num(inp.companyBDebt);   // null = unavailable, never $0
-  const aCash = num(inp.companyACash) || 0, bCash = num(inp.companyBCash) || 0;
-  const aSti  = num(inp.companyASti),      bSti  = num(inp.companyBSti);
+  // Read from dealCalc's ONE result (proFormaCapitalization), the same figures Credit Stats and the Deal Summary's
+  // Debt / EBITDA use. Non-bank: target debt repaid → acquirer debt + new debt; bank: pre-deal debt + new debt. Cash is
+  // cash & equivalents + short-term marketable securities, less the excess cash used. Null legs stay "—".
+  const bDebt = num(inp.companyBDebt), bCash = num(inp.companyBCash), bSti = num(inp.companyBSti);   // target EV header only
   const aBsAsOf = fmtAsOf(inp.companyABsAsOf, inp.companyABsBasis), bBsAsOf = fmtAsOf(inp.companyBBsAsOf, inp.companyBBsBasis);
   const sub = (x, y) => (x != null && y != null) ? x - y : null;   // null-propagating difference
-  const preDebt      = (aDebt != null && bDebt != null) ? aDebt + bDebt : null;
-  // Non-bank: target debt is repaid (assumption) → pro-forma debt = acquirer debt + new acquisition debt.
-  // Bank (Guard 1): target debt stays outstanding → legacy pre-deal debt + new debt.
-  const proFormaDebt = newDebt == null ? null : (bankFin ? (preDebt != null ? preDebt + newDebt : null) : (aDebt != null ? aDebt + newDebt : null));
-  // ONE cash definition (convention b): cash & equivalents + short-term marketable securities, both companies.
-  const preCash      = cashBucket(aCash, aSti).value + cashBucket(bCash, bSti).value;
-  const pfCash       = excessUsedAmt != null ? preCash - excessUsedAmt : null;   // cash drawn to fund the deal
-  const preNetDebt   = sub(preDebt, preCash);
-  const pfNetDebt    = sub(proFormaDebt, pfCash);
+  const cap = r.capitalization || {};
+  const preDebt      = cap.preDebt ?? null;
+  const proFormaDebt = cap.proFormaDebt ?? null;
+  const preCash      = cap.preCash ?? null;
+  const pfCash       = cap.proFormaCash ?? null;
+  const preNetDebt   = cap.preNetDebt ?? null;
+  const pfNetDebt    = cap.proFormaNetDebt ?? null;
   const combinedEBITDA = num(deal?.combinedEBITDA);          // SAME combined EBITDA as §6/§7 (incl. Y1 synergies), on the deal's EBITDA basis
   const ngEb = isNonGaapDeal(deal) ? combinedEbitdaLabel(deal.reportingBasis) : null;   // null on a GAAP deal
   const bankDeal       = isBankDeal(target, acquirer);
