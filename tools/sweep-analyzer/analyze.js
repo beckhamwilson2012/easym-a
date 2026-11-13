@@ -261,8 +261,17 @@ function analyze(rec) {
   chk(3, 'Net debt (target)', bNetDebtMine, c.netdebt.t, '$', `debt ${B.debt == null ? 'null' : fnum(B.debt)} − cash ${fnum(B.cash)} − sti ${B.shortTermInvestments == null ? '0' : fnum(B.shortTermInvestments)}`);
   // 4. Current EV (target) = livePrice×shares + netDebt ; compare §2 target EV
   const bMktcap = (B.livePrice != null && B.shares != null) ? B.livePrice * B.shares : null;
-  const bEVmine = (bMktcap != null && bNetDebtMine != null) ? bMktcap + bNetDebtMine : (bMktcap != null && c.netdebt.t != null ? bMktcap + c.netdebt.t : null);
-  chk(4, 'Current EV (target §2)', bEVmine, c.ev.t, '$', `mktcap ${fnum(bMktcap)} (px ${B.livePrice}×${B.shares}sh) + netdebt ${bNetDebtMine == null ? '(oracle null)' : fnum(bNetDebtMine)}`);
+  // Fix 10 Task 5: EV adds the target's TAGGED noncontrolling interest and preferred stock, and the deck prints
+  // each one ("PEP: EV adds noncontrolling interest $195M (MinorityInterest); no preferred tagged"). A figure
+  // stated with its source on screen is an input with its reason; read it for the TARGET only, from that line.
+  // No line → 0 added, exactly as before (an older deck that adds nothing is graded unchanged).
+  const tgtTk = (rec.B || String(rec.pair || '').split('+')[0].split('/')[1] || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const evLine = tgtTk ? (body.match(new RegExp(`(?:^|[\\s.])${tgtTk}: EV adds ([^\\n.]*)`)) || [])[1] || '' : '';
+  const evAdd = (re) => { const m = evLine.match(re); return m ? money('$' + m[1] + 'M') : 0; };
+  const bNci = evAdd(/noncontrolling interest \$([\d,.]+)M/), bPref = evAdd(/preferred stock \$([\d,.]+)M/);
+  const bEVbase = (bMktcap != null && bNetDebtMine != null) ? bMktcap + bNetDebtMine : (bMktcap != null && c.netdebt.t != null ? bMktcap + c.netdebt.t : null);
+  const bEVmine = bEVbase == null ? null : bEVbase + (bNci || 0) + (bPref || 0);
+  chk(4, 'Current EV (target §2)', bEVmine, c.ev.t, '$', `mktcap ${fnum(bMktcap)} (px ${B.livePrice}×${B.shares}sh) + netdebt ${bNetDebtMine == null ? '(oracle null)' : fnum(bNetDebtMine)}${bNci || bPref ? ` + NCI ${fnum(bNci)} + pref ${fnum(bPref)} (deck footnote)` : ''}`);
   // 5. Equity value (transaction) = offer × target shares ; compare §txn Equity value
   const eqMine = (offer != null && B.shares != null) ? offer * B.shares : null;
   chk(5, 'Equity value (offer×shares)', eqMine, equityRend, '$', `offer ${offer} × shares ${B.shares}`);

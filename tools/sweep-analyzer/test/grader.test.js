@@ -56,6 +56,8 @@ t('HNGE/OMDA Non-GAAP combined EBITDA "—" recorded EXPECTED with "companies on
 t('negative pro forma EPS read with its sign (−$0.36, stated 85.0M shares) and ties', () => { const md = fs.readFileSync(path.join(TMP, 'run1', 'f.md'), 'utf8'); assert.match(md, /12\. Pro forma EPS \(PFNI÷PFsh\): inputs PF NI \$-33M ÷ PF shares 92 \(stated 85\+new 7\) · mine -0\.36 · rendered -0\.36/); });
 t('LTM cards: combined EBITDA recomputed on LTM (156 + 206 = $362M)', () => { const md = fs.readFileSync(path.join(TMP, 'run1', 'f.md'), 'utf8'); assert.match(md, /10\. Combined EBITDA \(A\+B\+synY1\): inputs LTM A \$156M \+ B \$206M .* rendered \$362M · Δ 0\.00%/); });
 
+t('EV recompute adds the TARGET\'s footnoted NCI (PEP $195M) and ties', () => { const md = fs.readFileSync(path.join(TMP, 'run1', 'f.md'), 'utf8'); assert.match(md, /4\. Current EV \(target §2\): .*\+ NCI \$195M \+ pref \$0M \(deck footnote\) · mine \$226\.16B · rendered \$226\.16B · Δ 0\.00%/); });
+
 // ── 3. planted defects are still caught ────────────────────────────────────────────────────────────────
 const [HT, ND, HO, KP] = FIX;
 t('PLANT number: §2 target EV 62,352 → 72,352 (no reason) → WRONG flag', () => {
