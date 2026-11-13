@@ -7,7 +7,8 @@ import { BASIS_LTM, DIFFERENT_BASES } from './companyBasis';
 //
 // Rules (Fix 6):
 //   EPS     — EPS, pro forma EPS, accretion and the verdict use non-GAAP only when BOTH companies report adjusted
-//             EPS. Otherwise both stay GAAP, labeled "GAAP EPS (<ticker> doesn't report adjusted EPS)".
+//             EPS for the Year 1 period. Otherwise Year 1 EPS is "—" with the reason (Fix 10 Task 2: never a GAAP
+//             Year 1 beside non-GAAP forward years); the forward years are FMP consensus (non-GAAP).
 //   EBITDA  — each company uses its own adjusted EBITDA where reported, under the company's own name. A combined
 //             EBITDA adds the two only when both are on the same basis; otherwise "—" (companies on different bases).
 //   Period  — non-GAAP figures are fiscal-year only. A company card on LTM shows its non-GAAP rows as "—".
@@ -95,8 +96,8 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
   if (!epsNonGaap) {
     const missing = [!a.eps && tA, !b.eps && tB].filter(Boolean);
     epsNote = missing.length
-      ? `GAAP EPS (${missing.join(' and ')} ${missing.length > 1 ? 'don’t' : 'doesn’t'} report adjusted EPS)`
-      : `GAAP EPS (${FY_ONLY})`;
+      ? `Year 1 non-GAAP EPS not available: ${missing.join(' and ')} ${missing.length > 1 ? 'don’t' : 'doesn’t'} report adjusted EPS`
+      : `Year 1 non-GAAP EPS not available: ${FY_ONLY}`;
   }
 
   // EBITDA: each company on its own.
@@ -120,16 +121,27 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
 const NOT_REPORTED = /^no (adjusted|non-gaap)\b|^no adjusted (eps|ebitda) reported$/i;
 function noChangeLine(a, b, tA, tB, epsNote) {
   const parts = [];
-  if (a.eps && b.eps) parts.push(`EPS stays GAAP: ${epsNote}`);   // both report adjusted EPS, but an LTM card keeps it GAAP
-  else [[a, tA], [b, tB]].forEach(([x, t]) => { if (!x.eps) parts.push(NOT_REPORTED.test(x.epsReason || '') ? `${t} doesn’t report adjusted EPS` : `${t}’s adjusted EPS doesn’t tie to GAAP in its release`); });
-  [[a, tA], [b, tB]].forEach(([x, t]) => { if (!x.ebitda) parts.push(NOT_REPORTED.test(x.ebitdaReason || '') ? `${t} doesn’t report adjusted EBITDA` : `${t}’s adjusted EBITDA doesn’t tie to GAAP in its release`); });
-  return `Non-GAAP changes nothing here: ${parts.join('; ')}.`;
+  // Fix 10 Task 2: Non-GAAP now changes the EPS figures (Year 1 "—", forward years on consensus), so the line says that.
+  const eps = [];
+  if (a.eps && b.eps) eps.push(epsNote.replace(/^Year 1 non-GAAP EPS not available: /, ''));   // both report, but an LTM card has no non-GAAP period
+  else [[a, tA], [b, tB]].forEach(([x, t]) => { if (!x.eps) eps.push(NOT_REPORTED.test(x.epsReason || '') ? `${t} doesn’t report adjusted EPS` : `${t}’s adjusted EPS doesn’t tie to GAAP in its release`); });
+  const ebitda = [];
+  [[a, tA], [b, tB]].forEach(([x, t]) => { if (!x.ebitda) ebitda.push(NOT_REPORTED.test(x.ebitdaReason || '') ? `${t} doesn’t report adjusted EBITDA` : `${t}’s adjusted EBITDA doesn’t tie to GAAP in its release`); });
+  return `On Non-GAAP, Year 1 EPS is “—” (${eps.join('; ')}) and the forward years use FMP consensus (non-GAAP). EBITDA stays computed: ${ebitda.join('; ')}.`;
 }
 
 // The deal model's inputs on the plan's basis. GAAP: the same object, untouched.
 export function applyReportingBasis(inputs, plan) {
   if (!plan || plan.selected !== NON_GAAP) return inputs;
   const out = { ...inputs, reportingBasis: NON_GAAP };
+  if (!plan.eps.nonGaap) {
+    // Fix 10 Task 2: no company-reported EPS for Year 1 → Year 1's EPS legs are absent ("—"), never the GAAP figures.
+    // The forward years (consensus, non-GAAP) still compute: forwardYearInputs replaces both net incomes there.
+    out.companyAEPS = null;
+    out.companyANetIncome = null;
+    out.companyBNetIncome = null;
+    out.year1Reason = plan.eps.note;
+  }
   if (plan.eps.nonGaap) {
     const A = plan.eps.A, B = plan.eps.B;
     out.companyANetIncome = A.netIncome;
@@ -140,8 +152,8 @@ export function applyReportingBasis(inputs, plan) {
     out.companyBEPS = B.value;
     out.companyBDilutedShares = B.dilutedShares;
   }
-  out.companyAEpsBasis = plan.eps.nonGaap ? NON_GAAP : GAAP;
-  out.companyBEpsBasis = plan.eps.nonGaap ? NON_GAAP : GAAP;
+  out.companyAEpsBasis = NON_GAAP;   // Year 1 is non-GAAP or "—"; the forward years are consensus (non-GAAP)
+  out.companyBEpsBasis = NON_GAAP;
   ['A', 'B'].forEach((P) => {
     const e = plan.ebitda[P];
     out[`company${P}EbitdaBasis`] = e.nonGaap ? NON_GAAP : GAAP;

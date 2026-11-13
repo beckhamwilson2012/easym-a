@@ -72,16 +72,20 @@ describe('reportingBasis — the one GAAP | Non-GAAP switch', () => {
     expect(calculate(x).combinedEBITDA).toBe(String(-50 + 100));
   });
 
-  test('EPS rule: one side without adjusted EPS → GAAP EPS for both, labeled with the ticker', () => {
+  test('EPS rule (Fix 10 Task 2): one side without adjusted EPS → Year 1 EPS is "—" with the reason, never GAAP', () => {
     const plan = resolveReportingBasis({ selected: NON_GAAP, ngA: NET, ngB: IRDM, inputs: base, tickerA: 'NET', tickerB: 'IRDM' });
     expect(plan.eps.nonGaap).toBe(false);
-    expect(plan.eps.note).toBe('GAAP EPS (IRDM doesn’t report adjusted EPS)');
+    expect(plan.eps.note).toBe('Year 1 non-GAAP EPS not available: IRDM doesn’t report adjusted EPS');
     const x = applyReportingBasis(base, plan);
-    expect(x.companyAEPS).toBe(-0.29);           // GAAP for BOTH — NET's adjusted EPS is not used alone
-    expect(x.companyANetIncome).toBe(-102.267);
-    expect(x.companyBNetIncome).toBe(107.741);
+    expect(x.companyAEPS).toBeNull();            // neither GAAP nor NET's adjusted EPS alone
+    expect(x.companyANetIncome).toBeNull();
+    expect(x.companyBNetIncome).toBeNull();
+    expect(x.year1Reason).toBe(plan.eps.note);
+    const r = calculate(x);
+    expect(r.proFormaEPS).toBeNull();            // "—", never a 0-coerced EPS
+    expect(r.companyAEPS).toBeNull();
     const both = resolveReportingBasis({ selected: NON_GAAP, ngA: RKLB, ngB: IRDM, inputs: base, tickerA: 'RKLB', tickerB: 'IRDM' });
-    expect(both.eps.note).toBe('GAAP EPS (RKLB and IRDM don’t report adjusted EPS)');
+    expect(both.eps.note).toBe('Year 1 non-GAAP EPS not available: RKLB and IRDM don’t report adjusted EPS');
   });
 
   test('EBITDA rule: both adjusted (RKLB/IRDM) → each its own figure and name, combined added on one basis', () => {
@@ -113,7 +117,7 @@ describe('reportingBasis — the one GAAP | Non-GAAP switch', () => {
     const ltm = { ...base, companyBBasis: BASIS_LTM };
     const plan = resolveReportingBasis({ selected: NON_GAAP, ngA: NET, ngB: { ...DDOG, figures: { ...DDOG.figures, ebitda: fig(900, { name: 'Adjusted EBITDA' }) } }, inputs: ltm, tickerA: 'NET', tickerB: 'DDOG' });
     expect(plan.eps.nonGaap).toBe(false);
-    expect(plan.eps.note).toBe(`GAAP EPS (${FY_ONLY})`);
+    expect(plan.eps.note).toBe(`Year 1 non-GAAP EPS not available: ${FY_ONLY}`);
     expect(plan.ebitda.B).toMatchObject({ nonGaap: true, value: null, note: FY_ONLY });
     const x = applyReportingBasis(ltm, plan);
     expect(x.companyBEBITDA).toBeNull();         // "—", never the GAAP figure under a non-GAAP label

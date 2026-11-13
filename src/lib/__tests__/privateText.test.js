@@ -79,7 +79,7 @@ describe('verdict reason', () => {
   });
 
   test('HNGE on FY (EPS −7.77): the step-2 reason names the private target, not HNGE', () => {
-    const fy = { ...tuckin, companyANetIncome: -424.087, companyAEPS: -7.77, companyADilutedShares: 54.577 };
+    const fy = { ...tuckin, companyANetIncome: -424.087, companyAEPS: -7.77, companyADilutedShares: 54.577, reportingBasis: 'Non-GAAP' };
     const v = dealVerdict({ deal: deal(fy), model: { derived: {}, verifiedData: { acquirer: {} } }, acquirerFwd: hngeFwd, targetFwd: [], acquirerName: 'HNGE', targetName: 'Target Company' });
     expect(v.step).toBeNull();
     expect(v.line).toMatch(/Target Company has no forecast EPS \(a private company has no analyst consensus\)/);
@@ -87,7 +87,7 @@ describe('verdict reason', () => {
   });
 
   test('an acquirer with no forecast at all still says so', () => {
-    const fy = { ...tuckin, companyANetIncome: -424.087, companyAEPS: -7.77 };
+    const fy = { ...tuckin, companyANetIncome: -424.087, companyAEPS: -7.77, reportingBasis: 'Non-GAAP' };
     const v = dealVerdict({ deal: deal(fy), model: { derived: {}, verifiedData: { acquirer: {} } }, acquirerFwd: [], targetFwd: [], acquirerName: 'HNGE', targetName: 'Target Company' });
     expect(v.line).toMatch(/no forecast EPS for HNGE/);
   });

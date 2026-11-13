@@ -153,7 +153,7 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
       bullets: [
         'Company descriptions, CEO, headquarters, employee counts, IPO date, sector / industry classification, beta, average trading volume, and company logos are from the Financial Modeling Prep company profile.',
         'Segment, geography, and customer-mix figures, where shown, are illustrative and are not company-disclosed breakdowns.',
-        'The pro-forma forward columns use sell-side ANALYST CONSENSUS estimates (via Financial Modeling Prep) for forward revenue and EPS — these are analyst forecasts, not the app’s own model. The accretion, synergy and combination MATH applied on top of those inputs IS the app’s model. Multi-year synergies are entered assumptions, not guidance; forward operating expense is shown as "—" rather than estimated.',
+        'The pro-forma forward columns use FMP CONSENSUS (NON-GAAP) estimates (sell-side analysts via Financial Modeling Prep) for forward revenue and EPS. On a GAAP deck the forward EPS years are “—”: consensus is non-GAAP; no GAAP forecast. These are analyst forecasts, not the app’s own model. The accretion, synergy and combination MATH applied on top of those inputs IS the app’s model. Multi-year synergies are entered assumptions, not guidance; forward operating expense is shown as "—" rather than estimated.',
       ],
     },
     {
@@ -247,6 +247,6 @@ function nonGaapSourceBullets(plan, acquirer, target) {
     : `${t}: computed (operating income + D&A; ${t} reports no adjusted EBITDA)`);
   out.push(`EBITDA by company — ${eb(plan.ebitda.A, A)}; ${eb(plan.ebitda.B, B)}. ${plan.ebitda.combinable ? `Combined EBITDA adds the two on one basis (${plan.ebitda.A.nonGaap ? 'non-GAAP' : 'computed'}).` : `Combined EBITDA and the leverage ratios on it are “—”: ${DIFFERENT_BASES}.`}`);
   out.push('Operating income, gross profit, operating expenses and their margins are GAAP. The comparables and screening views use GAAP and computed figures for every company, including these two, because the peers carry no company-reported figures in this deck.');
-  out.push('Forward years are FMP analyst consensus. FMP does not designate a basis for it; it is not combined with Year-1 figures in one growth or accretion figure, and each forward row is labeled consensus.');
+  out.push('Forward years are FMP consensus (non-GAAP). FMP does not label the basis; its EPS consensus matches the companies’ own non-GAAP guidance where they give one. Year 1 is non-GAAP company-reported EPS or “—”, never a GAAP figure beside non-GAAP forward years.');
   return out;
 }

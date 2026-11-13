@@ -51,7 +51,7 @@ describe('buildNarrative', () => {
 describe('reporting-basis toggle: one line when Non-GAAP changes nothing', () => {
   test('HNGE/TDOC: names who lacks what; TDOC\'s EBITDA is "doesn\'t tie", never "doesn\'t report"', () => {
     const plan = resolveReportingBasis({ selected: NON_GAAP, ngA: HNGE, ngB: TDOC, inputs: {}, tickerA: 'HNGE', tickerB: 'TDOC' });
-    expect(plan.noChange).toBe('Non-GAAP changes nothing here: TDOC doesn’t report adjusted EPS; HNGE doesn’t report adjusted EBITDA; TDOC’s adjusted EBITDA doesn’t tie to GAAP in its release.');
+    expect(plan.noChange).toBe('On Non-GAAP, Year 1 EPS is “—” (TDOC doesn’t report adjusted EPS) and the forward years use FMP consensus (non-GAAP). EBITDA stays computed: HNGE doesn’t report adjusted EBITDA; TDOC’s adjusted EBITDA doesn’t tie to GAAP in its release.');
   });
 
   test('HNGE/OMDA: OMDA\'s Adjusted EBITDA is a real change → no "nothing" line', () => {
@@ -62,7 +62,7 @@ describe('reporting-basis toggle: one line when Non-GAAP changes nothing', () =>
 
   test('both report adjusted EPS but a card is on LTM, and neither reports EBITDA → the line says why EPS stays GAAP', () => {
     const plan = resolveReportingBasis({ selected: NON_GAAP, ngA: HNGE, ngB: HNGE, inputs: { companyABasis: BASIS_LTM }, tickerA: 'HNGE', tickerB: 'X' });
-    expect(plan.noChange).toMatch(/^Non-GAAP changes nothing here: EPS stays GAAP: GAAP EPS \(non-GAAP available for fiscal year only\)/);
+    expect(plan.noChange).toMatch(/^On Non-GAAP, Year 1 EPS is “—” \(non-GAAP available for fiscal year only\)/);
   });
 
   test('GAAP selected: no line', () => {

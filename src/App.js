@@ -23,7 +23,8 @@ import { ReportingBasisToggle } from './components/shared/ReportingBasisToggle';
 import { NON_GAAP, nonGaapAvailability, effectiveBasis, resolveReportingBasis, applyReportingBasis } from './lib/reportingBasis';
 import { synergySchedule } from './lib/synergies';
 import { BASIS_FY, ltmAvailability, companyInputs, combination } from './lib/companyBasis';
-import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, firstForwardColumn, highestAccretivePremium, premiumReference, PRICE_BASIS_TODAY } from './lib/offerPremium';
+import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, highestAccretivePremium, premiumReference, PRICE_BASIS_TODAY } from './lib/offerPremium';
+import { selectForwardYears } from './lib/forwardYears';
 import './App.css';
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -847,7 +848,9 @@ function App() {
     const selected = effectiveBasis(basisChoiceRef.current, basisAvailability(effectiveInputs));
     const plan = resolveReportingBasis({ selected, ngA: nonGaapRef.current.a, ngB: nonGaapRef.current.b, inputs: effectiveInputs, tickerA, tickerB });
     const calcInputs = applyReportingBasis(effectiveInputs, plan);
-    const basis = plan.eps.nonGaap ? 'Non-GAAP' : 'GAAP';
+    // The deal is on the basis the toggle selected (Fix 10 Task 2): on Non-GAAP, Year 1 is non-GAAP or "—" and the forward
+    // years are consensus (non-GAAP), so the deck never labels a Non-GAAP deal "GAAP basis".
+    const basis = plan.selected === 'Non-GAAP' ? 'Non-GAAP' : 'GAAP';
     // Guard 1 (Stage 2E): tag the resolved inputs with the deck's isBankDeal (SIC-based, catches JPM/BAC) so
     // dealCalc's sources-of-funds construction — and every sensitivity cell that shares it — keeps bank deals
     // on today's 100%-debt behavior. Bank classification is read here, never modified.
@@ -1312,12 +1315,19 @@ function App() {
       })()}
       {bPub ? (
         <>
-          <SuggestedPremiumBox spot={refB} solve={highestAccretivePremium({
-              calcInputs: modelInputs(inputs).resolvedWithBank, spot: refB,
-              synergyY1: synergySchedule(inputs).years[0].ebitda,   // what the build will use
-              acquirerFwd: firstForwardColumn(fwdPnl.a), targetFwd: firstForwardColumn(fwdPnl.b), pnlLoading: fwdPnl.loading,
-              acquirerName: tickerA, targetName: tickerB,
-            })} onUse={setOfferFromPremium} />
+          <SuggestedPremiumBox spot={refB} solve={(() => {
+              // Year 2 is slide 9's Year 2: the same forward-year selection (src/lib/forwardYears.js), so a GAAP deal and a
+              // year that overlaps Year 1 are excluded here exactly as they are on the deck.
+              const calcInputs = modelInputs(inputs).resolvedWithBank;
+              const cols = (p) => (p && Array.isArray(p.columns) ? p.columns.filter(c => !c.actual) : []);
+              const y2 = selectForwardYears({ inputs: calcInputs, acquirerFwd: cols(fwdPnl.a), targetFwd: cols(fwdPnl.b), acquirerName: tickerA, targetName: tickerB }).slots[0];
+              return highestAccretivePremium({
+                calcInputs, spot: refB,
+                synergyY1: synergySchedule(inputs).years[0].ebitda,   // what the build will use
+                acquirerFwd: y2.epsOk ? y2.a : null, targetFwd: y2.epsOk ? y2.b : null, forwardReason: y2.epsOk ? null : y2.reason, pnlLoading: fwdPnl.loading,
+                acquirerName: tickerA, targetName: tickerB,
+              });
+            })()} onUse={setOfferFromPremium} />
           <PriceTiles spot={spotB} quoteAsOf={priceStatusB.quoteAsOf} retrievedAt={priceStatusB.retrievedAt} offer={inputs.offerPricePerShare}
             basis={priceBasis} onBasis={setPriceBasis} referenceDate={unaffectedDate} onReferenceDate={setUnaffectedDate}
             beforeClose={unaffected} referencePrice={refB} />

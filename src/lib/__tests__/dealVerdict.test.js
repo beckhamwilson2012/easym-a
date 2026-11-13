@@ -25,18 +25,27 @@ describe('deal verdict ladder', () => {
     // (2 × 137.5 − 250) / 0.79 = 31.6456
     expect(v.breakeven).toBeCloseTo(25 / 0.79, 9);
     expect(calcProFormaEPS(30, v.breakeven, inp)).toBeCloseTo(2, 12);
-    expect(v.line).toBe('Breaks even at $32M of synergies; entered $10M');
+    expect(v.line).toBe('Breaks even at $32M of synergies; entered $10M. Verdict and breakeven use Year 1.');
+  });
+
+  // Forward years are FMP consensus (non-GAAP): they run only on a Non-GAAP deal (Fix 10 Task 2).
+  const fwdA = [{ label: 'FY2026E', fy: 2026, eps: -0.5 }, { label: 'FY2027E', fy: 2027, eps: 3 }];
+  const fwdB = [{ label: 'FY2026E', fy: 2026, eps: 1 }, { label: 'FY2027E', fy: 2027, eps: 2 }];
+  const ngFy = { reportingBasis: 'Non-GAAP', companyABasis: 'fy', companyBBasis: 'fy', companyAFiscalYearEnd: '2025-12-31', companyBFiscalYearEnd: '2025-12-31' };
+
+  test('step 2 on a GAAP deal: forward years are "—" (consensus is non-GAAP; no GAAP forecast)', () => {
+    const inp = inputs({ companyANetIncome: -100, companyAEPS: -1 });
+    const v = dealVerdict({ deal: deal(inp, [10, 20, null]), model: model(), acquirerFwd: fwdA, targetFwd: fwdB });
+    expect(v.step).toBeNull();
+    expect(v.line).toMatch(/forward years —: consensus is non-GAAP; no GAAP forecast/);
   });
 
   test('step 2: first forecast year with positive acquirer consensus EPS', () => {
-    const inp = inputs({ companyANetIncome: -100, companyAEPS: -1 });
-    const v = dealVerdict({
-      deal: deal(inp, [10, 20, 30]), model: model(),
-      acquirerFwd: [{ label: 'FY2026E', fy: 2026, eps: -0.5 }, { label: 'FY2027E', fy: 2027, eps: 3 }],
-      targetFwd: [{ label: 'FY2026E', eps: 1 }, { label: 'FY2027E', eps: 2 }],
-    });
+    const inp = inputs({ companyANetIncome: -100, companyAEPS: -1, ...ngFy });
+    const v = dealVerdict({ deal: deal(inp, [10, 20, 30]), model: model(), acquirerFwd: fwdA, targetFwd: fwdB });
     expect(v.step).toBe(2);
-    expect(v.tag).toBe('EPS test, FY2027E (first profitable year)');
+    expect(v.tag).toBe('EPS test, FY2027E (first profitable year) · FMP consensus (non-GAAP)');
+    expect(v.line).toMatch(/Verdict and breakeven use Year 3 \(FY2027E\); Year 1 —: the acquirer's standalone EPS is not positive; Year 2 \(FY2026E\) —: the acquirer's consensus EPS is not positive\./);
     // FY2027E: NI 300 + 100 + 20 × 0.79 = 415.8 over 137.5 = 3.024 > 3; slide 8 pairs FY2027E with Year 2 synergies
     expect(v.proFormaEPS).toBeCloseTo(415.8 / 137.5, 12);
     expect(v.verdict).toBe('accretive');

@@ -39,9 +39,12 @@ export function acquirerSharePrice(inputs) {
 export function acquirerStandaloneEPS(inputs) {
   const reported = parseFloat(inputs.companyAEPS);
   if (Number.isFinite(reported) && reported !== 0) return reported;
-  const ni     = parseFloat(inputs.companyANetIncome) || 0;
+  // An absent net income is an absent EPS (null → "—"), never 0: on a Non-GAAP deal with no company-reported Year 1 EPS
+  // both legs are null on purpose (Fix 10 Task 2), and `|| 0` here read that as a $0.00 standalone EPS (pattern B).
+  const ni     = parseFloat(inputs.companyANetIncome);
+  if (!Number.isFinite(ni)) return null;
   const shares = parseFloat(inputs.companyADilutedShares) || parseFloat(inputs.companyAShares) || 0;
-  return shares > 0 ? ni / shares : 0;
+  return shares > 0 ? ni / shares : null;
 }
 
 // Effective acquirer DILUTED share count for the EPS basis. Prefer the real weighted-average diluted
@@ -348,7 +351,7 @@ export function calculate(inputs) {
     basisNote: combination(inputs).note,
     // Standalone EPS on the net-income÷shares basis used for the accretion comparison (so the
     // dashboard "Before → After" and the percent change are internally consistent).
-    companyAEPS:        standaloneEPS.toFixed(2),
+    companyAEPS:        standaloneEPS == null ? null : standaloneEPS.toFixed(2),
     // True only when the acquirer diluted-share count fell all the way back to the cover-page count
     // (no weighted-avg diluted AND no reported EPS to derive from). Baseline and pro-forma still share
     // that basis (they never disagree), but it is approximate. False whenever a real or EPS-derived

@@ -59,12 +59,13 @@ export const firstForwardColumn = (pnl) => (pnl && Array.isArray(pnl.columns)) ?
 // The highest whole-percent premium on the slider that is still accretive in Year 2, solved by running the deal's
 // own accretion function at every step. Returns { premium, offer, accretionPct, atLimit } or { premium: null, reason }.
 // Never estimates: any missing input ends in a reason.
-export function highestAccretivePremium({ calcInputs, spot, synergyY1, acquirerFwd, targetFwd, pnlLoading, acquirerName, targetName }) {
+export function highestAccretivePremium({ calcInputs, spot, synergyY1, acquirerFwd, targetFwd, forwardReason, pnlLoading, acquirerName, targetName }) {
   const none = (reason) => ({ premium: null, reason });
   const A = acquirerName || 'The acquirer';
   const T = targetName || 'The target';
   if (liveSpot(spot) == null) return none(`There is no live price for ${T}.`);
   if (pnlLoading) return none('Forward estimates are still loading.');
+  if (forwardReason) return none(`Year 2 is “—”: ${forwardReason}.`);
   const aEps = acquirerFwd?.eps ?? null;
   const tEps = targetFwd?.eps ?? null;
   if (aEps == null) return none(`There is no Year 2 consensus EPS for ${A}.`);

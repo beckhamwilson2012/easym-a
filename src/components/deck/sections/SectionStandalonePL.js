@@ -221,7 +221,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
                 <th colSpan={nActual} style={{ padding: '2px 6px', textAlign: 'center', fontSize: 8, fontWeight: 700, letterSpacing: 1, color: '#6B7280', background: '#F3F4F6', textTransform: 'uppercase' }}>◂ Actual · Reported</th>
               )}
               {nEst > 0 && (
-                <th colSpan={nEst} style={{ padding: '2px 6px', textAlign: 'center', fontSize: 8, fontWeight: 700, letterSpacing: 1, color: '#1E3A5F', background: '#E8F1FB', borderLeft: '2px solid #7FA8D9', textTransform: 'uppercase' }}>Estimate · Consensus ▸</th>
+                <th colSpan={nEst} style={{ padding: '2px 6px', textAlign: 'center', fontSize: 8, fontWeight: 700, letterSpacing: 1, color: '#1E3A5F', background: '#E8F1FB', borderLeft: '2px solid #7FA8D9', textTransform: 'uppercase' }}>Estimate · FMP consensus (non-GAAP) ▸</th>
               )}
             </tr>
             <tr>
@@ -233,12 +233,10 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
                   borderLeft: c.isLtm ? '2px solid #E0A93A' : (divider(i) ? '2px solid #7FA8D9' : 'none'),
                 }}>
                   <div style={{ fontSize: 11, fontWeight: 700 }}>{c.label}</div>
-                  {/* Forward basis label: FMP supplies a single UNDESIGNATED consensus series — the app cannot
-                      source a GAAP or non-GAAP claim for it, so the label asserts NEITHER. Do NOT key this off
-                      nonGaap.allReconciled: that flag describes HISTORICAL 8-K extraction (a different basis
-                      question), and the forward columns come from FMP analyst-estimates regardless of it. */}
+                  {/* Forward basis label (Fix 10 Task 2): FMP's consensus is on the non-GAAP basis — its EPS matches the
+                      companies' own non-GAAP guidance (FIX6: NET $1.35, DDOG $2.73–2.75). Each column names its basis. */}
                   <div style={{ fontSize: 7.5, fontWeight: 600, letterSpacing: 0.2, color: c.isLtm ? '#FBE3A6' : (c.actual ? '#9DB4D4' : '#FCD34D'), marginTop: 1, whiteSpace: 'nowrap' }}>
-                    {c.isLtm ? 'GAAP · TTM' : (c.actual ? 'GAAP' : 'ANALYST CONSENSUS')}
+                    {c.isLtm ? 'GAAP · TTM' : (c.actual ? 'GAAP' : 'NON-GAAP')}
                   </div>
                 </th>
               ))}
@@ -332,7 +330,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
       </div>
       <div style={{ fontSize: 9, color: '#6B7280', fontStyle: 'italic', lineHeight: 1.45, marginTop: 6 }}>
         <strong style={{ color: NAVY }}>Basis: </strong>
-        Actual years (GAAP) from SEC EDGAR filings; forward years are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>. The step in Operating Income / Net Income / EPS at the actual→estimate boundary reflects the actual→consensus transition, not organic growth. Margins are computed on each column's own basis.
+        Actual years (GAAP) from SEC EDGAR filings; forward years are <strong>FMP consensus (non-GAAP)</strong> (FMP analyst-estimates; FMP does not label the basis, and its EPS consensus matches the companies' own non-GAAP guidance where they give one). Each column names its basis: GAAP actuals and non-GAAP consensus are never combined in one figure. The step in Operating Income / Net Income / EPS at the actual→estimate boundary reflects the actual→consensus transition, not organic growth. Margins are computed on each column's own basis.
         {showLtm ? <> The <strong>LTM</strong> column is the trailing twelve months (latest annual + interim YTD − prior-year YTD), a GAAP actual as of {asOfShort(L.asOf)}.{ltmDaMissing ? <> <sup>d</sup> LTM EBITDA is shown on an operating-income basis — interim D&amp;A on the same basis as the annual EBITDA is not tagged for this filer (a differently-scoped cash-flow D&amp;A is not mixed in).</> : null}</> : null}
         {incomeNote ? <> <strong style={{ color: NAVY }}>Cost of revenue / gross profit: </strong>{incomeNote}</> : null}
         {ebitdaNote ? <> {ebitdaNote}</> : null}
@@ -490,7 +488,7 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
       <PageHeader
         title={`Standalone P&L — ${role || 'Target'}: ${target.name || 'N/A'}`}
         subtitle={pnl
-          ? `${pnl.columns.length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''} · $M · actuals GAAP (SEC EDGAR), forward analyst consensus (FMP)${ngPlan && (ng || ngEbitda) ? ', non-GAAP rows company reported (earnings 8-K)' : ''}`
+          ? `${pnl.columns.length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''} · $M · actuals GAAP (SEC EDGAR), forward FMP consensus (non-GAAP)${ngPlan && (ng || ngEbitda) ? ', non-GAAP rows company reported (earnings 8-K)' : ''}`
           : `${fyLabel} · $ in millions · profitability Non-GAAP where labeled (see basis note)`}
       />
 

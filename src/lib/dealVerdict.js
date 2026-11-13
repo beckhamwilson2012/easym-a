@@ -1,11 +1,13 @@
 import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration } from '../utils/dealCalc';
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
 import { NON_GAAP } from './reportingBasis';
+import { selectForwardYears, slotName, CONSENSUS_BASIS } from './forwardYears';
 
 // The deal verdict ladder. Deal Summary and Executive Summary both render this one result. It uses the first test
 // that this deal's own data can compute, and names the missing input when none can:
 //   1. EPS accretion / (dilution) in Year 1, when the acquirer's standalone EPS is positive.
-//   2. Otherwise the first forecast year where the acquirer's consensus EPS is positive (slide 8's own forward row).
+//   2. Otherwise the first forecast year where the acquirer's consensus EPS is positive (slide 9's own forward row, chosen
+//      by src/lib/forwardYears.js: no year overlapping Year 1, and none at all on a GAAP deal — consensus is non-GAAP).
 //   3. Otherwise run-rate (Year 3) synergies capitalized at the acquirer's P/E, or EV/EBITDA when the P/E is not
 //      meaningful, against the premium paid in dollars. The synergy basis matches the multiple: EV/EBITDA is a
 //      pre-tax multiple, so it capitalizes Year 3 synergies as entered (pre-tax); P/E is after tax, so it
@@ -86,44 +88,43 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
         step: 1, tag: epsTag(TAG_YEAR1), verdict: t.verdict,
         text: verdictText(t),
         pct: t.pct, standaloneEPS: t.standaloneEPS, proFormaEPS: t.proFormaEPS, breakeven: t.breakeven,
-        entered: y1?.entered ? y1.ebitda : null,
-        line: breakevenLine(t.breakeven, y1?.entered ? y1.ebitda : null),
+        entered: y1?.entered ? y1.ebitda : null, yearsUsed: ['Year 1'],
+        line: withYears(breakevenLine(t.breakeven, y1?.entered ? y1.ebitda : null), 'Year 1'),
       };
     }
     missing.push(results.basesDiffer ? `Year 1 combines companies on different bases` : `Year 1 pro forma EPS can't be computed`);
   } else {
-    missing.push(`${A}'s standalone EPS is not positive`);
+    missing.push(inputs.year1Reason ? `Year 1 —: ${inputs.year1Reason}` : `${A}'s standalone EPS is not positive`);
   }
 
-  // ── 2. First forecast year with positive acquirer consensus EPS (slide 8's forward rows, same pairing) ──
+  // ── 2. First forecast year with positive acquirer consensus EPS (slide 9's forward rows, the same selection) ──
   if (fwdLoading) return { step: null, verdict: null, text: '—', tag: null, line: 'Forward estimates are still loading.' };
-  const aF = acquirerFwd || [], bF = targetFwd || [];
-  const n = Math.min(aF.length, bF.length);
-  const k = aF.slice(0, n).findIndex(c => c && c.eps != null && c.eps > 0);
-  if (k >= 0 && bF[k]?.eps != null && acquirerDilutedShares(inputs).shares > 0) {
-    const fwd = forwardYearInputs(inputs, aF[k].eps, bF[k].eps);
-    const syn = parseFloat(synY[k]) || 0;   // slide 8's forward row reads the same figure, with nothing entered as none
+  const sel = selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerName: A, targetName: T, privateTarget: privateConsideration(inputs) != null });
+  const usable = sel.slots.filter(s => s.epsOk);
+  const pick = usable.find(s => s.a.eps > 0);
+  if (pick && acquirerDilutedShares(inputs).shares > 0) {
+    const fwd = forwardYearInputs(inputs, pick.a.eps, pick.b.eps);
+    const syn = parseFloat(synY[pick.synYr - 1]) || 0;   // slide 9's forward row reads the same figure, with nothing entered as none
     const t = epsTest(offer, syn, fwd);
     if (t) {
-      const yr = deal?.synergies?.years?.[k];
-      const yearLabel = label(aF[k]);
+      const yr = deal?.synergies?.years?.[pick.synYr - 1];
+      const yearLabel = pick.label;
+      const skipped = [y1SkipReason(), ...sel.slots.filter(s => s !== pick && s.year < pick.year).map(s => `${slotName(s)} —: ${s.reason || `${A}'s consensus EPS is not positive`}`)].filter(Boolean);
       return {
-        step: 2, tag: ngDeal ? `${tagForwardYear(yearLabel)} (consensus EPS)` : tagForwardYear(yearLabel), verdict: t.verdict, year: yearLabel,
+        step: 2, tag: `${tagForwardYear(yearLabel)} · ${CONSENSUS_BASIS}`, verdict: t.verdict, year: yearLabel,
         text: verdictText(t),
         pct: t.pct, standaloneEPS: t.standaloneEPS, proFormaEPS: t.proFormaEPS, breakeven: t.breakeven,
-        entered: yr?.entered ? yr.ebitda : null,
-        line: breakevenLine(t.breakeven, yr?.entered ? yr.ebitda : null),
+        entered: yr?.entered ? yr.ebitda : null, yearsUsed: [slotName(pick)],
+        line: withYears(breakevenLine(t.breakeven, yr?.entered ? yr.ebitda : null), slotName(pick), skipped),
       };
     }
-    missing.push(`pro forma EPS for ${label(aF[k])} can't be computed`);
-  } else if (k >= 0) {
-    missing.push(`${T} has no consensus EPS for ${label(aF[k])}`);
+    missing.push(`pro forma EPS for ${slotName(pick)} can't be computed`);
+  } else if (sel.gaap) {
+    missing.push(`forward years —: ${sel.slots[0].reason}`);
+  } else if (usable.length) {
+    missing.push(`${A}'s consensus EPS is not positive in any forecast year`);
   } else {
-    // n is the PAIRED year count, min(acquirer, target): when the acquirer has forecast years and the target has none
-    // (every private target), n is 0 because of the target. Name the side that is actually missing.
-    missing.push(aF.length === 0 ? `no forecast EPS for ${A}`
-      : bF.length === 0 ? `${T} has no forecast EPS${privateConsideration(inputs) != null ? ' (a private company has no analyst consensus)' : ''}`
-      : `${A}'s consensus EPS is not positive in any forecast year`);
+    missing.push(...sel.slots.map(s => `${slotName(s)} —: ${s.reason}`));
   }
 
   // ── 3. Synergies vs premium ──
@@ -161,5 +162,11 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   }
   return { step: null, verdict: null, text: '—', tag: null, line: `No test can be computed: ${missing.join('; ')}.`, missing };
 
-  function label(c) { return c?.label || (c?.fy != null ? `FY${c.fy}E` : 'that year'); }
+  function y1SkipReason() { return y1Base > 0 ? null : `Year 1 —: ${inputs.year1Reason || `${A}'s standalone EPS is not positive`}`; }
+}
+
+// The breakeven line plus which years the verdict and breakeven used, and why any earlier year did not compute.
+function withYears(line, used, skipped = []) {
+  const u = `Verdict and breakeven use ${used}${skipped.length ? `; ${skipped.join('; ')}` : ''}.`;
+  return line ? `${line}. ${u}` : u;
 }

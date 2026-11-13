@@ -495,7 +495,7 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum, exhib
         {fwd.length > 0 && (
           <div style={{ marginTop: 18 }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 8 }}>
-              Forward Consensus Estimates <span style={{ fontWeight: 400, color: '#9CA3AF', textTransform: 'none' }}>(FMP analyst panel — forward, not filings)</span>
+              Forward Consensus Estimates <span style={{ fontWeight: 400, color: '#9CA3AF', textTransform: 'none' }}>(FMP consensus (non-GAAP) — forward, not filings)</span>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               {fwd.map((e) => (

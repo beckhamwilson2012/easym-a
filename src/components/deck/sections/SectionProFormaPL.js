@@ -4,7 +4,8 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote, fmtInterest } from '../shared/deckTokens';
-import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, forwardYearInputs, TAX_RATE } from '../../../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, forwardYearInputs, TAX_RATE, privateConsideration } from '../../../utils/dealCalc';
+import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST } from '../../../lib/forwardYears';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { isNonGaapDeal } from '../../../lib/reportingBasis';
@@ -88,8 +89,11 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   // Shared /api/pnl-derived columns (both parts).
   const aFwd = aPnl ? aPnl.columns.filter(c => !c.actual) : [];
   const bFwd = bPnl ? bPnl.columns.filter(c => !c.actual) : [];
-  const aAct = aPnl ? [...aPnl.columns].reverse().find(c => c.actual) : null;
-  const bAct = bPnl ? [...bPnl.columns].reverse().find(c => c.actual) : null;
+  // Years 2–4: one selection for the tables and the strip (and the verdict), src/lib/forwardYears.js.
+  const sel = selectForwardYears({ inputs: deal?._inputs || {}, acquirerFwd: aFwd, targetFwd: bFwd, acquirerName: aTk, targetName: bTk,
+    privateTarget: privateConsideration(deal?._inputs || {}) != null });
+  // The column a year's growth is measured against: that company's previous fiscal year, actual or consensus.
+  const prevCol = (pnl, fy) => (pnl && fy != null ? pnl.columns.find(c => c.fy === fy - 1) || null : null);
   const synergyYears = deal?.synergies?.years || [];
   const synergyMargin = deal?.synergies?.margin || null;
   // Combined = BOTH legs, or null ("—"). Returning the one live leg (the old `x ?? y` fallback) labelled a
@@ -109,14 +113,15 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const bridgePfNI   = deal?._results?.proFormaNetIncome != null ? parseFloat(deal._results.proFormaNetIncome) : null;
 
   // ══════════════════════════ §6a — detailed per-year pro-forma tables (UNCHANGED) ══════════════════════
-  const nYears = Math.min(aFwd.length, bFwd.length, synergyYears.length);
+  const nYears = sel.slots.filter(s => s.a && s.b).length;
   const years = [];
   if (isA) {
-    for (let k = 0; k < nYears; k++) {
-      const a = aFwd[k], b = bFwd[k];
-      const aPrev = k === 0 ? aAct : aFwd[k - 1];
-      const bPrev = k === 0 ? bAct : bFwd[k - 1];
-      const yr = synergyYears[k];
+    for (const slot of sel.slots) {
+      const k = slot.synYr - 1;
+      const a = slot.a || {}, b = slot.b || {};
+      const aPrev = prevCol(aPnl, slot.fyA);
+      const bPrev = prevCol(bPnl, slot.fyB);
+      const yr = synergyYears[k] || { ebitda: 0, entered: false };
       const syn = yr.ebitda, atSyn = syn * (1 - TAX_RATE);
       const none = (v) => (v == null ? NONE_ENTERED : null);
       const margin = (num, rev) => (num != null && rev) ? num / rev * 100 : null;
@@ -126,7 +131,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
       // Utility or insurer on either side: n/m in its own column and in Combined and PF, which it would otherwise be part of.
       const grossNm = { nmA: isGrossNm(acquirer), nmB: isGrossNm(target), nmC: isGrossNm(acquirer) || isGrossNm(target) };
       years.push({
-        label: a.label,
+        label: slot.label, colReason: slot.colReason,
         rows: [
           { label: 'Revenue',          a: a.revenue,        b: b.revenue,        c: cRev,   syn: yr.revenue, pf: cRev != null ? cRev + (yr.revenue ?? 0) : null },
           { label: `Revenue growth % (vs ${aPrev?.label ?? 'prior year'})`,  a: growth(a.revenue, aPrev?.revenue), b: growth(b.revenue, bPrev?.revenue), c: growth(cRev, sum(aPrev?.revenue, bPrev?.revenue)), pct: true },
@@ -174,13 +179,17 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
 
   const forwardRows = [];
   { // 7E: computed for §8 too (§9 folded on) — the accretion strip lives on §8 now.
-    const nFwd = loaded ? Math.min(aFwd.length, bFwd.length) : 0;
-    for (let k = 0; k < nFwd; k++) {
-      const a = aFwd[k], b = bFwd[k];                       // forward EPS from /api/pnl (== /api/estimates epsAvg)
-      if (a?.eps == null || b?.eps == null || !(acqDilSh > 0)) continue;
+    for (const slot of (loaded ? sel.slots : [])) {
+      const k = slot.synYr - 1;
+      const a = slot.a, b = slot.b;                         // forward EPS from /api/pnl (== /api/estimates epsAvg)
+      // A year that can't compute is a "—" row with its reason, never dropped and never filled.
+      if (!slot.epsOk || !(acqDilSh > 0)) {
+        forwardRows.push({ year: slot.year, synYr: slot.synYr, acqFY: slot.fyA, na: true, reason: slot.epsOk ? 'the acquirer diluted share count is missing' : slot.reason });
+        continue;
+      }
       const fwdInputs = forwardYearInputs(inputs, a.eps, b.eps);
       // Synergy re-index (matches §6a's synRamp[k]): first forward year = synergiesY1. NO off-by-one.
-      const synYr = k + 1;
+      const synYr = slot.synYr;
       const syn   = parseFloat(synY[k]) || 0;
       const ea = (aEst || []).find(e => e && e.fy === a.fy);
       const eb = (bEst || []).find(e => e && e.fy === b.fy);
@@ -202,10 +211,13 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const pctY1ExSyn   = offer > 0 ? epsAccretionPct(offer, 0, inputs) : null;
   // GAAP | Non-GAAP plan (src/lib/reportingBasis.js): null on a GAAP deal, which keeps the Year 1 tag as it was.
   const ngPlan = isNonGaapDeal(deal) ? deal.reportingBasis : null;
-  const y1Fy = ngPlan ? (ngPlan.eps.nonGaap ? 'Current actuals (non-GAAP, company reported)' : 'Current actuals (GAAP)') : 'Current actuals (verified)';
+  const y1Period = (acquirer?.basis === 'ltm' || target?.basis === 'ltm') ? (deal?._results?.basesDiffer ? 'companies on different bases' : 'LTM actuals') : 'fiscal-year actuals';
+  const y1Fy = ngPlan ? (ngPlan.eps.nonGaap ? `${y1Period}, non-GAAP (company reported)` : `— ${ngPlan.eps.note}`) : `${y1Period}, GAAP`;
   const accRows = [
-    { label: 'Year 1', tag: (acquirer?.basis === 'ltm' || target?.basis === 'ltm') ? (deal?._results?.basesDiffer ? 'Companies on different bases' : 'LTM actuals') : y1Fy, basis: 'verified', standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
-    ...forwardRows.map(r => ({ label: `Year ${r.year}`, tag: `Forward consensus (FY${r.acqFY}e) + Yr${r.synYr} synergies`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pfExSyn: r.pfEPSExSyn, pct: r.pct, pctExSyn: r.pctExSyn, analysts: r.analysts })),
+    { label: 'Year 1', tag: y1Fy, basis: 'verified', na: !!inputs.year1Reason, standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
+    ...forwardRows.map(r => r.na
+      ? { label: `Year ${r.year}`, tag: `${r.acqFY != null ? `FY${r.acqFY}e` : ''} — ${r.reason}`, basis: 'forward', na: true }
+      : { label: `Year ${r.year}`, tag: `${CONSENSUS_BASIS}, FY${r.acqFY}e + Yr${r.synYr} synergies`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pfExSyn: r.pfEPSExSyn, pct: r.pct, pctExSyn: r.pctExSyn, analysts: r.analysts }),
   ];
 
   const accretionSource = (() => {
@@ -216,9 +228,9 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           ? `${aTk} and ${bTk} fiscal calendars align (both end ${aMonth}), so the forward years map to the same calendar period`
           : `fiscal calendars differ (${aTk} ends ${aMonth}, ${bTk} ends ${bMonth}), so they are relative years, not the same calendar period`)
       : `fiscal calendars may differ between ${aTk} and ${bTk}, so the forward years are relative — not necessarily the same calendar period`;
-    const fwdNote = forwardRows.length
-      ? `Forward years (${forwardRows.map(r => r.year).join(' & ')}) are sell-side analyst consensus (Financial Modeling Prep, mean EPS) — net income = consensus EPS × diluted shares — combined on the SAME engine as the headline with the deal's entered synergies and the same acquisition-financing cost; ${calClause}. Consensus is a forecast, not verified.`
-      : `Forward analyst estimates were unavailable — only the verified Year-1 anchor is shown (no forward curve is fabricated).`;
+    const fwdNote = forwardRows.some(r => !r.na)
+      ? `Forward years (${forwardRows.map(r => r.year).join(' & ')}) are sell-side analyst consensus (Financial Modeling Prep, mean EPS, non-GAAP basis) — net income = consensus EPS × diluted shares — combined on the SAME engine as the headline with the deal's entered synergies and the same acquisition-financing cost; ${calClause}. Consensus is a forecast, not verified.`
+      : `Forward years are "—": ${sel.gaap ? NO_GAAP_FORECAST : 'no consensus for the years after Year 1'} — no forward curve is fabricated.`;
     return `Year 1 is the CURRENT-ACTUALS accretion — identical to the deck's headline (reconciled SEC actuals; the number every other slide leads with). ${fwdNote}${date ? ` Deal terms as of ${date}.` : ''}`;
   })();
 
@@ -228,7 +240,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
       <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
         <PageHeader
           title="Pro Forma Combined — Projected"
-          subtitle={`${aTk} + ${bTk} · forward analyst consensus · Acquirer | Target | Combined | Synergies | PF Total`}
+          subtitle={`${aTk} + ${bTk} · ${CONSENSUS_BASIS} · Acquirer | Target | Combined | Synergies | PF Total`}
         />
         <div style={{ padding: '14px 20px 8px' }}>
           {deal?.hasMarketData === false ? (
@@ -246,7 +258,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
               {years.map((yr, yi) => (
                 <div key={yi}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-                    {yr.label} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>($M, analyst consensus)</span>
+                    {yr.label} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>($M, {CONSENSUS_BASIS}{yr.colReason ? ` — ${yr.colReason}` : ''})</span>
                   </div>
                   <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
                     <div style={{ background: NAVY, display: 'flex', padding: '5px 8px' }}>
@@ -293,8 +305,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                 {ngPlan && (
                   <div data-testid="pf-eps-basis-note" style={{ fontSize: 9.5, color: '#6B7280', fontStyle: 'italic', marginBottom: 4, lineHeight: 1.35 }}>
                     {ngPlan.eps.nonGaap
-                      ? 'Year 1: non-GAAP EPS, company reported by both companies (fiscal-year earnings releases). Forward years: FMP consensus, a basis the provider does not designate; Year 1 and forward years are not presented as one series.'
-                      : `Year 1: ${ngPlan.eps.note}. Forward years: FMP consensus, a basis the provider does not designate, so Year 1 (GAAP) and the forward years are not on one basis.`}
+                      ? `Year 1: non-GAAP EPS, company reported by both companies (fiscal-year earnings releases). Forward years: ${CONSENSUS_BASIS}. Every year is non-GAAP.`
+                      : `Year 1: ${ngPlan.eps.note}, so Year 1 is "—" rather than a GAAP figure. Forward years: ${CONSENSUS_BASIS}.`}
                   </div>
                 )}
                 <div style={{ border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
@@ -312,21 +324,21 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                     const verdict = accretionVerdict(r.pct);
                     const vColor = verdict === 'neutral' ? NEUTRAL_GRAY : verdict === 'accretive' ? ACC_GREEN : verdict === 'dilutive' ? DIL_RED : '#9CA3AF';
                     return (
-                      <div key={r.label} style={{ display: 'flex', alignItems: 'center', padding: '3px 8px', background: fwd ? FORWARD_BG : VERIFIED_BG, borderLeft: `3px solid ${fwd ? FORWARD_BORDER : VERIFIED_BORDER}`, borderBottom: `1px solid ${GRAY_BORDER}` }}>
+                      <div key={r.label} data-na={r.na ? 'true' : undefined} style={{ display: 'flex', alignItems: 'center', padding: '3px 8px', background: fwd ? FORWARD_BG : VERIFIED_BG, borderLeft: `3px solid ${fwd ? FORWARD_BORDER : VERIFIED_BORDER}`, borderBottom: `1px solid ${GRAY_BORDER}` }}>
                         <span style={{ flex: 2, fontSize: 9.5 }}><span style={{ fontWeight: 700, color: NAVY }}>{r.label}</span> <span style={{ fontSize: 9.5, color: fwd ? '#92400E' : '#475569', fontStyle: 'italic' }}>{r.tag}</span></span>
                         <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', color: '#374151' }}>{r.standalone != null ? fmtPerShare(r.standalone) : '—'}</span>
                         <span style={{ flex: 1.15, fontSize: 9.5, textAlign: 'right', color: '#374151' }}>{r.pfExSyn != null ? fmtPerShare(r.pfExSyn) : '—'}</span>
                         <span style={{ flex: 1.15, fontSize: 9.5, textAlign: 'right', fontWeight: 600, color: NAVY }}>{r.pf != null ? fmtPerShare(r.pf) : '—'}</span>
-                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', color: '#6B7280' }}>{r.pctExSyn == null ? 'n/m' : fmtAcc(r.pctExSyn)}</span>
-                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', fontWeight: 700, color: vColor }}>{r.pct == null ? 'n/m' : fmtAcc(r.pct)}</span>
+                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', color: '#6B7280' }}>{r.na ? '—' : r.pctExSyn == null ? 'n/m' : fmtAcc(r.pctExSyn)}</span>
+                        <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', fontWeight: 700, color: vColor }}>{r.na ? '—' : r.pct == null ? 'n/m' : fmtAcc(r.pct)}</span>
                         <span style={{ flex: 1, fontSize: 9.5, textAlign: 'right', fontWeight: 700, color: vColor }}>{verdict == null ? '—' : verdict === 'neutral' ? 'Neutral' : verdict === 'accretive' ? 'Accretive' : 'Dilutive'}</span>
                       </div>
                     );
                   })}
                 </div>
                 <div style={{ marginTop: 3, fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.3 }}>
-                  Ex-syn./w-syn. exclude/include the deal's entered synergies (same split as Combined vs PF above); Year&nbsp;1 verified, Years&nbsp;2–4 consensus. Measured on the {deal?.basis === 'Non-GAAP' ? 'non-GAAP' : 'GAAP'} standalone EPS (deck headline).
-                  {forwardRows.length > 0 && <> {forwardNetIncomeLabel(inputs)}.</>}
+                  Ex-syn./w-syn. exclude/include the deal's entered synergies (same split as Combined vs PF above); Each year is measured on its own standalone EPS: Year 1 {inputs.year1Reason ? '“—”' : ngPlan ? 'non-GAAP (company reported)' : 'GAAP'}, Years 2–4 {sel.gaap ? '“—”' : CONSENSUS_BASIS}.{sel.gaap ? <> Years 2–4 are "—" on a GAAP deck: {NO_GAAP_FORECAST}.</> : null}
+                  {forwardRows.some(r => !r.na) && <> {forwardNetIncomeLabel(inputs)}.</>}
                 </div>
               </div>
               )}
@@ -337,8 +349,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
         <div style={{ padding: '6px 20px 32px', fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
           <strong style={{ color: NAVY }}>Basis: </strong>
           {grossNmNote(acquirer, target) ? <>{grossNmNote(acquirer, target)} </> : null}
-          Acquirer &amp; target forward legs are Street <strong>analyst consensus</strong> (FMP analyst-estimates) — a single provider series whose reporting basis follows each company's street convention and is <strong>not designated as GAAP or non-GAAP by the provider</strong>; the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each combined year is paired position-wise and labeled by the acquirer's fiscal year (the two companies' fiscal calendars are offset). Combined = Acquirer + Target.
-          <strong> Synergies are the deal's entered assumptions</strong> (total EBITDA impact {synergyYears.slice(0, nYears).map((y, k) => { const cr = sum(aFwd[k]?.revenue, bFwd[k]?.revenue); const pc = cr > 0 ? (y.ebitda / cr * 100) : null; return y.entered ? `${fmtM(y.ebitda)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}` : `${NONE_ENTERED} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. Cost synergies add to EBIT dollar for dollar — <strong>without asserting whether they arise in cost of revenue or operating expense</strong>. Revenue synergies add to PF revenue{deal?.synergies?.anyRevenue ? <> and {synergyMargin?.pct != null ? 'reach EBIT at the combined gross margin' : 'do not reach EBIT'}: {marginSentence(synergyMargin)}{deal.synergies.revenueOnly ? <> <strong style={{ color: '#92400E' }}>⚠ {REVENUE_ONLY_FLAG}</strong></> : null}</> : '.'} <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtFin(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on {(acquirer?.basis === 'ltm' && target?.basis === 'ltm') ? 'the LTM actuals selected for Year 1' : 'latest-FY actuals'} + forward consensus</strong>; forward growth is always measured against fiscal-year figures, never LTM; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
+          Acquirer &amp; target forward legs are <strong>{CONSENSUS_BASIS}</strong> (FMP analyst-estimates; FMP does not label the basis, and its EPS consensus matches the companies' own non-GAAP guidance where they give one); the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each combined year is paired position-wise and labeled by the acquirer's fiscal year (the two companies' fiscal calendars are offset). Combined = Acquirer + Target.
+          <strong> Synergies are the deal's entered assumptions</strong> (total EBITDA impact {synergyYears.slice(0, sel.slots.length).map((y, k) => { const cr = sum(sel.slots[k]?.a?.revenue, sel.slots[k]?.b?.revenue); const pc = cr > 0 ? (y.ebitda / cr * 100) : null; return y.entered ? `${fmtM(y.ebitda)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}` : `${NONE_ENTERED} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. Cost synergies add to EBIT dollar for dollar — <strong>without asserting whether they arise in cost of revenue or operating expense</strong>. Revenue synergies add to PF revenue{deal?.synergies?.anyRevenue ? <> and {synergyMargin?.pct != null ? 'reach EBIT at the combined gross margin' : 'do not reach EBIT'}: {marginSentence(synergyMargin)}{deal.synergies.revenueOnly ? <> <strong style={{ color: '#92400E' }}>⚠ {REVENUE_ONLY_FLAG}</strong></> : null}</> : '.'} <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtFin(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on {(acquirer?.basis === 'ltm' && target?.basis === 'ltm') ? 'the LTM actuals selected for Year 1' : 'latest-FY actuals'} + forward consensus</strong>; forward growth is always measured against fiscal-year figures, never LTM; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
           <sup style={{ fontSize: 9.5 }}>n</sup> No consensus available: FMP publishes no forward gross profit, so forward cost of revenue, gross profit and gross margin are "—". Forward Operating Expense is "—" — consensus supplies operating income but not gross profit (same treatment as the Standalone P&amp;L slides).
         </div>
       </PageFrame>

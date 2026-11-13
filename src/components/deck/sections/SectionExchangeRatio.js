@@ -206,7 +206,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
       {/* Premium / (discount) sensitivity matrix — the assumption as a SPECTRUM, not one asserted number. */}
       <div style={{ padding: '2px 20px 6px' }}>
         <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 5, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-          Multiples Based on Consensus Estimates <span style={{ fontWeight: 400, textTransform: 'none', color: '#9CA3AF' }}>· premium / (discount) sensitivity</span>
+          Multiples Based on FMP Consensus (non-GAAP) <span style={{ fontWeight: 400, textTransform: 'none', color: '#9CA3AF' }}>· premium / (discount) sensitivity</span>
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 10, tableLayout: 'fixed' }}>
           <thead>
