@@ -22,6 +22,7 @@ import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { isNonGaapDeal, FY_ONLY } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
+import { verdictFlags } from '../../../lib/dealVerdict';
 import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
   explainPTBV, explainCombinedCET1,
@@ -80,7 +81,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   } else if (triggers199Rule(stockIssuancePct)) {
     stockFlags.push({ level: 'warning', icon: '⚠️', text: `Stock issuance ${stockIssuancePct.toFixed(1)}% of acquirer pre-deal shares — exceeds 19.9% NYSE/Nasdaq threshold, requiring acquirer shareholder vote (NYSE §312.03 / Nasdaq Rule 5635).` });
   }
-  const allFlags = [...flags, ...stockFlags];
+  // Verdict flags first (Fix 10 Task 6): a dilutive verdict or a synergy gap is never "structurally sound".
+  const allFlags = [...verdictFlags(verdict), ...flags, ...stockFlags];
 
   // Enterprise value / combined debt (for explainers) — dealCalc's own numerators, null when a leg is unavailable.
   const ev = results.enterpriseValue;

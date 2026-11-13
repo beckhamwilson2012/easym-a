@@ -170,3 +170,22 @@ function withYears(line, used, skipped = []) {
   const u = `Verdict and breakeven use ${used}${skipped.length ? `; ${skipped.join('; ')}` : ''}.`;
   return line ? `${line}. ${u}` : u;
 }
+
+// Risk flags that follow from the verdict (Fix 10 Task 6). "No major flags — deal looks structurally sound" may show only
+// when this list and the structural flags are both empty: a dilutive verdict, synergies short of the premium, a
+// breakeven above the synergies entered, or a verdict that can't be computed are flags themselves, with their numbers.
+export function verdictFlags(v) {
+  const out = [];
+  if (!v || v.text === '—' && v.line === 'Forward estimates are still loading.') return out;
+  if (v.step == null) {
+    out.push({ level: 'warning', icon: '⚠️', text: `No deal verdict: ${String(v.line || 'no test can be computed').replace(/^No test can be computed: /, 'no test can be computed — ')}` });
+    return out;
+  }
+  if (v.verdict === 'dilutive') out.push({ level: 'critical', icon: '🚨', text: `Dilutive: ${v.text}, ${v.tag}` });
+  if (v.verdict === 'short') out.push({ level: 'critical', icon: '🚨', text: `${v.text}: premium ${fmtVerdictMoney(v.premiumDollars)} vs capitalized Year 3 synergies ${fmtVerdictMoney(v.capitalizedValue)} (${v.tag})` });
+  // Synergies entered: none entered is the deal's own state (nothing assumed), so any positive breakeven exceeds it.
+  if (v.breakeven != null && v.breakeven > 0 && v.breakeven > (v.entered ?? 0)) {
+    out.push({ level: 'warning', icon: '⚠️', text: `Synergy gap: breaks even at ${fmtVerdictMoney(v.breakeven)} of synergies; ${v.entered == null ? 'none entered' : `entered ${fmtVerdictMoney(v.entered)}`}` });
+  }
+  return out;
+}
