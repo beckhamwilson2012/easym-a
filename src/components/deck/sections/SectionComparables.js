@@ -98,7 +98,8 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   // Every multiple on this slide goes through the one rule (src/lib/multiples.js).
   const evRevLtmM = (mktCapSane && ev != null) ? multipleOf(ev, revActual, { denName: 'revenue' }) : null;
   const evRevLtm  = evRevLtmM ? evRevLtmM.value : null;           // trailing EV ÷ (LTM|FY) rev
-  const evRevLtmCell = evRevLtmM ? evRevLtmM.text : '—';
+  // null (not "—") when there is no figure, as before: a row whose cells are all null stays hidden (a private target's).
+  const evRevLtmCell = evRevLtmM && evRevLtmM.text !== '—' ? evRevLtmM.text : null;
   const grossFilingReason = !isGrossNm(data) && !gmFromLtm && grossProfit == null && data.grossProfitNotMeaningful ? data.grossProfitNotMeaningful : null;
 
   // ── P/E (LTM basis — same as revBasis): live price ÷ LTM diluted EPS. n/m when EPS ≤ 0 or out of a
