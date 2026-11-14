@@ -21,7 +21,7 @@ const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareInco
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
 const { multiClassCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts');
-const { resolveZeroDebt } = require('./server/services/debtZero');
+const { finalDebt } = require('./server/services/debtZero');
 const { resolveLtmEps, releaseQuarterEps, epsNumeratorAt, ltmEpsNumerator } = require('./server/services/ltmEps'); // LTM EPS = sum of filed quarters; EPS numerator = net income to common // debt that is zero by a filing's own statement, not by absence // shared total-debt resolution — deal EV / comps / §16 resolve identically
 const { field, unwrapCompany } = require('./src/lib/financialSchema'); // Stage 14 — wrapped-shape factory (Yahoo builder) + /quote boundary unwrap (Node 22+ require-of-ESM)
 const yahooClient = require('./server/services/yahooClient'); // shared, cached Yahoo quote (dedup)
@@ -733,12 +733,13 @@ async function fetchFromEDGAR(symbol, cik) {
        ?? bsPick(['DebtLongtermAndShorttermCombinedAmount', 'LongTermLineOfCredit', 'LongTermNotesPayable']));
   // Debt that is ZERO, not unknown (debtZero): only when a filing says so — a filed 0 no later filing contradicts (OMDA's
   // FY2025 10-K LongTermDebt = 0), or the latest debt note stating nothing is drawn (PGNY's revolver). Otherwise it stays
-  // null with the reason (HNGE: no debt concept, no statement of zero). Never inferred from absence.
-  let debtLabel = null, debtReason = null;
-  const debtZero = (!useIfrs && debtResolved == null) ? await resolveZeroDebt(cik, gaap, floorEnd) : null;
-  if (debtZero && debtZero.value === 0) debtLabel = debtZero.label;
-  else if (debtZero) debtReason = debtZero.reason;
-  const debt = debtZero && debtZero.value === 0 ? 0 : debtResolved;
+  // null with the reason. Last, and only when neither applies: the latest balance sheet's liability lines tie exactly to
+  // Total liabilities and none is a borrowing (HNGE's Q3 2026 10-Q). Never inferred from absence. A resolved figure always
+  // wins: finalDebt runs the zero check only when debtResolved is null.
+  const debtFinal = useIfrs
+    ? { debt: debtResolved, label: null, reason: null, source: null }
+    : await finalDebt(debtResolved, cik, gaap, floorEnd, { balanceSheetAsOf: bsAnchor });
+  const { label: debtLabel, reason: debtReason, debt } = debtFinal;
 
   // Total assets at the balance-sheet anchor (7A Item 2) — resolved via bsPick, i.e. pickInstantAt at the SAME
   // bsAnchor as cash/debt (interim) or the same annual end (annual). Same instant → no mixed-date risk on §3.
@@ -857,7 +858,7 @@ async function fetchFromEDGAR(symbol, cik) {
     debt:           debt != null ? inM(debt) : null, // null when the debt tag was stale-rejected (Fix A) → deck shows N/A
     debtLabel,                             // "$0, 10-K FY2025, no later debt tag" / "$0, nothing drawn on revolver, 10-Q 9/30/2026 note 6"; null otherwise
     debtReason,                            // why debt is null ("—"), when the zero check ran and found no filed statement
-    debtSource:     debtZero && debtZero.value === 0 ? debtZero.source : null,   // accession, as-of, concept or note sentence
+    debtSource:     debtFinal.source,     // accession, as-of, concept, note sentence, or the tied balance-sheet lines
     totalAssets:    totalAssets != null ? inM(totalAssets) : null, // total assets at the SAME balance-sheet anchor as cash/debt (2B-2); null if untagged there
     // Enterprise-value claims (Fix 10 Task 5): $M at the balance-sheet anchor with the tag, or null with the reason.
     noncontrollingInterest:    nciPick ? inM(nciPick.value) : null,
