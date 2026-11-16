@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { SYNERGY_PRESETS, SYNERGY_YEARS, NONE_ENTERED, REVENUE_ONLY_FLAG, costSynergyBase, revenueSynergyBase, synergySchedule, presetYears, marginSentence, fmtSynergy } from '../../lib/synergies';
+import { SYNERGY_PRESETS, COST_SYNERGY_PRESETS, REVENUE_SYNERGY_PRESETS, COST_SYNERGY_RAMP, REVENUE_SYNERGY_RAMP, PRESET_CAPTION, SYNERGY_YEARS, NONE_ENTERED, REVENUE_ONLY_FLAG, costSynergyBase, revenueSynergyBase, synergySchedule, presetYears, marginSentence, fmtSynergy } from '../../lib/synergies';
 
 const BLUE = '#1a5fd0';
 const small = { fontSize: 11, color: '#6B7280', lineHeight: 1.45 };
@@ -51,12 +51,12 @@ export const infoBox = (section, children) => (
 );
 
 // The Conservative / Base / Aggressive buttons. Each fills Years 1-3 from the base and its percentage.
-function PresetButtons({ section, base, pcts, namePrefix, onChange }) {
+function PresetButtons({ section, base, pcts, ramp, namePrefix, onChange }) {
   const off = base.amount == null;
   return (
     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
       {SYNERGY_PRESETS.map((p) => {
-        const years = off ? null : presetYears(base.amount, pcts[p.key]);
+        const years = off ? null : presetYears(base.amount, pcts[p.key], ramp);
         return (
           <button key={p.key} type="button" disabled={off || years == null} data-testid={`preset-${section}-${p.key}`}
             onClick={() => years.forEach((v, i) => onChange(`${namePrefix}${i + 1}`, v))}
@@ -70,7 +70,7 @@ function PresetButtons({ section, base, pcts, namePrefix, onChange }) {
 }
 
 // The editable percentages, inside the info box. They stay in the section's state while the box is closed.
-function PresetPercents({ section, base, pcts, setPcts }) {
+function PresetPercents({ section, base, pcts, ramp, setPcts }) {
   const off = base.amount == null;
   return (
     <div style={{ marginBottom: 6 }}>
@@ -85,12 +85,12 @@ function PresetPercents({ section, base, pcts, setPcts }) {
           </div>
         ))}
       </div>
-      <div style={{ fontStyle: 'italic', marginTop: 4 }}>Percentages: app default, editable. Year 1-3 ramp 40% / 70% / 100%.</div>
+      <div style={{ fontStyle: 'italic', marginTop: 4 }}>Percentages: {PRESET_CAPTION.charAt(0).toLowerCase() + PRESET_CAPTION.slice(1)} Editable. Year 1-3 ramp {ramp.map((r) => `${r * 100}%`).join(' / ')}.</div>
     </div>
   );
 }
 
-const defaultPcts = () => Object.fromEntries(SYNERGY_PRESETS.map((p) => [p.key, p.pct]));
+const defaultPcts = (presets) => () => Object.fromEntries(presets.map((p) => [p.key, p.pct]));
 
 // Input page: cost and revenue synergies. All arithmetic is in lib/synergies. Each section shows its buttons, its
 // Year 1-3 boxes and one short base line; the formula, sources, ramp and margin explanation are behind its ⓘ.
@@ -98,26 +98,26 @@ export function SynergyInputs({ inputs, onChange }) {
   const cost = costSynergyBase(inputs);
   const revenue = revenueSynergyBase(inputs);
   const { years, margin, anyEntered, anyRevenue, revenueOnly } = synergySchedule(inputs);
-  const [costPcts, setCostPcts] = useState(defaultPcts);
-  const [revenuePcts, setRevenuePcts] = useState(defaultPcts);
+  const [costPcts, setCostPcts] = useState(defaultPcts(COST_SYNERGY_PRESETS));
+  const [revenuePcts, setRevenuePcts] = useState(defaultPcts(REVENUE_SYNERGY_PRESETS));
   const [costOpen, setCostOpen] = useState(false);
   const [revenueOpen, setRevenueOpen] = useState(false);
   const marginNull = margin.pct == null;
   return (
     <div data-testid="synergy-inputs">
       <h3 style={{ color: '#0F2244', fontSize: 14, margin: '0 0 8px' }}>Cost synergies</h3>
-      <PresetButtons section="cost" base={cost} pcts={costPcts} namePrefix="synergiesY" onChange={onChange} />
+      <PresetButtons section="cost" base={cost} pcts={costPcts} ramp={COST_SYNERGY_RAMP} namePrefix="synergiesY" onChange={onChange} />
       <div data-testid="cost-base-short" style={{ ...small, marginBottom: 8, color: cost.amount != null ? '#6B7280' : '#92400E' }}>
         {cost.amount != null
-          ? <>Base {fmtBase(cost.amount)} · {shortPeriod(cost.period)}</>
+          ? <>Base {fmtBase(cost.amount)} operating expenses · {shortPeriod(cost.period)} · {PRESET_CAPTION}</>
           : <>Presets off: the target's {cost.missing.join(' and ')} {cost.missing.length > 1 ? 'are' : 'is'} missing</>}
         {infoButton('cost', costOpen, setCostOpen)}
       </div>
       {costOpen && infoBox('cost', <>
-        <PresetPercents section="cost" base={cost} pcts={costPcts} setPcts={setCostPcts} />
+        <PresetPercents section="cost" base={cost} pcts={costPcts} ramp={COST_SYNERGY_RAMP} setPcts={setCostPcts} />
         {cost.amount != null ? (
           <div data-testid="cost-base">
-            Base {fmtBase(cost.amount)} = target cost of revenue {fmtBase(cost.costOfRevenue)} + total operating expenses {fmtBase(cost.operatingExpenses)}. {cost.period}. Source: {cost.source}.
+            Base {fmtBase(cost.amount)} = target operating expenses (the Operating Expense line; cost of revenue is not included). {cost.period}. Source: {cost.source}.
           </div>
         ) : (
           <div data-testid="cost-base" style={{ color: '#92400E' }}>
@@ -130,10 +130,10 @@ export function SynergyInputs({ inputs, onChange }) {
       </div>
 
       <h3 style={{ color: '#0F2244', fontSize: 14, margin: '16px 0 8px', paddingTop: 12, borderTop: '1px solid #F3F4F6' }}>Revenue synergies</h3>
-      <PresetButtons section="revenue" base={revenue} pcts={revenuePcts} namePrefix="revenueSynergiesY" onChange={onChange} />
+      <PresetButtons section="revenue" base={revenue} pcts={revenuePcts} ramp={REVENUE_SYNERGY_RAMP} namePrefix="revenueSynergiesY" onChange={onChange} />
       <div data-testid="revenue-base-short" style={{ ...small, marginBottom: 8, color: revenue.amount != null ? '#6B7280' : '#92400E' }}>
         {revenue.amount != null
-          ? <>Base {fmtBase(revenue.amount)} · {shortPeriod(revenue.period)}</>
+          ? <>Base {fmtBase(revenue.amount)} revenue · {shortPeriod(revenue.period)} · {PRESET_CAPTION}</>
           : <>Presets off: the target's revenue is missing</>}
         {infoButton('revenue', revenueOpen, setRevenueOpen)}
       </div>
@@ -143,7 +143,7 @@ export function SynergyInputs({ inputs, onChange }) {
         </div>
       )}
       {revenueOpen && infoBox('revenue', <>
-        <PresetPercents section="revenue" base={revenue} pcts={revenuePcts} setPcts={setRevenuePcts} />
+        <PresetPercents section="revenue" base={revenue} pcts={revenuePcts} ramp={REVENUE_SYNERGY_RAMP} setPcts={setRevenuePcts} />
         {revenue.amount != null ? (
           <div data-testid="revenue-base" style={{ marginBottom: 4 }}>
             Base {fmtBase(revenue.amount)} = target revenue. {revenue.period}. Source: {revenue.source}.

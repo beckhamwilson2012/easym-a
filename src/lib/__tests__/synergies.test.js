@@ -1,6 +1,7 @@
 import {
   presetYears, totalOperatingExpenses, costSynergyBase, revenueSynergyBase, combinedGrossMargin,
   synergySchedule, fmtSynergy, marginSentence, NONE_ENTERED,
+  COST_SYNERGY_PRESETS, REVENUE_SYNERGY_PRESETS, COST_SYNERGY_RAMP, REVENUE_SYNERGY_RAMP, PRESET_CAPTION,
 } from '../synergies';
 import { calculate, calcProFormaEPS, TAX_RATE } from '../../utils/dealCalc';
 
@@ -27,22 +28,30 @@ describe('presets', () => {
     expect(presetYears(100, '')).toBeNull();
     expect(presetYears(null, 2)).toBeNull();
   });
-  test('IRDM cost base is cost of revenue + total operating expenses', () => {
+  test('IRDM cost base is operating expenses only (Fix 16 Task 4): gross profit − operating income, no cost of revenue', () => {
     const b = costSynergyBase(irdmTarget);
-    expect(b.costOfRevenue).toBe(248);
     expect(b.operatingExpenses).toBe(388);
-    expect(b.amount).toBe(636);
+    expect(b.amount).toBe(388);
+    expect(b.costOfRevenue).toBeUndefined();
     expect(b.period).toBe('FY ended Dec 31, 2025');
-    expect(b.source).toContain('0001418819-26-000009');
+    expect(b.source).toBe('operating expenses: gross profit − operating income, SEC EDGAR');
   });
-  test('a missing base figure names itself and leaves no base', () => {
-    const noCost = costSynergyBase({ ...irdmTarget, companyBCostOfRevenue: null });
-    expect(noCost.amount).toBeNull();
-    expect(noCost.missing).toEqual(['cost of revenue']);
+  test('a missing base figure names itself and leaves no base; cost of revenue is not needed', () => {
+    expect(costSynergyBase({ ...irdmTarget, companyBCostOfRevenue: null }).amount).toBe(388);
     const noOpex = costSynergyBase({ ...irdmTarget, companyBGrossProfit: null });
     expect(noOpex.amount).toBeNull();
-    expect(noOpex.missing).toEqual(['total operating expenses']);
-    expect(costSynergyBase({}).missing).toEqual(['cost of revenue', 'total operating expenses']);
+    expect(noOpex.missing).toEqual(['operating expenses']);
+    expect(costSynergyBase({}).missing).toEqual(['operating expenses']);
+  });
+  test('presets by hand (Fix 16 Task 4): cost 5/10/15% of opex on 40/70/100; revenue 2/3.5/5% of revenue on 0/50/100', () => {
+    expect(COST_SYNERGY_PRESETS.map((p) => p.pct)).toEqual([5, 10, 15]);
+    expect(REVENUE_SYNERGY_PRESETS.map((p) => p.pct)).toEqual([2, 3.5, 5]);
+    expect(COST_SYNERGY_RAMP).toEqual([0.4, 0.7, 1]);
+    expect(REVENUE_SYNERGY_RAMP).toEqual([0, 0.5, 1]);
+    // IRDM Base: 10% × 388 = 38.8 → 15.52 / 27.16 / 38.8; revenue 3.5% × 872 = 30.52 → 0 / 15.26 / 30.52.
+    expect(presetYears(388, 10, COST_SYNERGY_RAMP)).toEqual([15.52, 27.16, 38.8]);
+    expect(presetYears(872, 3.5, REVENUE_SYNERGY_RAMP)).toEqual([0, 15.26, 30.52]);
+    expect(PRESET_CAPTION).toBe('Rules of thumb, not market data.');
   });
   test('opex keeps a real 0, and null stays null', () => {
     expect(totalOperatingExpenses(100, 100)).toBe(0);

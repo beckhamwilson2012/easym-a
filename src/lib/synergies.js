@@ -9,23 +9,34 @@ import { basesDiffer, DIFFERENT_BASES } from './companyBasis';
 //   Revenue synergies add to pro forma revenue, and add to EBITDA at the combined gross margin from filed figures.
 //   With no such margin, they add to revenue only, and the schedule carries the reason so the slides can flag it.
 
-// App defaults, editable on the input page. They are not market figures.
-export const SYNERGY_PRESETS = [
+// Preset percentages and Year 1-3 ramps (Fix 16 Task 4). Rules of thumb, editable on the input page; not market data.
+//   Cost:    5% / 10% / 15% of the target's operating expenses (the Operating Expense line, not cost of revenue), 40/70/100.
+//   Revenue: 2% / 3.5% / 5% of the target's revenue, 0/50/100.
+export const COST_SYNERGY_PRESETS = [
+  { key: 'conservative', label: 'Conservative', pct: 5 },
+  { key: 'base',         label: 'Base',         pct: 10 },
+  { key: 'aggressive',   label: 'Aggressive',   pct: 15 },
+];
+export const REVENUE_SYNERGY_PRESETS = [
   { key: 'conservative', label: 'Conservative', pct: 2 },
   { key: 'base',         label: 'Base',         pct: 3.5 },
   { key: 'aggressive',   label: 'Aggressive',   pct: 5 },
 ];
-export const SYNERGY_RAMP = [0.4, 0.7, 1];
+export const COST_SYNERGY_RAMP = [0.4, 0.7, 1];
+export const REVENUE_SYNERGY_RAMP = [0, 0.5, 1];
+export const SYNERGY_PRESETS = COST_SYNERGY_PRESETS;   // the button keys and labels, the same in both sections
+export const SYNERGY_RAMP = COST_SYNERGY_RAMP;
+export const PRESET_CAPTION = 'Rules of thumb, not market data.';
 export const SYNERGY_YEARS = [1, 2, 3];
 export const NONE_ENTERED = 'none entered';
 
 const val = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 
 // Year 1-3 dollars for one preset: base × pct × ramp. toFixed strips float noise, it does not round the figure.
-export function presetYears(base, pct) {
+export function presetYears(base, pct, ramp = SYNERGY_RAMP) {
   const b = val(base), p = val(pct);
   if (b == null || p == null) return null;
-  return SYNERGY_RAMP.map((r) => Number((b * (p / 100) * r).toFixed(6)));
+  return ramp.map((r) => Number((b * (p / 100) * r).toFixed(6)));
 }
 
 // The same definition as the Standalone P&L's operating expense line: gross profit − operating income.
@@ -38,18 +49,16 @@ const periodOf = (inputs, P) => inputs[`company${P}PeriodLabel`] || 'period unkn
 const SOURCE_NAMES = { sec_edgar: 'SEC EDGAR', fmp: 'FMP', yahoo: 'Yahoo Finance' };
 const sourceOf = (inputs, P) => SOURCE_NAMES[inputs[`company${P}DataSource`]] || 'entered by hand';
 
-// Cost presets: % of the target's cost of revenue + total operating expenses. Either figure null → no base.
+// Cost presets (Fix 16 Task 4): % of the target's operating expenses, the Standalone P&L's Operating Expense line (gross
+// profit − operating income). Cost of revenue is not in the base. Null → no base.
 export function costSynergyBase(inputs) {
-  const costOfRevenue = val(inputs.companyBCostOfRevenue);
   const operatingExpenses = totalOperatingExpenses(inputs.companyBGrossProfit, inputs.companyBOperatingIncome);
-  const missing = [];
-  if (costOfRevenue == null) missing.push('cost of revenue');
-  if (operatingExpenses == null) missing.push('total operating expenses');
+  const missing = operatingExpenses == null ? ['operating expenses'] : [];
   return {
-    amount: missing.length ? null : costOfRevenue + operatingExpenses,
-    costOfRevenue, operatingExpenses, missing,
+    amount: operatingExpenses,
+    operatingExpenses, missing,
     period: periodOf(inputs, 'B'),
-    source: `cost of revenue: ${inputs.companyBCostOfRevenueSource || 'not available'}; operating expenses: gross profit − operating income, ${sourceOf(inputs, 'B')}`,
+    source: `operating expenses: gross profit − operating income, ${sourceOf(inputs, 'B')}`,
   };
 }
 
