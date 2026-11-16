@@ -61,7 +61,8 @@ export function SectionShareholderAnalysis({ target, pageNum, exhibitLabel }) {
         subtitle={trusted
           // Fix 14 Task 5: the subtitle promises 5% holders only when the proxy's table lists them (the server reads the
           // table across a page break); otherwise it says the table lists none.
-          ? `${dual ? 'Dual-class' : 'Single-class'} beneficial ownership · ${holders.some(h => h.section === '5% holder') ? '5% holders + directors/officers' : 'directors/officers (the DEF 14A table lists no 5% holders)'} · SEC DEF 14A`
+          // Rows before any heading (PEP: Vanguard, BlackRock) are holders too, not directors/officers.
+          ? `${dual ? 'Dual-class' : 'Single-class'} beneficial ownership · ${holders.some(h => h.section !== 'insider') ? '5% holders + directors/officers' : 'directors/officers (the DEF 14A table lists no 5% holders)'} · SEC DEF 14A`
           : 'Reported ownership structure & insider activity'}
       />
 
