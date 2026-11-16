@@ -228,7 +228,8 @@ export function SectionAnalystConsensus({ target, acquirer, deal, pageNum, exhib
               const bx = (v) => ((v - bMin) / ((bMax - bMin) || 1)) * 100;
               const medianV = bank.median;
               return (
-                <div style={{ position: 'relative', marginBottom: 16 }}>
+                // Fix 16 Task 8: marginTop keeps the Median / Offer / Current labels (top −13px) below the section title.
+                <div style={{ position: 'relative', marginTop: 18, marginBottom: 16 }}>
                   {/* reference verticals: median (blue), offer (green), current (navy) */}
                   {[
                     { v: medianV, c: SF_BLUE, lbl: `Median ${fmtPerShare(medianV)}` },

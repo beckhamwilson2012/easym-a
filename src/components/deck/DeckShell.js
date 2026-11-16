@@ -281,9 +281,9 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
         aria-hidden="true"
       >
         {activePdfSections.map((section, i) => (
-          // The Deal Summary is fluid on screen (up to 1200px); its print render gets the on-screen width so it lays
-          // out as it does there. forPdf: screen-only controls (Edit Peers, the Deal Summary's action buttons) don't print.
-          <div key={section.id} data-section-id={section.id} style={{ marginBottom: 4, ...(section.id === 'dashboard' ? { width: 1200, background: '#F4F6F9', padding: 24, boxSizing: 'border-box' } : { width: 850 }) }}>
+          // forPdf: screen-only controls (Edit Peers, the Deal Summary's action buttons) don't print. Fix 16 Task 8: the Deal
+          // Summary prints as an 850px PageFrame slide like every other section (it was a 1200px screenshot of the screen).
+          <div key={section.id} data-section-id={section.id} style={{ marginBottom: 4, width: 850 }}>
             <section.Component {...sectionProps} pageNum={i + 1} exhibitLabel={exhibitLabelOf(section.id)} forPdf />
           </div>
         ))}

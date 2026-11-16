@@ -263,7 +263,8 @@ export function SectionPricePerformance({ target, acquirer, pageNum, exhibitLabe
         subtitle={`${target.ticker || target.name} · ${periodLabel} · indexed to 100 at ${win ? win.start : 'start of period'}`}
       />
 
-      <div style={{ padding: '20px 24px 16px' }}>
+      {/* Fix 16 Task 8: bottom padding clears the 28px footer bar, which covered the source line in the PDF. */}
+      <div style={{ padding: '20px 24px 40px' }}>
         {loading ? (
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 300, color: '#9CA3AF', fontSize: 13 }}>
             Loading price data...

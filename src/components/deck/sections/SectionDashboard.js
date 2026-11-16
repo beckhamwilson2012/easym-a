@@ -17,6 +17,8 @@ import { useWindowWidth } from '../../../hooks/useWindowWidth';
 import { ExplainButton } from '../../shared/ExplainButton';
 import { SynergyLines } from '../shared/SynergyLines';
 import { BasisNote } from '../shared/BasisNote';
+import { PageFrame } from '../shared/PageFrame';
+import { PageHeader } from '../shared/PageHeader';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { multipleNumber } from '../../../lib/multiples';
@@ -33,7 +35,18 @@ import {
 } from '../../../lib/explanations';
 
 // SectionDashboard does NOT use PageFrame — it keeps the original dashboard styling.
-export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAnalysis, onSaveAnalysis, forPdf = false }) {
+// Fix 16 Task 8: slide-scale type for the printed Deal Summary only (scoped to the PDF render; the screen is unchanged).
+const PDF_DASH_CSS = [
+  '[data-pdf-dash] h3 { font-size: 13px !important; margin: 0 0 4px !important; }',
+  '[data-pdf-dash] p { margin-bottom: 4px !important; }',
+  '[data-pdf-dash] [data-testid="eps-basis-note"], [data-pdf-dash] [data-testid="eps-analysis-label"], [data-pdf-dash] [data-testid="pf-year-note"] { margin-top: 0 !important; margin-bottom: 4px !important; }',
+  ...['36', '32', '30', '28'].map((n) => `[data-pdf-dash] [style*="font-size: ${n}px"] { font-size: 18px !important; }`),
+  ...['24', '22', '20'].map((n) => `[data-pdf-dash] [style*="font-size: ${n}px"] { font-size: 15px !important; }`),
+  ...['16', '15', '14'].map((n) => `[data-pdf-dash] [style*="font-size: ${n}px"] { font-size: 11px !important; }`),
+  ...['13', '12'].map((n) => `[data-pdf-dash] [style*="font-size: ${n}px"] { font-size: 10px !important; }`),
+].join('\n');
+
+export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAnalysis, onSaveAnalysis, forPdf = false, pageNum, exhibitLabel }) {
   const { _results: results, _inputs: inputs, _nameA: nameA, _nameB: nameB } = deal;
   const [pdfLoading, setPdfLoading] = useState(false);
   const pdfRef = useRef(null);
@@ -71,8 +84,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const accUp       = hEps.verdict === 'accretive';
   const accColor    = !accOK ? '#6B7280' : accUp ? '#16A34A' : hEps.verdict === 'neutral' ? '#374151' : '#DC2626'; // dark green / red
   const accColorL   = !accOK ? '#9CA3AF' : accUp ? '#4ADE80' : hEps.verdict === 'neutral' ? '#fff' : '#F87171'; // light (on navy)
-  const cardStyle    = { background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #E5E7EB' };
-  const col2         = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, marginBottom: 24 };
+  // Fix 16 Task 8: the printed Deal Summary is a slide like every other page (PageFrame header and footer, 850px wide), so
+  // its cards and rows are tighter there. On screen every value below is what it was.
+  const mb = forPdf ? 8 : 24, rowPad = forPdf ? '2px 0' : '8px 0', rowFont = forPdf ? 10.5 : 13, cellPad = forPdf ? '2px 6px' : '8px 10px';
+  const cardStyle    = { background: '#fff', borderRadius: forPdf ? 6 : 12, padding: forPdf ? '8px 12px' : 24, border: '1px solid #E5E7EB' };
+  const col2         = { display: 'grid', gridTemplateColumns: isMobile && !forPdf ? '1fr' : '1fr 1fr', gap: forPdf ? 8 : 24, marginBottom: mb };
 
   // Stock issuance risk flags
   const acquirerSharePx = acquirerSharePrice(inputs);
@@ -208,11 +224,10 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     }
   };
 
-  return (
-    <div style={{ width: '100%', maxWidth: 1100, fontFamily: 'Arial, sans-serif' }}>
+  const body = (
       <div ref={pdfRef}>
         {/* Verdict banner */}
-        <div style={{ background: '#0F2244', borderRadius: 12, padding: 20, marginBottom: 16,
+        <div style={{ background: '#0F2244', borderRadius: forPdf ? 6 : 12, padding: forPdf ? '8px 14px' : 20, marginBottom: forPdf ? 8 : 16,
           display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
           <div>
             <div style={{ color: '#A8C4DC', fontSize: 13 }}>Deal verdict</div>
@@ -238,13 +253,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         </div>
 
         {/* Narrative */}
-        <div style={{ ...cardStyle, marginBottom: 24, background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
-          <p style={{ margin: 0, fontSize: 14, color: '#1E3A5F', lineHeight: 1.7 }}>{narrative}</p>
+        <div style={{ ...cardStyle, marginBottom: mb, background: '#EFF6FF', border: '1px solid #BFDBFE' }}>
+          <p style={{ margin: 0, fontSize: forPdf ? 11 : 14, color: '#1E3A5F', lineHeight: forPdf ? 1.4 : 1.7 }}>{narrative}</p>
           <BasisNote acquirer={acquirer} target={target} deal={deal} fixed={accretionShareCountLabel(deal?._inputs)} style={{ marginTop: 6, fontSize: 11 }} />
         </div>
 
         {/* Key metrics */}
-        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr 1fr', gap: 16, marginBottom: 24 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile && !forPdf ? '1fr' : '1fr 1fr 1fr', gap: forPdf ? 8 : 16, marginBottom: mb }}>
           {(bankMode ? [
             {
               label: 'P / TBV',
@@ -368,7 +383,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               {bankMode ? 'Cost Savings' : 'Synergies'}
               <ExplainButton explain={() => explainSynergies({ schedule: results.synergies, isBank: bankMode })} />
             </h3>
-            {[
+            {!forPdf && [
               { label: 'Year 1', value: results.synergiesY1, entered: results.synergies.years[0].entered },
               { label: 'Year 2', value: results.synergiesY2, entered: results.synergies.years[1].entered },
               { label: 'Year 3', value: results.synergiesY3, entered: results.synergies.years[2].entered },
@@ -424,12 +439,12 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: vYear ? `Pro Forma Net Income (${vYear.year})` : 'Pro Forma Net Income', value: results.basesDiffer ? '—' : vYear ? (vYearPF ? fmtMoneyAccounting(vYearPF.netIncome) : '—') : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: vYear ? `Pro Forma EPS (${vYear.year})` : 'Pro Forma EPS', value: results.basesDiffer ? '—' : vYear ? (vYearPF ? fmtPerShare(vYearPF.eps) : '—') : fmtPerShare(results.proFormaEPS), bold: true, green: vYear ? hEps.verdict === 'accretive' : results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (
-              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F3F4F6' }}>
-                <span style={{ fontSize: 13, color: '#6B7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: rowPad, borderBottom: '1px solid #F3F4F6' }}>
+                <span style={{ fontSize: rowFont, color: '#6B7280', display: 'flex', alignItems: 'center', gap: 4 }}>
                   {row.label}
                   {row.explain && <ExplainButton explain={row.explain} />}
                 </span>
-                <span style={{ fontSize: 13, fontWeight: row.bold ? 'bold' : 'normal', color: row.green ? '#16A34A' : row.red ? '#DC2626' : '#111827' }}>{row.value}</span>
+                <span style={{ fontSize: rowFont, fontWeight: row.bold ? 'bold' : 'normal', color: row.green ? '#16A34A' : row.red ? '#DC2626' : '#111827' }}>{row.value}</span>
               </div>
             ))}
             <h3 style={{ color: '#0F2244' }}>Deal Structure</h3>
@@ -443,19 +458,19 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 return (!isFinite(pp) || Math.abs(pp) > 200) ? 'N/A' : `${pp >= 0 ? '+' : ''}${pp.toFixed(1)}%`;
               })() },
             ].map(row => (
-              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0', borderBottom: '1px solid #F3F4F6' }}>
-                <span style={{ fontSize: 13, color: '#6B7280', display: 'flex', alignItems: 'center', gap: 4 }}>
+              <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: rowPad, borderBottom: '1px solid #F3F4F6' }}>
+                <span style={{ fontSize: rowFont, color: '#6B7280', display: 'flex', alignItems: 'center', gap: 4 }}>
                   {row.label}
                   {row.explain && <ExplainButton explain={row.explain} />}
                 </span>
-                <span style={{ fontSize: 13, color: '#111827' }}>{row.value}</span>
+                <span style={{ fontSize: rowFont, color: '#111827' }}>{row.value}</span>
               </div>
             ))}
           </div>
         </div>
 
         {/* Sensitivity Analysis */}
-        <div style={{ ...cardStyle, marginBottom: 24 }}>
+        <div style={{ ...cardStyle, marginBottom: mb }}>
           <h3 style={{ color: '#0F2244', marginTop: 0, marginBottom: 4 }}>Sensitivity Analysis</h3>
           <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 16px', lineHeight: 1.6 }}>
             {vYear && <><strong style={{ color: '#374151' }}>{hEps.label}</strong>. {vYearNote}<br /></>}
@@ -471,7 +486,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 460 }}>
               <thead>
                 <tr>
-                  <th rowSpan={2} style={{ padding: '8px 10px', textAlign: 'left', background: '#F9FAFB', borderBottom: '2px solid #E5E7EB', color: '#6B7280', fontWeight: 600, verticalAlign: 'bottom' }}>
+                  <th rowSpan={2} style={{ padding: cellPad, textAlign: 'left', background: '#F9FAFB', borderBottom: '2px solid #E5E7EB', color: '#6B7280', fontWeight: 600, verticalAlign: 'bottom' }}>
                     Price \ Synergies
                   </th>
                   <th colSpan={5} style={{ padding: '6px 10px', textAlign: 'center', background: '#F9FAFB', borderBottom: '1px solid #E5E7EB', color: '#9CA3AF', fontWeight: 600, fontSize: 11, fontStyle: 'italic' }}>
@@ -500,7 +515,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                   const offerPriceAtRow = rowOfferPrices[i];
                   return (
                   <tr key={i}>
-                    <td style={{ padding: '8px 10px', background: isCurRow ? '#E8EFFE' : '#F9FAFB', borderBottom: '1px solid #F3F4F6', color: isCurRow ? '#0F2244' : '#6B7280', fontWeight: isCurRow ? 700 : 400 }}>
+                    <td style={{ padding: cellPad, background: isCurRow ? '#E8EFFE' : '#F9FAFB', borderBottom: '1px solid #F3F4F6', color: isCurRow ? '#0F2244' : '#6B7280', fontWeight: isCurRow ? 700 : 400 }}>
                       <span>{prem}% premium</span>
                       <span style={{ fontSize: 10, display: 'block', color: '#9CA3AF' }}>
                         {offerPriceAtRow > 0 ? `$${offerPriceAtRow.toFixed(2)}/share` : '— (no share price)'}
@@ -519,7 +534,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                       else if (delta < +0.10) { bg = '#86EFAC'; color = '#14532D'; }
                       else { bg = '#10B981'; color = '#fff'; }
                       return (
-                        <td key={j} style={{ padding: '8px 10px', textAlign: 'center', background: bg, borderBottom: '1px solid #F3F4F6', borderLeft: '1px solid #F3F4F6', color, fontWeight: isCurrent ? 700 : 500, position: 'relative', outline: isCurrent ? '2px solid #0F2244' : 'none', outlineOffset: isCurrent ? '-2px' : undefined }}>
+                        <td key={j} style={{ padding: cellPad, textAlign: 'center', background: bg, borderBottom: '1px solid #F3F4F6', borderLeft: '1px solid #F3F4F6', color, fontWeight: isCurrent ? 700 : 500, position: 'relative', outline: isCurrent ? '2px solid #0F2244' : 'none', outlineOffset: isCurrent ? '-2px' : undefined }}>
                           {isCurrent && (
                             <span style={{ position: 'absolute', top: 2, right: 4, fontSize: 9, fontWeight: 700, color: '#0F2244', letterSpacing: 0.3 }}>
                               Current
@@ -543,7 +558,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         </div>
 
         {/* Cash Structure Sensitivity Strip */}
-        <div style={{ ...cardStyle, marginBottom: 24 }}>
+        <div style={{ ...cardStyle, marginBottom: mb }}>
           <h3 style={{ color: '#0F2244', marginTop: 0, marginBottom: 4 }}>Cash Structure Sensitivity</h3>
           <p style={{ fontSize: 12, color: '#9CA3AF', margin: '0 0 12px' }}>
             {vYear && <><strong style={{ color: '#374151' }}>{hEps.label}</strong>. {vYearNote} </>}Pro Forma EPS at different cash/stock splits (offer price and synergies held constant). {inputs.year1Reason && !vYear ? `Year 1 pro forma EPS is "—": ${inputs.year1Reason}.` : <>Green = {breakevenEPS > 0 ? 'accretive vs. current acquirer EPS.' : 'above (better than) the current acquirer EPS; accretion/(dilution) is not meaningful from a non-positive base.'}</>}
@@ -569,7 +584,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         </div>
 
         {/* Source Verification */}
-        {verifiedTarget && (() => {
+        {verifiedTarget && !forPdf && (() => {
           const f = verifiedTarget.fields;
           const VERIFIED_ROWS = [
             { label: 'Revenue',          key: 'revenue' },
@@ -586,7 +601,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           const allGood = counts.flagged === 0 && counts.missing === 0;
 
           return (
-            <div style={{ ...cardStyle, marginBottom: 24 }}>
+            <div style={{ ...cardStyle, marginBottom: mb }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <h3 style={{ color: '#0F2244', margin: 0, fontSize: 15 }}>Source Verification — {target?.ticker}{target?.basis === 'ltm' ? ' (fiscal-year figures; shares at the latest cover)' : ''}</h3>
                 <span style={{ fontSize: 11, color: allGood ? '#16A34A' : '#B45309', fontWeight: 600 }}>
@@ -613,7 +628,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         })()}
 
         {/* Risk Flags */}
-        <div style={{ ...cardStyle, marginBottom: 24 }}>
+        <div style={{ ...cardStyle, marginBottom: mb }}>
           <h3 style={{ color: '#0F2244', marginTop: 0, marginBottom: 12 }}>Risk Flags</h3>
           {allFlags.length === 0 ? (
             <div style={{ background: '#F0FDF4', border: '1px solid #BBF7D0', borderRadius: 8, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -632,6 +647,20 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           )}
         </div>
       </div>
+  );
+  // Fix 16 Task 8: in the deck PDF the Deal Summary is a slide with the same header and footer as every other page.
+  if (forPdf) {
+    return (
+      <PageFrame pageNum={pageNum} exhibitLabel={exhibitLabel}>
+        <PageHeader title="Deal Summary" subtitle={`${[acquirer?.ticker || acquirer?.name || nameA, target?.ticker || target?.name || nameB].filter(Boolean).join(' / ') || 'Transaction'} · verdict, EPS impact, pro forma and sensitivity`} />
+        <style>{PDF_DASH_CSS}</style>
+        <div data-pdf-dash="" style={{ padding: '8px 18px 36px', fontFamily: 'Arial, sans-serif' }}>{body}</div>
+      </PageFrame>
+    );
+  }
+  return (
+    <div style={{ width: '100%', maxWidth: 1100, fontFamily: 'Arial, sans-serif' }}>
+      {body}
 
       {/* Action buttons — screen only (Fix 14 Task 7: the deck PDF prints this page without them) */}
       {!forPdf && <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4, marginBottom: 32 }}>
