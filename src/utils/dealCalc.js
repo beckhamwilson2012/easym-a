@@ -417,6 +417,13 @@ export function calculate(inputs) {
 // Must mirror calculate()'s pro-forma EPS exactly so the sensitivity grid is consistent.
 
 export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
+  const b = proFormaBreakdown(offerPrice, synergiesY1, inputs);
+  return b ? b.eps : null;
+}
+
+// The pro forma EPS and the lines it is built from (Fix 16 Task 3), for a slide that prints them for one year. The one
+// calculation; calcProFormaEPS returns its eps. null exactly where calcProFormaEPS was null.
+export function proFormaBreakdown(offerPrice, synergiesY1, inputs) {
   const { companyANetIncome, companyBShares, companyBNetIncome, cashPercent } = inputs;
   const acqPrice = acquirerSharePrice(inputs);
   if (!(acqPrice > 0)) return null; // !(x>0) catches null AND 0 (=== 0 missed null → NaN)
@@ -438,7 +445,7 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const fin = financingCost(inputs, offerPrice);
   if (fin.total == null) return null; // unknown target debt → unknown drag → null (matches calculate())
   const netIncome = companyANetIncome + companyBNetIncome + afterTaxSynergies - fin.total;
-  return netIncome / totalShares;
+  return { eps: netIncome / totalShares, netIncome, totalShares, afterTaxSynergies, acquirerNetIncome: companyANetIncome, targetNetIncome: companyBNetIncome, fin };
 }
 
 // Single source of truth for the EPS accretion/(dilution) PERCENTAGE. Both the dashboard headline

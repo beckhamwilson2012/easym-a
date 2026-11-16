@@ -119,6 +119,8 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
         text: verdictText(t),
         pct: t.pct, standaloneEPS: t.standaloneEPS, proFormaEPS: t.proFormaEPS, breakeven: t.breakeven,
         entered: yr?.entered ? yr.ebitda : null, yearsUsed: [slotName(pick)],
+        // Fix 16 Task 3: the year's own inputs and synergy, so every table on the slide can use the verdict's year.
+        inputs: fwd, synergy: syn, synergyEntered: !!yr?.entered,
         line: withYears(breakevenLine(t.breakeven, yr?.entered ? yr.ebitda : null), slotName(pick), skipped),
       };
     }
