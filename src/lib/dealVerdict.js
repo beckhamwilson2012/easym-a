@@ -165,6 +165,33 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   function y1SkipReason() { return y1Base > 0 ? null : `Year 1 —: ${inputs.year1Reason || `${A}'s standalone EPS is not positive`}`; }
 }
 
+// ── One EPS story (Fix 14 Task 3) ──
+// Every headline EPS-impact figure (the Deal Summary tile and EPS Analysis, Executive Summary, the Exchange Ratio slide)
+// reads this, so none can disagree with the verdict: the verdict's own year when it is a forecast year (Year 1 is "—"),
+// else Year 1. Each result carries its year and basis in `label`. pct is null when not meaningful (an EPS ≤ 0), with why.
+export function headlineEps(verdict, deal) {
+  const inputs = deal?._inputs || {};
+  const results = deal?._results || {};
+  if (verdict && verdict.step === 2 && verdict.standaloneEPS != null) {
+    return {
+      label: `${verdict.year} · ${CONSENSUS_BASIS}`, year: verdict.year, fromVerdict: true,
+      standaloneEPS: verdict.standaloneEPS, proFormaEPS: verdict.proFormaEPS, pct: verdict.pct, verdict: verdict.verdict,
+      reason: verdict.pct == null ? 'not meaningful: pro forma EPS is not positive' : null,
+    };
+  }
+  const per = inputs.companyABasis === 'ltm' ? 'LTM' : (inputs.companyAPeriodLabel || 'fiscal year');
+  const basis = inputs.reportingBasis === NON_GAAP ? 'non-GAAP' : 'GAAP';   // a Non-GAAP deck's Year 1 is company-reported non-GAAP, or "—"
+  const sa = num(results.companyAEPS), pf = num(results.proFormaEPS), pct = results.accretionMeaningful ? num(results.epsChangePct) : null;
+  const reason = results.basesDiffer ? 'companies on different bases'
+    : (sa == null || pf == null) ? (inputs.year1Reason || 'Year 1 EPS not available')
+    : pct == null ? 'not meaningful: acquirer or pro forma EPS is not positive' : null;
+  return {
+    label: `Year 1 · ${per}, ${basis}`, year: 'Year 1', fromVerdict: !!(verdict && verdict.step === 1),
+    standaloneEPS: results.basesDiffer ? null : sa, proFormaEPS: results.basesDiffer ? null : pf, pct: results.basesDiffer ? null : pct,
+    verdict: pct == null ? null : accretionVerdict(pct), reason,
+  };
+}
+
 // The breakeven line plus which years the verdict and breakeven used, and why any earlier year did not compute.
 function withYears(line, used, skipped = []) {
   const u = `Verdict and breakeven use ${used}${skipped.length ? `; ${skipped.join('; ')}` : ''}.`;

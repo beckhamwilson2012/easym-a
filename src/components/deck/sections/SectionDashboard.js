@@ -22,7 +22,7 @@ import { DIFFERENT_BASES } from '../../../lib/companyBasis';
 import { isNonGaapDeal, FY_ONLY } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
-import { verdictFlags } from '../../../lib/dealVerdict';
+import { verdictFlags, headlineEps } from '../../../lib/dealVerdict';
 import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
   explainPTBV, explainCombinedCET1,
@@ -61,9 +61,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // Third state for undefined accretion: a non-positive EPS base makes accretive/(dilutive) meaningless.
   // Drive the verdict off accretionMeaningful (NOT isAccretive being falsy) so an EPS IMPROVEMENT off a
   // negative base (e.g. -$0.37 → -$0.18) never reads "Dilutive". Positive-base deals are unchanged.
-  const accOK       = results.accretionMeaningful;
-  const accColor    = !accOK ? '#6B7280' : results.isAccretive ? '#16A34A' : '#DC2626'; // dark green / red
-  const accColorL   = !accOK ? '#9CA3AF' : results.isAccretive ? '#4ADE80' : '#F87171'; // light (on navy)
+  // One EPS story (Fix 14 Task 3): the tile and EPS Analysis show the verdict's own year (headlineEps), each labeled with
+  // its year and basis. When Year 1 is "—" that is the forecast year the verdict used, never a bare "n/m".
+  const hEps        = headlineEps(verdict, deal);
+  const accOK       = hEps.pct != null;
+  const accUp       = hEps.verdict === 'accretive';
+  const accColor    = !accOK ? '#6B7280' : accUp ? '#16A34A' : hEps.verdict === 'neutral' ? '#374151' : '#DC2626'; // dark green / red
+  const accColorL   = !accOK ? '#9CA3AF' : accUp ? '#4ADE80' : hEps.verdict === 'neutral' ? '#fff' : '#F87171'; // light (on navy)
   const cardStyle    = { background: '#fff', borderRadius: 12, padding: 24, border: '1px solid #E5E7EB' };
   const col2         = { display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 24, marginBottom: 24 };
 
@@ -210,9 +214,10 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 EPS Impact
                 <ExplainButton explain={() => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA })} />
               </div>
-              <div style={{ color: accColorL, fontSize: 22, fontWeight: 'bold' }}>
-                {accOK ? fmtPctSigned(parseFloat(results.epsChangePct)) : 'n/m'}
+              <div data-testid="eps-impact-tile" style={{ color: accColorL, fontSize: 22, fontWeight: 'bold' }}>
+                {accOK ? fmtPctSigned(hEps.pct) : 'n/m'}
               </div>
+              <div data-testid="eps-impact-label" style={{ color: '#A8C4DC', fontSize: 10, marginTop: 2 }}>{hEps.label}{!accOK && hEps.reason ? ` — ${hEps.reason}` : ''}</div>
             </div>
           </div>
         </div>
@@ -322,22 +327,23 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 {ngPlan.eps.nonGaap ? 'Non-GAAP EPS, company reported by both companies (fiscal-year earnings releases).' : `${ngPlan.eps.note}.`}
               </div>
             )}
+            <div data-testid="eps-analysis-label" style={{ fontSize: 11, color: '#374151', fontWeight: 600, marginTop: -6, marginBottom: 10 }}>{hEps.label}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Before</div>
-                <div style={{ fontSize: 24, fontWeight: 'bold' }}>{fmtPerShare(results.companyAEPS)}</div>
+                <div style={{ fontSize: 24, fontWeight: 'bold' }}>{results.basesDiffer ? '—' : fmtPerShare(hEps.standaloneEPS)}</div>
               </div>
               <div style={{ fontSize: 24, color: '#6B7280', alignSelf: 'center' }}>→</div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>After</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {results.basesDiffer ? '—' : fmtPerShare(results.proFormaEPS)}
+                  {results.basesDiffer ? '—' : fmtPerShare(hEps.proFormaEPS)}
                 </div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Change</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {results.basesDiffer ? '—' : fmtPctSigned(parseFloat(results.epsChangePct))}
+                  {results.basesDiffer ? '—' : (accOK ? fmtPctSigned(hEps.pct) : 'n/m')}
                 </div>
               </div>
             </div>

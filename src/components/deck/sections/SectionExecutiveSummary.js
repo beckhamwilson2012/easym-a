@@ -6,7 +6,8 @@ import { evClaimsNote } from '../../../lib/netDebt';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
-import { isNonGaapDeal, epsBasisLabel, combinedEbitdaLabel } from '../../../lib/reportingBasis';
+import { isNonGaapDeal, combinedEbitdaLabel } from '../../../lib/reportingBasis';
+import { headlineEps } from '../../../lib/dealVerdict';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { NAVY, SF_BLUE, GRAY_BORDER, LIGHT_BLUE, fmtMoney, fmtPct, fmtPctSigned, fmtPctFloor, fmtShares } from '../shared/deckTokens';
 import { ISSUANCE_VOTE_THRESHOLD, ISSUANCE_MAJORITY_THRESHOLD } from '../../../lib/premiumThresholds';
@@ -126,7 +127,11 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   // "unknown". Distinguish them rather than printing one dash for both.
   const accPct = d.accretion ? d.accretion.pct : null;
   const y1Reason = deal?._inputs?.year1Reason || null;   // Year 1 absent on a Non-GAAP deal (Fix 10 Task 2): say why, not "non-positive"
-  const accText = R.basesDiffer ? `n/m — ${DIFFERENT_BASES}` : y1Reason ? `— (${y1Reason})` : R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
+  // One EPS story (Fix 14 Task 3): the verdict's own year and basis (headlineEps), the figure the Deal Summary tile shows.
+  const hEps = headlineEps(verdict, deal);
+  const accText = R.basesDiffer ? `n/m — ${DIFFERENT_BASES}`
+    : hEps.fromVerdict && hEps.year !== 'Year 1' ? (hEps.pct != null ? pcS(hEps.pct) : `n/m — ${hEps.reason}`)
+    : y1Reason ? `— (${y1Reason})` : R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
 
   const snapshot = [
     { label: 'Acquirer', value: A.name ? `${A.name}${aTk ? ` (${aTk})` : ''}` : DASH },
@@ -139,7 +144,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     { label: 'New acquirer shares issued', value: sh(d.newShares) },
     { label: 'Acquirer shares outstanding (pre-deal)', value: sh(pos(d.preDealShares)) },
     { label: 'Pro forma ownership — target holders', value: pcF(d.ownershipNewPct) },
-    { label: ngPlan ? `Year-1 EPS accretion / (dilution) — ${epsBasisLabel(ngPlan)}` : 'Year-1 EPS accretion / (dilution)', value: accText, bold: true },
+    { label: `EPS accretion / (dilution) — ${hEps.label}`, value: accText, bold: true },
     { label: 'Combined revenue', value: money(d.combinedRevenue) },
     { label: ngEb ? `Combined EBITDA (${ngEb.basis || 'n/a'}, incl. Year-1 synergies)` : 'Combined EBITDA (incl. Year-1 synergies)',
       value: ngEb && ngEb.note ? `— (${ngEb.note})` : money(combinedEBITDA) },
