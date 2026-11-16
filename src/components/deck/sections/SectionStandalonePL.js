@@ -698,7 +698,10 @@ function ngRowsFor(ngPlan, ng, ngEbitda, company, ltmCard) {
   if (!ngPlan || (!ng && !ngEbitda)) return null;
   const fyLabel = company?.fiscalYear ? `FY${company.fiscalYear}` : null;
   const rows = [];
-  if (ngEbitda) rows.push({ after: 'EBITDA', kind: 'money', label: `${ngEbitda.name} (non-GAAP)`, value: ngEbitda.value, fyLabel, ltmCard });
+  // Fix 14 Task 5: the company-reported fiscal-year figure shows in its own fiscal-year column on an LTM card too (OMDA
+  // FY2025 Adjusted EBITDA $6.482M, FY release 8-K); the LTM column stays "—" because no LTM figure is reported.
+  const ebitdaFyLabel = ngEbitda && ngEbitda.fiscalYear ? `FY${ngEbitda.fiscalYear}` : fyLabel;
+  if (ngEbitda) rows.push({ after: 'EBITDA', kind: 'money', label: `${ngEbitda.name} (non-GAAP)`, value: ngEbitda.fyValue ?? ngEbitda.value, fyLabel: ebitdaFyLabel, ltmCard: false });
   if (ng) {
     rows.push({ after: 'Net Income', kind: 'money', label: 'Net Income (non-GAAP)', value: ng.netIncome, fyLabel, ltmCard });
     rows.push({ after: 'Diluted EPS', kind: 'eps', label: 'Diluted EPS (non-GAAP)', value: ng.dilutedEPS, fyLabel, ltmCard, info: ngEpsInfo(company, ng) });
@@ -714,7 +717,9 @@ function nonGaapBasisText(company, ngPlan, ng, ngEbitda, ltmCard) {
   if (ng) parts.push(`Net income and diluted EPS rows marked non-GAAP are ${name}’s own (“${ng.epsRowLabel}”; ${ng.epsLabel}), tied to GAAP in the filed reconciliation table; the deal’s EPS and accretion use them. `);
   else if (ngPlan.epsNote) parts.push(`EPS: ${ngPlan.epsNote}. `);
   if (ngEbitda) parts.push(ltmCard || ngEbitda.value == null
-    ? `${ngEbitda.name} (non-GAAP): — (${FY_ONLY}; this company is on LTM). `
+    ? (ngEbitda.fyValue != null
+      ? `${ngEbitda.name} (non-GAAP) is reported for the fiscal year only: FY${ngEbitda.fiscalYear ?? ''} ${fmtUSDmAcct(ngEbitda.fyValue)} (${ngEbitda.label || 'earnings release'}), shown in its fiscal-year column. There is no LTM figure, so with this company on LTM the deal has no ${ngEbitda.name} for it. `
+      : `${ngEbitda.name} (non-GAAP): — (${FY_ONLY}; this company is on LTM). `)
     : `${ngEbitda.name} is ${name}’s own adjusted EBITDA (${ngEbitda.label}), tied to GAAP net income in the filed reconciliation table; the deal uses it for this company’s EBITDA. `);
   else parts.push(`${name} reports no adjusted EBITDA, so its EBITDA is computed. `);
   if (ltmCard && ng == null && !ngEbitda) parts.push(`Non-GAAP: — (${FY_ONLY}). `);

@@ -7,7 +7,8 @@
 // FMP ownership-structure summary (float % + insider Form-4). Never render an unvalidated parse — that was
 // the /api/segments failure. No route, no deck wiring here (Stage 3). Reads process.env.FMP_KEY.
 
-const UA = { 'User-Agent': 'EasyMA research beckhamwilson@gmail.com' };
+// The app's generic SEC contact, the same User-Agent server/utils/httpGet.js sends (Fix 14: no personal address here).
+const UA = { 'User-Agent': 'EasyMandA contact@easymanda.com' };
 const FMP = 'https://financialmodelingprep.com/stable';
 const FMP_KEY = process.env.FMP_KEY || '';
 
@@ -90,6 +91,47 @@ function findOwnershipTable(html) {
   return best;
 }
 
+// ── Continuation of the ownership table across a page break (Fix 14 Task 5) ──────────────────────────────
+// OMDA's 2026 proxy prints its table in two: directors and officers on one page, then, after the page break, a second
+// table with the same header ("Name of Beneficial Owner | Shares of Common Stock (#) | Percent of Shares Outstanding (%)")
+// holding "Other Greater Than 5% Stockholders". Only the first was read, so the slide listed no 5% holders. A
+// continuation is a top-level table that starts within CONT_GAP characters of text after the previous one ends and
+// repeats the beneficial-owner header; at most two are taken. Nothing else changes the located table.
+const CONT_GAP = 600;
+function continuationTables(html, first) {
+  const out = [];
+  let prevEnd = first.end, gap = 0;
+  for (const t of allTables(html)) {
+    if (t.start < prevEnd || out.length >= 2) continue;
+    gap += stripTags(html.slice(prevEnd, t.start)).length;
+    if (gap > CONT_GAP) break;
+    const headTxt = stripTags(t.html.slice(0, 2500)).toLowerCase();
+    if (!/name of beneficial owner|beneficial owner/.test(headTxt) || !/%|percent/.test(headTxt)) {
+      // A page footer laid out as its own small table ("Omada Health, Inc. 39 2026 Proxy Statement Table of Contents")
+      // counts as gap text; any other table ends the search.
+      const txt = stripTags(t.html);
+      if (txt.length <= 200 && !/\d{1,3}(?:,\d{3})+/.test(txt)) { gap += txt.length; prevEnd = t.end; continue; }
+      break;
+    }
+    out.push(t); prevEnd = t.end; gap = 0;
+  }
+  return out;
+}
+
+// The located table plus its continuations, parsed as one: holders appended in order, a name never twice.
+function parseWithContinuations(html, tbl) {
+  const parsed = parseTable(tbl.html);
+  const seen = new Set(parsed.holders.map((h) => h.name));
+  let continued = 0;
+  for (const t of continuationTables(html, tbl)) {
+    const p = parseTable(t.html);
+    if (p.dualClass !== parsed.dualClass) break;
+    for (const h of p.holders) if (!seen.has(h.name)) { seen.add(h.name); parsed.holders.push(h); }
+    continued++;
+  }
+  return { ...parsed, continuedTables: continued };
+}
+
 // ── Parse the located table ─────────────────────────────────────────────────────────────────────────────
 function parseTable(tableHtml) {
   const rows = tableHtml.split(/<tr[\s>]/i).slice(1).map(rowCells);
@@ -124,7 +166,10 @@ function parseTable(tableHtml) {
   for (const cs of rows) {
     const firstText = cs.map((c) => c.text).find((x) => /[A-Za-z]/.test(x)) || '';
     const rowTxt = cs.map((c) => c.text).join(' ');
-    if (/(5%|five percent).{0,20}(stockholders|holders|owners)|security holders|executive officers and directors|neos and directors|directors and (named )?executive|management/i.test(rowTxt) && !isShareTok(cs.find((c) => c.text)?.text || '')) {
+    // A section heading carries no share count in any cell (Fix 14 Task 5): a holder row such as "Entities affiliated
+    // with Divisadero Street Capital Management, LP | 5,056,517 | 8.51" matched "management" and flipped every later
+    // 5% holder to "insider". Only the first cell was checked before.
+    if (/(5%|five percent).{0,20}(stockholders|holders|owners)|security holders|executive officers and directors|neos and directors|directors and (named )?executive|management/i.test(rowTxt) && !cs.some((c) => isShareTok(c.text))) {
       if (/5%|five percent|security holders/i.test(rowTxt)) section = '5% holder';
       else if (/director|officer|management|neo/i.test(rowTxt)) section = 'insider';
     }
@@ -216,13 +261,16 @@ async function getShareholderAnalysis(ticker) {
     const html = await tget(filing.url);
     const tbl = findOwnershipTable(html);
     if (!tbl) return { ...(await fmpOwnershipSummary(t)), trusted: false, reason: 'ownership table not located', filing };
-    const parsed = parseTable(tbl.html);
+    const parsed = parseWithContinuations(html, tbl);
     const val = validate(parsed, outstanding);
-    if (val.trusted) return { source: 'def14a', ticker: t, trusted: true, filing, dualClass: parsed.dualClass, holders: parsed.holders, validation: val };
+    // fivePctListed: whether the proxy's table lists any holder under a 5% heading (the slide's subtitle says which).
+    if (val.trusted) return { source: 'def14a', ticker: t, trusted: true, filing, dualClass: parsed.dualClass, holders: parsed.holders, validation: val,
+      fivePctListed: parsed.holders.some((h) => h.section === '5% holder'), continuedTables: parsed.continuedTables };
     return { ...(await fmpOwnershipSummary(t)), trusted: false, reason: `parse untrusted: ${val.reason}`, filing, validation: val, parsedPreview: parsed.holders.slice(0, 4) };
   } catch (e) {
     return { ...(await fmpOwnershipSummary(t)), trusted: false, reason: `error: ${e.message}` };
   }
 }
 
-module.exports = { getShareholderAnalysis, findOwnershipTable, parseTable, validate, fmpOwnershipSummary, findLatestDef14a, cikForTicker };
+module.exports = { getShareholderAnalysis, findOwnershipTable, parseTable, validate, fmpOwnershipSummary, findLatestDef14a, cikForTicker,
+  continuationTables, parseWithContinuations };

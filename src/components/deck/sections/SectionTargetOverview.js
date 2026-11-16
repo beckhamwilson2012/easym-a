@@ -1,5 +1,4 @@
 import { apiUrl } from '../../../api';
-import { multipleFromRatio } from '../../../lib/multiples';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -9,6 +8,7 @@ import { getCompanyProfile } from '../../../lib/companyProfiles';
 import { getCustomerMetrics } from '../../../lib/customerMetrics';
 import { pageNumOf } from '../deckRegistry';
 import { isNonGaapDeal } from '../../../lib/reportingBasis';
+import { buildCompany } from './SectionComparables';
 
 // Customer & net-retention metrics — CITED curated callouts for SaaS issuers that DISCLOSE them (10-K /
 // 20-F / earnings letters, not XBRL). Each figure carries its OWN definition + as-of + source; the block
@@ -82,7 +82,7 @@ function NotReported({ label }) {
   );
 }
 
-function SegBox({ title, seg }) {
+function SegBox({ title, seg, mismatch }) {
   return (
     <div style={{ flex: 1, border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
       <div style={{ background: '#374151', padding: '5px 10px' }}>
@@ -90,9 +90,26 @@ function SegBox({ title, seg }) {
           {title}{seg?.ok && seg.year ? ` (FY${seg.year})` : ''}
         </span>
       </div>
-      {seg?.ok && seg.segments?.length ? <SegmentBars rows={seg.segments} /> : <NotReported label={title.includes('GEO') ? 'Geographic split' : 'Segment split'} />}
+      {mismatch ? (
+        <div data-testid="segment-mismatch" style={{ padding: '16px 12px', textAlign: 'center', fontSize: 9.5, color: '#92400E', fontStyle: 'italic' }}>
+          Segment figures from FMP don't sum to reported revenue (${Math.round(mismatch.sum).toLocaleString('en-US')}M vs ${Math.round(mismatch.revenue).toLocaleString('en-US')}M); not shown.
+        </div>
+      ) : seg?.ok && seg.segments?.length ? <SegmentBars rows={seg.segments} /> : <NotReported label={title.includes('GEO') ? 'Geographic split' : 'Segment split'} />}
     </div>
   );
+}
+
+// Fix 14 Task 5: FMP's product segments are shown only when they sum to the filed revenue of the same fiscal year
+// within 2% (OMDA FY2025: Service $241.0M + Hardware $37.4M = $278.5M against $260M filed). Filed revenue is /api/pnl's
+// actual column for that year, in $M; the $0.5M allowance is that column's rounding. A year with no filed revenue, or
+// segments converted from another currency (filed revenue is not), cannot be checked and shows as before.
+export function segmentMismatch(seg, actuals) {
+  if (!seg?.ok || !seg.segments?.length || seg.converted || !seg.year) return null;
+  const col = (actuals || []).find((c) => String(c.fy) === String(seg.year));
+  const revenue = col && Number.isFinite(col.revenue) && col.revenue > 0 ? col.revenue : null;
+  if (revenue == null) return null;
+  const sum = seg.segments.reduce((s, r) => s + r.value, 0) / 1e6;
+  return Math.abs(sum - revenue) > Math.max(0.02 * revenue, 0.5) ? { sum, revenue } : null;
 }
 
 const pct = (v, dp = 1) => (v == null ? '—' : `${(v * 100).toFixed(dp)}%`);
@@ -104,17 +121,21 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
   const [km, setKm]     = useState(null);
   const [pnl, setPnl]   = useState(null);
   const [fmp, setFmp]   = useState(null);
+  const [col, setCol]   = useState(null);   // the target's Comparables column (buildCompany), for its EV / EBITDA
   useEffect(() => {
     let cancel = false;
     if (!tk) return;
     Promise.all([
       j(`/api/segments-product/${tk}`), j(`/api/segments-geo/${tk}`), j(`/api/key-metrics/${tk}`),
       j(`/api/pnl/${encodeURIComponent(tk)}`), j(`/api/profile/${encodeURIComponent(tk)}`),
-    ]).then(([p, g, k, pn, pf]) => {
+      j(`/quote?symbol=${encodeURIComponent(tk)}`), j(`/api/price/${encodeURIComponent(tk)}`),
+    ]).then(([p, g, k, pn, pf, q, pr]) => {
       if (cancel) return;
       setProd(p); setGeo(g); setKm(k);
       setPnl(pn && pn.ok && Array.isArray(pn.columns) ? pn : null);
       setFmp(pf && pf.ok ? pf : null);
+      // Fix 14 Task 5: the same inputs Comparables' fetchOne gives buildCompany (/quote + the live price).
+      setCol(q ? buildCompany(tk, { ...q, livePrice: pr && pr.price != null ? pr.price : null }, true) : null);
     });
     return () => { cancel = true; };
   }, [tk]);
@@ -135,8 +156,10 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
   const trendMax = Math.max(...trendCols.map(c => c.revenue || 0), 1);
 
   // Key operating metrics (TTM ratios — currency-neutral). EV/EBITDA & negatives that read absurd → n/m.
-  const evEbitdaM = km?.ok ? multipleFromRatio(km.evToEBITDA, { denName: 'EBITDA', nonPositiveReason: 'EBITDA is zero or negative' }) : null;
-  const evEbitda = evEbitdaM ? (evEbitdaM.nm ? `n/m — ${evEbitdaM.reason}` : evEbitdaM.text) : '—';
+  // Fix 14 Task 5: one EV / EBITDA per company. The app's own figure, the Comparables cell (buildCompany: current EV ÷
+  // LTM EBITDA, the one multiples rule), never FMP's key-metrics ratio (OMDA: 40.9x here against 45.2x on Comparables).
+  const evEbitda = col && col.evEbitCell != null ? col.evEbitCell : '—';
+  const evEbitdaPeriod = col && col.ltmAsOf ? 'LTM' : 'FY';
   // Faculty (7D-5): every ratio carries an explicit period, consistent with the rest of the deck (LTM / FY).
   // The four return/yield ratios are trailing-twelve-month (FMP key-metrics-ttm) — labeled LTM; the balance-
   // sheet AS-OF instant for the return denominators is in the footnote. TTM→LTM to match §2/§3/§6/§7 wording.
@@ -148,7 +171,7 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
     { k: `Gross margin (${onLtm ? 'LTM' : 'FY'})`,          v: isGrossNm(target) ? 'n/m' : pct(grossMargin) },
     { k: `Operating margin (${onLtm ? 'LTM' : 'FY'})`,      v: pct(opMargin) },
     { k: `Revenue CAGR (${actuals.length}yr)`, v: pct(revCAGR) },
-    { k: isNonGaapDeal(deal) ? 'EV / EBITDA (LTM, FMP, not company-adjusted)' : 'EV / EBITDA (LTM)', v: evEbitda },
+    { k: `EV / EBITDA (${evEbitdaPeriod}${isNonGaapDeal(deal) ? ', computed EBITDA' : ''}, as on Comparables)`, v: evEbitda },
   ];
 
   const fyStr = target?.fiscalYear ? `FY${target.fiscalYear}` : 'most recent annual';
@@ -173,7 +196,7 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
 
         {/* Segment mix — product (left) + geographic (right), real FMP or "not reported" */}
         <div style={{ display: 'flex', gap: 14, marginBottom: 12 }}>
-          <SegBox title="REVENUE BY PRODUCT / SEGMENT" seg={prod} />
+          <SegBox title="REVENUE BY PRODUCT / SEGMENT" seg={prod} mismatch={segmentMismatch(prod, actuals)} />
           <SegBox title="REVENUE BY GEOGRAPHY" seg={geo} />
         </div>
 

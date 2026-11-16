@@ -103,7 +103,9 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
   // EBITDA: each company on its own.
   const side = (x, ltm) => {
     if (!x.ebitda) return { nonGaap: false, value: null, reason: x.ebitdaReason };
-    return { nonGaap: true, value: ltm ? null : x.ebitda.value, name: x.ebitda.name, rowLabel: x.ebitda.rowLabel, label: x.ebitda.label, accession: x.ebitda.accession, fiscalYear: x.ebitda.fiscalYear, note: ltm ? FY_ONLY : null };
+    // fyValue (Fix 14 Task 5): the filed fiscal-year figure, for its own fiscal-year column on the P&L even when the
+    // card is on LTM. `value`, what the deal uses, stays null on LTM: there is no LTM adjusted EBITDA.
+    return { nonGaap: true, value: ltm ? null : x.ebitda.value, fyValue: x.ebitda.value, period: x.ebitda.period || null, name: x.ebitda.name, rowLabel: x.ebitda.rowLabel, label: x.ebitda.label, accession: x.ebitda.accession, fiscalYear: x.ebitda.fiscalYear, note: ltm ? FY_ONLY : null };
   };
   const A = side(a, ltmA), B = side(b, ltmB);
   const combinable = A.nonGaap === B.nonGaap;

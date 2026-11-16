@@ -193,7 +193,8 @@ export function dealNonGaap(deal, side) {
     epsRowLabel:   eps ? eps.rowLabel : null,      // the company's own row label
     epsCheckMethod: eps ? (eps.checkMethod || null) : null,   // how the server tied it (reportingBasis.epsCheckNote reads it)
     epsNote:       plan.eps.note,                  // why the deal's EPS stayed GAAP, else null
-    ebitda:        e.nonGaap ? { value: e.value, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null } : null,
+    // fyValue / fiscalYear (Fix 14 Task 5): the filed fiscal-year figure for its own P&L column, also on an LTM card.
+    ebitda:        e.nonGaap ? { value: e.value, fyValue: e.fyValue ?? null, fiscalYear: e.fiscalYear ?? null, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null } : null,
     accession:     (eps && eps.accession) || (e.nonGaap ? e.accession : null) || null,
   };
 }
