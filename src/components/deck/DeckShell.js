@@ -51,9 +51,13 @@ const SECTIONS = DECK_ORDER.map(s => ({ ...s, Component: COMPONENTS[s.id] }));
 // pageNum for each showInPdf section (1-indexed)
 const PDF_SECTIONS = pdfOrder(SECTIONS.filter(s => s.showInPdf));
 const PAGE_NUM_MAP = Object.fromEntries(PDF_SECTIONS.map((s, i) => [s.id, i + 1]));
+// Fix 17 Task 8: the sidebar lists the slides in page order (deckRegistry.pdfOrder: Title, then Deal Summary), so its
+// numbers read 1, 2, 3 …; the deck still opens on the Deal Summary. pdfOrder puts it right after the Title on public
+// and private decks alike, so this index holds for both.
+const LANDING_INDEX = Math.max(0, pdfOrder(SECTIONS).findIndex(s => s.id === 'dashboard'));
 
 export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, onNewAnalysis, onSaveAnalysis }) {
-  const [activeIndex, setActiveIndex] = useState(0);
+  const [activeIndex, setActiveIndex] = useState(LANDING_INDEX);
   const [exporting, setExporting]     = useState(false);
   const hiddenRef = useRef(null);
 
@@ -85,6 +89,8 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
       activeSections = rest;
     } else activeSections = kept;
   }
+  // Fix 17 Task 8: the screen rail in the same order as the pages.
+  activeSections = pdfOrder(activeSections);
   // PDF page order (Fix 14 Task 7): the Deal Summary is the first page after the Title (deckRegistry.pdfOrder).
   const activePdfSections = pdfOrder(activeSections.filter(s => s.showInPdf));
   const activePageNumMap = Object.fromEntries(activePdfSections.map((s, i) => [s.id, i + 1]));

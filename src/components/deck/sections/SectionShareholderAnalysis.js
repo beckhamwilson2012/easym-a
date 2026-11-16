@@ -16,6 +16,23 @@ const roleColor = (s) => (s === '5% holder' ? '#0B5CAB' : s === 'insider' ? '#6B
 const fmtPctVal = (p) => (p == null ? '—' : p === '*' ? '<1%' : p === '-' ? '—' : (typeof p === 'number' ? `${p.toFixed(p < 10 ? 2 : 1)}%` : String(p)));
 const fmtSh = (v) => (v == null ? '—' : fmtShares(v / 1e6)); // v is raw shares; fmtShares expects millions
 
+// Fix 17 Task 8: holders first (5% holders and any rows listed before the proxy's director heading), largest to smallest
+// by % of class (voting % on a dual-class table), then directors/officers in the proxy's own order. A "<1%" ("*") or "—"
+// entry has no number and sorts after the numbered ones; ties keep the proxy's order.
+const pctNum = (p) => (typeof p === 'number' && Number.isFinite(p) ? p : null);
+export function orderHolders(holders, dual) {
+  const key = (h) => pctNum(dual ? (h.votingPct ?? h.pctA) : h.pct);
+  const owners = holders.map((h, i) => ({ h, i })).filter(({ h }) => h.section !== 'insider');
+  owners.sort((a, b) => {
+    const ka = key(a.h), kb = key(b.h);
+    if (ka == null && kb == null) return a.i - b.i;
+    if (ka == null) return 1;
+    if (kb == null) return -1;
+    return kb - ka || a.i - b.i;
+  });
+  return [...owners.map(({ h }) => h), ...holders.filter((h) => h.section === 'insider')];
+}
+
 function RoleBadge({ section }) {
   return <span style={{ fontSize: 8, fontWeight: 700, color: roleColor(section), background: '#F3F4F6', border: `1px solid ${GRAY_BORDER}`, borderRadius: 3, padding: '1px 5px', whiteSpace: 'nowrap' }}>{roleLabel(section)}</span>;
 }
@@ -37,7 +54,7 @@ export function SectionShareholderAnalysis({ target, pageNum, exhibitLabel }) {
   const name = target?.name || 'Target';
   const trusted = !!data?.trusted;
   const dual = !!data?.dualClass;
-  const holders = Array.isArray(data?.holders) ? data.holders : [];
+  const holders = orderHolders(Array.isArray(data?.holders) ? data.holders : [], !!data?.dualClass);
   const shown = holders.slice(0, MAX_ROWS);
   const overflow = holders.length - shown.length;
   const val = data?.validation;
@@ -47,7 +64,9 @@ export function SectionShareholderAnalysis({ target, pageNum, exhibitLabel }) {
   const groupRow = holders.find(h => /as a group|all (current )?(executive|named executive|directors)/i.test(h.name));
   const insiderVoting = groupRow?.votingPct ?? (dual ? holders.filter(h => h.section === 'insider' && typeof h.votingPct === 'number').reduce((a, h) => a + h.votingPct, 0) : null);
 
-  const th = (label, align = 'right') => ({ padding: '5px 8px', background: NAVY, color: '#fff', fontSize: 9, fontWeight: 700, textAlign: align, whiteSpace: 'nowrap' });
+  // Fix 17 Task 8: was th(label, align = 'right') while every caller passes only the alignment (th('left')), so every
+  // header, "Beneficial Owner" included, sat right-aligned over a left-aligned column.
+  const th = (align = 'right') => ({ padding: '5px 8px', background: NAVY, color: '#fff', fontSize: 9, fontWeight: 700, textAlign: align, whiteSpace: 'nowrap' });
   const td = (align = 'right', bold = false) => ({ padding: '4px 8px', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10, textAlign: align, fontWeight: bold ? 700 : 400, color: bold ? NAVY : '#374151' });
 
   const tieFootnote = val
