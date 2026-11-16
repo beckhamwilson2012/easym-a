@@ -43,7 +43,11 @@ function durationContexts(xml) {
 
 const days = (a, b) => (Date.parse(b) - Date.parse(a)) / 86400000;
 // "omda:HealthPlanMember" → "Health Plan"; "country:US" → "US".
+// An ISO country member ("country:MX") reads as its English name ("Mexico"), as FMP's split printed it.
+const REGION = (() => { try { return new Intl.DisplayNames(['en'], { type: 'region' }); } catch (e) { return null; } })();
 function humanize(qname) {
+  const m = /^country:([A-Z]{2})$/.exec(String(qname));
+  if (m && REGION) { try { const n = REGION.of(m[1]); if (n && n !== m[1]) return n; } catch (e) { /* fall through */ } }
   const local = String(qname).split(':').pop().replace(/Member$/, '').replace(/Axis$/, '');
   return local.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2').replace(/^Non Us$/, 'Non-US').trim();
 }

@@ -39,7 +39,8 @@ test('0.5% is the line', () => {
 
 test('labels', () => {
   expect(humanize('us-gaap:NonUsMember')).toBe('Non-US');
-  expect(humanize('country:US')).toBe('US');
+  expect(humanize('country:US')).toBe('United States');
+  expect(humanize('country:MX')).toBe('Mexico');
   expect(humanize('ko:FinishedProductOperationsMember')).toBe('Finished Product Operations');
 });
 
