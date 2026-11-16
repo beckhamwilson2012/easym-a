@@ -169,6 +169,61 @@ test('end to end: the filing text is read only when the XBRL singles a class out
   assert.strictEqual(reads, 1);   // HNGE: no EPS by class → no text read
 });
 
+// ── Fix 14: the latest filed cover, every filer ──
+const { latestCoverEntry, latestCoverShares } = require('../coverShares');
+// OMDA's companyfacts cover facts, as filed: the Q3 2026 10-Q (filed 2026-11-06) states 62,037,725 at 2026-11-03.
+const OMDA_DEI = { EntityCommonStockSharesOutstanding: { units: { shares: [
+  { end: '2026-02-27', val: 58196000, form: '10-K', filed: '2026-03-05', accn: '0001628280-26-015637' },
+  { end: '2026-05-05', val: 59448507, form: '10-Q', filed: '2026-05-08', accn: 'q1' },
+  { end: '2026-08-04', val: 61216703, form: '10-Q', filed: '2026-08-07', accn: 'q2' },
+  { end: '2026-11-03', val: 62037725, form: '10-Q', filed: '2026-11-06', accn: '0001628280-26-071654' },
+] } } };
+
+test('Fix 14 OMDA: the newest filed cover wins over the 10-K (62,037,725, cover of 10-Q filed 2026-11-06)', () => {
+  const r = latestCoverEntry(OMDA_DEI);
+  assert.strictEqual(r.value, 62037725);
+  assert.strictEqual(r.date, '2026-11-03');
+  assert.strictEqual(r.label, 'cover of 10-Q filed 2026-11-06');
+});
+
+test('Fix 14: a 10-K filed after the last 10-Q is the newest cover', () => {
+  const dei = { EntityCommonStockSharesOutstanding: { units: { shares: [
+    { end: '2025-10-20', val: 100, form: '10-Q', filed: '2025-10-25', accn: 'a' },
+    { end: '2026-02-15', val: 120, form: '10-K', filed: '2026-02-20', accn: 'b' },
+  ] } } };
+  assert.strictEqual(latestCoverEntry(dei).value, 120);
+  assert.strictEqual(latestCoverEntry(dei).label, 'cover of 10-K filed 2026-02-20');
+});
+
+test('Fix 14: non-periodic forms, zero and absent covers are never a count', () => {
+  const dei = { EntityCommonStockSharesOutstanding: { units: { shares: [
+    { end: '2026-10-01', val: 500, form: 'S-1', filed: '2026-10-02', accn: 's' },
+    { end: '2026-09-01', val: 0, form: '10-Q', filed: '2026-09-05', accn: 'z' },
+  ] } } };
+  assert.strictEqual(latestCoverEntry(dei), null);
+  assert.strictEqual(latestCoverEntry({}), null);
+  assert.strictEqual(latestCoverEntry(null), null);
+});
+
+test('Fix 14: multi-class filers keep the class sum (FIX7A rules); single-class filers get the newest cover', async () => {
+  const sub = async () => ({ filings: { recent: { form: ['10-Q'], accessionNumber: ['0001628280-26-072251'], filingDate: ['2026-11-09'], reportDate: ['2026-09-30'], primaryDocument: ['hnge.htm'] } } });
+  const h = await latestCoverShares('1673743', {}, { anchor: '2026-09-30', deps: { readSubmissions: sub, readCover: async () => parseCoverShares(HNGE_Q3) } });
+  assert.strictEqual(h.value, 81271302);
+  assert.ok(h.classes && h.classes.length === 2);
+  const subO = async () => ({ filings: { recent: { form: ['10-Q'], accessionNumber: ['0001628280-26-071654'], filingDate: ['2026-11-06'], reportDate: ['2026-09-30'], primaryDocument: ['omda.htm'] } } });
+  const o = await latestCoverShares('1611115', OMDA_DEI, { anchor: '2026-09-30', deps: { readSubmissions: subO } });
+  assert.strictEqual(o.value, 62037725);
+  assert.strictEqual(o.classes, undefined);
+});
+
+test('Fix 14: a cover more than 15 months before the anchor is refused (caller keeps its chain)', async () => {
+  const dei = { EntityCommonStockSharesOutstanding: { units: { shares: [{ end: '2024-01-10', val: 900, form: '10-K', filed: '2024-02-01', accn: 'x' }] } } };
+  const r = await latestCoverShares('1', dei, { anchor: '2026-09-30', ifrs: true });
+  assert.strictEqual(r, null);
+  const ok = await latestCoverShares('1', dei, { anchor: '2024-12-31', ifrs: true });
+  assert.strictEqual(ok.value, 900);
+});
+
 (async () => {
   for (const [name, fn] of tests) {
     try { await fn(); passed++; console.log(`  ✓ ${name}`); } catch (e) { console.log(`  ✗ ${name}\n    ${e.message}`); }

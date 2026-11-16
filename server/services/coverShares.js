@@ -158,5 +158,43 @@ async function multiClassCoverShares(cik, dei, deps = {}) {
   }
 }
 
+// ── The latest filed cover-page count, for every filer (Fix 14) ──
+// The cover of each 10-K and 10-Q states the shares outstanding at a date just before filing. The newest filed cover is
+// the current count: OMDA's Q3 10-Q (filed 2026-11-06) states 62,037,725 at 2026-11-03, while its FY2025 10-K balance
+// sheet said 58M. The resolver used to take the 10-K balance-sheet count first, so every filer's count lagged by up to a
+// year. Now: a multi-class cover is summed by the rules above (common only, non-economic classes out, one filing, one
+// date); a single-class cover is companyfacts' undimensioned dei fact from the newest 10-K/10-Q (or 20-F/40-F). A cover
+// older than STALE_MONTHS before the caller's anchor date is refused (a filer that stopped tagging its cover), and the
+// caller keeps its existing chain. Nothing is estimated; no count from one filing is mixed with another's.
+const COVER_FORMS = new Set(['10-K', '10-Q', '20-F', '40-F', '10-KT', '10-QT']);
+const STALE_MONTHS = 15;
+
+// Pure: companyfacts dei → the undimensioned cover fact of the newest filing (by filing date, then cover date), or null.
+function latestCoverEntry(dei) {
+  const rows = (dei && dei[COVER_CONCEPT] && dei[COVER_CONCEPT].units && dei[COVER_CONCEPT].units.shares) || [];
+  const ok = rows.filter((e) => COVER_FORMS.has(e.form) && e.val > 0 && e.end && e.filed);
+  if (!ok.length) return null;
+  const newest = ok.reduce((b, e) => (e.filed > b.filed || (e.filed === b.filed && e.end > b.end) ? e : b));
+  const same = ok.filter((e) => e.accn === newest.accn && e.end === newest.end);
+  const val = Math.max(...same.map((e) => e.val));
+  return { value: val, date: newest.end, form: newest.form, filed: newest.filed, accn: newest.accn,
+    label: `cover of ${newest.form} filed ${newest.filed}` };
+}
+
+function staleAgainst(date, anchor) {
+  if (!date || !anchor) return false;
+  return (new Date(anchor) - new Date(date)) / (1000 * 86400 * 30.44) > STALE_MONTHS;
+}
+
+// The one entry point for a point-in-time share count (/quote market cap and the §16 / Source Verification row both call
+// it). multiClassCoverShares runs first (non-IFRS only), then the single-class cover. `anchor` is the caller's
+// balance-sheet date for the staleness check. Returns { value (raw shares), date, label, form, filed, accn, classes? } or null. Never throws.
+async function latestCoverShares(cik, dei, { anchor = null, ifrs = false, deps = {} } = {}) {
+  const multi = ifrs ? null : await multiClassCoverShares(cik, dei, deps);
+  const r = multi || latestCoverEntry(dei);
+  if (!r || !(r.value > 0) || staleAgainst(r.date, anchor)) return null;
+  return r;
+}
+
 module.exports = { classLabel, parseCoverShares, sumCoverClasses, latestPeriodicFiling, coverInCompanyFacts, multiClassCoverShares,
-  epsClassMembers, nonEconomicClassesInText, economicClasses, needsEconomicCheck };
+  epsClassMembers, nonEconomicClassesInText, economicClasses, needsEconomicCheck, latestCoverEntry, latestCoverShares };

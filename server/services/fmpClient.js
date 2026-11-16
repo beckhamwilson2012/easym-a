@@ -32,14 +32,19 @@ async function fetchFields(ticker) {
   // renamed calendarYear→fiscalYear (handled in fmpPeriod); all value field names are unchanged. The
   // price-target-consensus call was REMOVED here — fetchAnalyst() already supplies the analyst targets
   // to verifiedLookup (merged over fetchFields), so keeping it here would be a redundant dead call.
-  const [quoteRes, incomeRes, balanceRes, cashRes] = await Promise.allSettled([
+  const [quoteRes, incomeRes, balanceRes, cashRes, floatRes] = await Promise.allSettled([
     get(`${STABLE}/quote?symbol=${ticker}&apikey=${FMP_KEY}`),
     get(`${STABLE}/income-statement?symbol=${ticker}&period=annual&limit=1&apikey=${FMP_KEY}`),
     get(`${STABLE}/balance-sheet-statement?symbol=${ticker}&period=annual&limit=1&apikey=${FMP_KEY}`),
     get(`${STABLE}/cash-flow-statement?symbol=${ticker}&period=annual&limit=1&apikey=${FMP_KEY}`),
+    get(`${STABLE}/shares-float?symbol=${ticker}&apikey=${FMP_KEY}`),
   ]);
 
   const quote    = quoteRes.status    === 'fulfilled' && Array.isArray(quoteRes.value)    ? quoteRes.value[0]    : null;
+  // Fix 14: the share-count cross-check is FMP's own read of the latest filed cover (shares-float outstandingShares, with
+  // the filing it came from), a point-in-time count like EDGAR's, not the fiscal-year weighted average. No period object:
+  // a point-in-time count is compared as of now. Absent → null (single source), never the FY average.
+  const sfloat   = floatRes.status    === 'fulfilled' && Array.isArray(floatRes.value)    ? floatRes.value[0]    : null;
   const income   = incomeRes.status   === 'fulfilled' && Array.isArray(incomeRes.value)   ? incomeRes.value[0]   : null;
   const balance  = balanceRes.status  === 'fulfilled' && Array.isArray(balanceRes.value)  ? balanceRes.value[0]  : null;
   const cashFlow = cashRes.status     === 'fulfilled' && Array.isArray(cashRes.value)     ? cashRes.value[0]     : null;
@@ -68,7 +73,7 @@ async function fetchFields(ticker) {
     operatingIncome: income ? makeField(cvA(inM(income.operatingIncome)), toDate(income.date), fmpPeriod(income)) : null,
     netIncome:       income ? makeField(cvA(inM(income.netIncome)),       toDate(income.date), fmpPeriod(income)) : null,
     // Share COUNT — NOT converted (converting a unit count by an FX rate would be nonsense)
-    sharesOutstanding: income ? makeField(inM(income.weightedAverageShsOut), toDate(income.date), fmpPeriod(income)) : null,
+    sharesOutstanding: sfloat && sfloat.outstandingShares > 0 ? makeField(sfloat.outstandingShares / 1e6, toDate(sfloat.date), null) : null,
     // Diluted EPS: /stable income = as-reported GAAP (NOT adjusted). `epsdiluted` is sparse on /stable, so
     // fall back to `eps` (which is the diluted GAAP figure for TEAM et al.). Per-share → NOT inM; ×avgRate.
     epsDiluted:      income ? makeField(epsUsd, toDate(income.date), fmpPeriod(income)) : null,

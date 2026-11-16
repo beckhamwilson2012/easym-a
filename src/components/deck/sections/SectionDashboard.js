@@ -546,7 +546,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           return (
             <div style={{ ...cardStyle, marginBottom: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h3 style={{ color: '#0F2244', margin: 0, fontSize: 15 }}>Source Verification — {target?.ticker}{target?.basis === 'ltm' ? ' (fiscal-year figures)' : ''}</h3>
+                <h3 style={{ color: '#0F2244', margin: 0, fontSize: 15 }}>Source Verification — {target?.ticker}{target?.basis === 'ltm' ? ' (fiscal-year figures; shares at the latest cover)' : ''}</h3>
                 <span style={{ fontSize: 11, color: allGood ? '#16A34A' : '#B45309', fontWeight: 600 }}>
                   {counts.verified} verified · {counts.single} single · {counts.flagged} flagged
                 </span>

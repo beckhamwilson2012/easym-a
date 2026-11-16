@@ -100,10 +100,12 @@ function SourceCell({ meta, unit, isSot, bg }) {
     <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10, color: '#9CA3AF', textAlign: 'right' }}>—</td>
   );
   const fy = meta.period?.fy ?? meta.period?.calendarYear;
+  // A point-in-time cover-page count (Fix 14) has no fiscal year: it is tagged with its form and cover date instead.
+  const tag = fy ? `FY${fy}` : (meta.period?.form && meta.period?.end ? `${meta.period.form} cover ${meta.period.end}` : null);
   return (
     <td style={{ padding: '5px 10px', background: bg, borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10, textAlign: 'right', color: isSot ? NAVY : '#374151', fontWeight: isSot ? 600 : 400 }}>
       {fmtVal(meta.value, unit)}
-      {fy && <span style={{ color: '#9CA3AF', marginLeft: 4 }}>FY{fy}</span>}
+      {tag && <span style={{ color: '#9CA3AF', marginLeft: 4 }}>{tag}</span>}
       {isSot && <span style={{ color: '#4A9FD4', marginLeft: 3, fontSize: 9 }}>★</span>}
     </td>
   );
@@ -118,7 +120,7 @@ function LtmUsed({ acquirer, target, showFigures }) {
   const rows = [['Revenue', 'revenue', '$'], ['Gross Profit', 'grossProfit', '$'], ['Operating Income', 'operatingIncome', '$'], ['EBITDA', 'ebitda', '$'], ['Net Income', 'netIncome', '$'], ['Diluted EPS', 'eps', '$/sh'], ['Free Cash Flow (CFO − capex)', 'freeCashFlow', '$']];
   return (
     <div data-testid="ltm-used" style={{ marginTop: 12, fontSize: 10, color: '#374151', lineHeight: 1.5 }}>
-      <strong style={{ color: NAVY }}>Basis used: </strong>{parts.join('; ')}. The table above cross-checks fiscal-year figures.
+      <strong style={{ color: NAVY }}>Basis used: </strong>{parts.join('; ')}. The table above cross-checks fiscal-year figures; shares outstanding is the latest filed cover-page count.
       {showFigures && cos.map((c) => (
         <div key={c.ticker} style={{ marginTop: 6 }}>
           <strong style={{ color: NAVY }}>{c.ticker} {c.basisLabel}, as used.</strong> SEC EDGAR 10-K + 10-Q only: not cross-checked against a second feed.

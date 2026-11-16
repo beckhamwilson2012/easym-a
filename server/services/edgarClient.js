@@ -2,7 +2,7 @@
 const { get } = require('../utils/httpGet');
 const { resolveTotalDebt } = require('./debtConcepts'); // shared total-debt resolution (deal EV / comps / §16 identical)
 const { annualIncomeLines, prepareIncomeFacts, latestAnnualFilingPeriod } = require('./incomeConcepts'); // shared cost of revenue / gross profit (/quote, /api/pnl, LTM, §16 identical)
-const { multiClassCoverShares } = require('./coverShares'); // dual-class cover count, shared with /quote
+const { latestCoverShares } = require('./coverShares'); // latest filed cover count (multi-class summed), shared with /quote
 const { resolveFilerRevenue, isOlderFiscalYear } = require('./revenueConcepts'); // shared revenue and fiscal-year floor (/quote, /api/pnl, LTM, §16 identical)
 const { OPERATING_CASH_FLOW_CONCEPTS, resolveCapexAt, resolveOperatingCashFlowAt, computeFreeCashFlow } = require('./cashFlowConcepts'); // shared capex and FCF
 
@@ -135,7 +135,9 @@ async function fetchFields(cik) {
 
   // Shares: a multi-class cover is the sum of its classes (coverShares, the same helper /quote uses); otherwise the
   // point-in-time balance sheet count preferred over weighted average, unchanged.
-  const coverClasses = useIfrs ? null : await multiClassCoverShares(cik, dei);
+  // Fix 14: the same latest filed cover count /quote uses (latestCoverShares), so this row cross-checks the count the
+  // deck prices, not the FY balance-sheet figure. The chain below is the fallback when no cover is filed.
+  const coverClasses = await latestCoverShares(cik, dei, { anchor: refEnd, ifrs: useIfrs });
   const sharesEntry = coverClasses
     ? { val: coverClasses.value, end: coverClasses.date, form: coverClasses.form, fy: null, fp: null, label: coverClasses.label }
     : latestAnnualEntry(gaap['CommonStockSharesOutstanding'],      'shares', floorEnd) ??

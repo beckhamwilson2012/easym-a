@@ -19,7 +19,7 @@ const { getShareholderAnalysis } = require('./server/services/def14aParser'); //
 const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
 const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod, grossProfitAbsentReason } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
-const { multiClassCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
+const { latestCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
 const { resolveTotalDebt } = require('./server/services/debtConcepts');
 const { finalDebt } = require('./server/services/debtZero');
 const { resolveLtmEps, releaseQuarterEps, epsNumeratorAt, ltmEpsNumerator } = require('./server/services/ltmEps'); // LTM EPS = sum of filed quarters; EPS numerator = net income to common // debt that is zero by a filing's own statement, not by absence // shared total-debt resolution — deal EV / comps / §16 resolve identically
@@ -602,11 +602,16 @@ async function fetchFromEDGAR(symbol, cik) {
   // keeps only undimensioned facts, so the chain above fell to a fiscal-year weighted average. The count is the sum of
   // every class on the latest 10-K/10-Q cover, one filing, one date (coverShares). Single-class filers return null here
   // and keep the chain above unchanged.
-  const coverClasses = useIfrs ? null : await multiClassCoverShares(cik, dei);
+  // Fix 14: every filer now takes its LATEST FILED cover-page count (10-Q or 10-K, whichever is newer) ahead of the
+  // chain above, which only ever reached annual (10-K) values: OMDA 58M (FY2025 10-K) → 62,037,725 (Q3 10-Q cover).
+  // latestCoverShares keeps the multi-class rules (common classes summed, non-economic classes out) and refuses a cover
+  // more than 15 months older than the balance-sheet anchor; the chain above stays as the fallback.
+  const cover = await latestCoverShares(cik, dei, { anchor: bsAnchor, ifrs: useIfrs });
   let sharesLabel = null;
-  if (coverClasses) {
-    shares = coverClasses.value; sharesConcept = 'dei:EntityCommonStockSharesOutstanding (sum of classes)';
-    sharesInstant = coverClasses.date; sharesLabel = coverClasses.label;
+  if (cover) {
+    shares = cover.value;
+    sharesConcept = cover.classes ? 'dei:EntityCommonStockSharesOutstanding (sum of classes)' : 'dei:EntityCommonStockSharesOutstanding (latest cover)';
+    sharesInstant = cover.date; sharesLabel = cover.label;
   }
   // 2b (fallback sanity) is intentionally NOT auto-rejecting on a >25% jump: the only in-call cross-check is a
   // concept's own prior annual, and a real split (WMT's 2024 3-for-1) is indistinguishable from a mis-tag on
@@ -758,7 +763,7 @@ async function fetchFromEDGAR(symbol, cik) {
   const revenueM = inM(revenue);
   // A class-summed cover count is carried exactly ($M to the share: HNGE 81.271302), so market cap = that count × price.
   // Every other path keeps its whole-million rounding unchanged.
-  const sharesM  = shares == null ? null : (coverClasses ? shares / 1e6 : inM(shares));   // null (not 0) when the count is unresolved/stale → renders "—"
+  const sharesM  = shares == null ? null : (cover ? shares / 1e6 : inM(shares));   // null (not 0) when the count is unresolved/stale → renders "—"
   console.log(`[${symbol}] EDGAR extracted — revenue: ${revenueM}M (concept: ${revenueConcept}), shares: ${sharesM}M via ${sharesConcept || 'none'}@${sharesInstant || '—'}, eps: ${eps}, ebitda: ${inM(ebitda)}M, netIncome: ${inM(netIncome)}M`);
 
   if (revenueM === 0 && !sharesM) return null;
