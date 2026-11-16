@@ -11,7 +11,8 @@
 export const DECK_ORDER = [
   // Deal Summary leads, then the Title and the Executive Summary. Both summaries are screen-only (showInPdf:false),
   // so the PDF still starts at `title`. Shareholder Analysis sits directly after Transaction Structure.
-  { id: 'dashboard',     kind: 'title',    showInPdf: false, label: 'Deal Summary' },
+  // Fix 14 Task 7: the Deal Summary prints, as the first page after the Title (pdfOrder); on screen it stays first.
+  { id: 'dashboard',     kind: 'title',    showInPdf: true,  label: 'Deal Summary' },
   { id: 'title',         kind: 'title',    showInPdf: true,  label: 'Title' },
   { id: 'execsummary',   kind: 'title',    showInPdf: false, label: 'Executive Summary' },
   { id: 'comparables',   kind: 'exhibit',  showInPdf: true,  label: 'Comparables' },
@@ -37,10 +38,22 @@ export const DECK_ORDER = [
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII'];
 
 // Walk the PDF sections in order: assign exhibit letters, appendix romans, and 1-based page numbers.
+// PDF page order (Fix 14 Task 7): the same sections, with the Deal Summary moved to right after the Title. Every page
+// number (the slide footers, the sidebar badges, the §n cross-references) follows it; exhibit letters do not change
+// (the Deal Summary is not an exhibit). Any other order is kept exactly.
+export function pdfOrder(sections) {
+  const dash = sections.find((s) => s.id === 'dashboard');
+  const ti = sections.findIndex((s) => s.id === 'title');
+  if (!dash || ti < 0) return sections;
+  const rest = sections.filter((s) => s.id !== 'dashboard');
+  const at = rest.findIndex((s) => s.id === 'title');
+  return [...rest.slice(0, at + 1), dash, ...rest.slice(at + 1)];
+}
+
 function computeMaps(order) {
   const LABEL = {}, PAGE = {};
   let ex = 0, ap = 0, pg = 0;
-  for (const s of order) {
+  for (const s of pdfOrder(order)) {
     if (!s.showInPdf) continue;
     PAGE[s.id] = ++pg;
     if (s.kind === 'exhibit') LABEL[s.id] = `Exhibit ${String.fromCharCode(65 + ex++)}`;

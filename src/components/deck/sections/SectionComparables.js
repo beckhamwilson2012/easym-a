@@ -273,7 +273,7 @@ function EditPeersModal({ autoPeers, customPeers, onSave, onClose }) {
 }
 
 // ── Main component — transposed public-company screening table ──────────────────
-export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLabel }) {
+export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLabel, forPdf = false }) {
   const bankMode      = isBankDeal(target, acquirer);
   const targetTicker  = target?.ticker;
   const acquirerTicker = acquirer?.ticker && acquirer.ticker !== targetTicker ? acquirer.ticker : null;
@@ -497,7 +497,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
       <PageHeader title="Public Company Screen" subtitle={subtitle} />
 
       <div style={{ padding: '6px 22px 0', display: 'flex', justifyContent: 'flex-end' }}>
-        {targetTicker && (
+        {targetTicker && !forPdf && (   /* Fix 14 Task 7: a screen control, not printed */
           <button onClick={() => setEditOpen(true)} style={{ fontSize: 11, color: NAVY, background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 4, padding: '4px 10px', cursor: 'pointer', fontWeight: 600 }}>
             Edit Peers
           </button>

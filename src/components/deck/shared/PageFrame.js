@@ -50,9 +50,11 @@ export function PageFrame({ children, pageNum, exhibitLabel, variant }) {
 
       {/* Exhibit label */}
       {exhibitLabel && !isCover && (
+        // Fix 14 Task 7: at top 13 the label sat on the header title's first line (title text starts ~18px down). It now
+        // sits in the band above the title, 5–13px, on one line; nothing else on the slide moves.
         <div style={{
-          position: 'absolute', top: 13, left: 16, zIndex: 10,
-          color: '#9CA3AF', fontSize: 8, letterSpacing: 1.2,
+          position: 'absolute', top: 5, left: 16, zIndex: 10,
+          color: '#9CA3AF', fontSize: 8, letterSpacing: 1.2, lineHeight: 1,
           textTransform: 'uppercase',
         }}>
           {exhibitLabel}

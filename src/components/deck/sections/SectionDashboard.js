@@ -32,7 +32,7 @@ import {
 } from '../../../lib/explanations';
 
 // SectionDashboard does NOT use PageFrame — it keeps the original dashboard styling.
-export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAnalysis, onSaveAnalysis }) {
+export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAnalysis, onSaveAnalysis, forPdf = false }) {
   const { _results: results, _inputs: inputs, _nameA: nameA, _nameB: nameB } = deal;
   const [pdfLoading, setPdfLoading] = useState(false);
   const pdfRef = useRef(null);
@@ -605,8 +605,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
         </div>
       </div>
 
-      {/* Action buttons */}
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4, marginBottom: 32 }}>
+      {/* Action buttons — screen only (Fix 14 Task 7: the deck PDF prints this page without them) */}
+      {!forPdf && <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 4, marginBottom: 32 }}>
         <button onClick={onEditInputs} style={{ flex: '1 1 calc(50% - 5px)', minWidth: isMobile ? '100%' : 0, padding: '14px 16px', background: '#fff', color: '#0F2244', border: '2px solid #0F2244', borderRadius: 10, fontSize: 15, fontWeight: 'bold', cursor: 'pointer' }}>
           ← Edit Inputs
         </button>
@@ -621,7 +621,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             💾 Save Analysis
           </button>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

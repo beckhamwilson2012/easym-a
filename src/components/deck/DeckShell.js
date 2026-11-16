@@ -25,7 +25,7 @@ import { SectionCreditStats } from './sections/SectionCreditStats';
 import { SectionPrivateValuation } from './sections/SectionPrivateValuation';
 import { SectionSources }          from './sections/SectionSources';
 import { SectionDataVerificationA, SectionDataVerificationB } from './sections/SectionDataVerification';
-import { DECK_ORDER, exhibitLabelOf, setActiveSections } from './deckRegistry';
+import { DECK_ORDER, exhibitLabelOf, setActiveSections, pdfOrder } from './deckRegistry';
 
 // Order: §10 Trading Profile dropped; old §12 Football Field + §14 Valuation Matrix were merged into one
 // Valuation Summary (Exhibit N), which has since been REMOVED — the app-built DCF and sector-median
@@ -49,7 +49,7 @@ const COMPONENTS = {
 const SECTIONS = DECK_ORDER.map(s => ({ ...s, Component: COMPONENTS[s.id] }));
 
 // pageNum for each showInPdf section (1-indexed)
-const PDF_SECTIONS = SECTIONS.filter(s => s.showInPdf);
+const PDF_SECTIONS = pdfOrder(SECTIONS.filter(s => s.showInPdf));
 const PAGE_NUM_MAP = Object.fromEntries(PDF_SECTIONS.map((s, i) => [s.id, i + 1]));
 
 export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, onNewAnalysis, onSaveAnalysis }) {
@@ -85,7 +85,8 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
       activeSections = rest;
     } else activeSections = kept;
   }
-  const activePdfSections = activeSections.filter(s => s.showInPdf);
+  // PDF page order (Fix 14 Task 7): the Deal Summary is the first page after the Title (deckRegistry.pdfOrder).
+  const activePdfSections = pdfOrder(activeSections.filter(s => s.showInPdf));
   const activePageNumMap = Object.fromEntries(activePdfSections.map((s, i) => [s.id, i + 1]));
   setActiveSections(activePdfSections.map(s => s.id));   // renumber labels over the visible set (synchronous, before children render)
 
@@ -280,8 +281,10 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
         aria-hidden="true"
       >
         {activePdfSections.map((section, i) => (
-          <div key={section.id} data-section-id={section.id} style={{ marginBottom: 4 }}>
-            <section.Component {...sectionProps} pageNum={i + 1} exhibitLabel={exhibitLabelOf(section.id)} />
+          // The Deal Summary is fluid on screen (up to 1200px); its print render gets the on-screen width so it lays
+          // out as it does there. forPdf: screen-only controls (Edit Peers, the Deal Summary's action buttons) don't print.
+          <div key={section.id} data-section-id={section.id} style={{ marginBottom: 4, ...(section.id === 'dashboard' ? { width: 1200, background: '#F4F6F9', padding: 24, boxSizing: 'border-box' } : { width: 850 }) }}>
+            <section.Component {...sectionProps} pageNum={i + 1} exhibitLabel={exhibitLabelOf(section.id)} forPdf />
           </div>
         ))}
       </div>
