@@ -19,6 +19,7 @@ import { SynergyLines } from '../shared/SynergyLines';
 import { BasisNote } from '../shared/BasisNote';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
+import { multipleNumber } from '../../../lib/multiples';
 import { isNonGaapDeal, FY_ONLY, computedSides, epsSourceText, combinedEbitdaShort } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
@@ -172,7 +173,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
       }
     } else if (firstAccretiveIdx === 0) {
       sensitivityFooter = `Deal remains accretive across all synergy scenarios at the current offer price.`;
-    } else {
+    } else if (firstAccretiveIdx <= SYN_MULTS.indexOf(1)) {
+      // Fix 16 Task 6: only when the deal is accretive at 100% realization; a deal already dilutive at the announced figure
+      // has no realization it "can fall to" (the verdict and breakeven say where it breaks even).
       const breakMult = SYN_MULTS[firstAccretiveIdx];
       const breakPct = Math.round(breakMult * 100);
       sensitivityFooter = `Synergy realization can fall to ~${breakPct}% of the announced figure before the deal turns dilutive (breakeven EPS: ${fmtPerShare(breakevenEPS)}).`;
@@ -256,7 +259,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             },
             {
               label: 'P / E at offer price',   // Fix 14 Task 4: dealCalc's P/E is the offer (not the market price) ÷ target EPS
-              value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
+              value: results.peRatio === 'N/A' ? 'n/m' : `${multipleNumber(results.peRatio)}x`,
               note:  results.peRatio === 'N/A' ? results.peReason : null,   // dealCalc names the real reason
               explain: () => explainPeRatio(peExplainArgs),
             },
@@ -279,7 +282,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             {
               label: 'EV / EBITDA',
               // "n/m" (not meaningful): a multiple off a negative EBITDA has no economic meaning.
-              value: results.evEBITDA === 'N/A' ? 'n/m' : `${results.evEBITDA}x`,
+              value: results.evEBITDA === 'N/A' ? 'n/m' : `${multipleNumber(results.evEBITDA)}x`,
               note:  results.evEBITDA === 'N/A'
                 ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || (inputs.companyBEBITDA <= 0 ? 'Target EBITDA is negative' : 'not available')))
                 : (ebB ? `on ${ebitdaBasisText(ebB)}` : null),
@@ -289,7 +292,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // Fix 14 Task 4: dealCalc's P/E is the offer price ÷ target EPS (a private target: purchase equity value ÷
               // net income), never the market price; the label says so.
               label: 'P / E at offer price',
-              value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
+              value: results.peRatio === 'N/A' ? 'n/m' : `${multipleNumber(results.peRatio)}x`,
               // The reason is dealCalc's (peReason): `companyBEPS <= 0` read a private target's default 0 EPS as negative earnings.
               note:  results.peRatio === 'N/A' ? results.peReason
                 : results.peBasis ? results.peBasis
@@ -298,7 +301,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             },
             {
               label: 'Debt / EBITDA',
-              value: (results.basesDiffer || ebDiffer) ? '—' : results.debtEBITDA === 'N/A' ? 'n/m' : `${results.debtEBITDA}x`,
+              value: (results.basesDiffer || ebDiffer) ? '—' : results.debtEBITDA === 'N/A' ? 'n/m' : `${multipleNumber(results.debtEBITDA)}x`,
               // Branch on WHY the ratio is N/A (dealCalc: combinedEBITDA > 0 && combinedDebt != null) — a null
               // combined debt with positive EBITDA is "debt not available", never "EBITDA is non-positive".
               note:  results.debtEBITDA === 'N/A'

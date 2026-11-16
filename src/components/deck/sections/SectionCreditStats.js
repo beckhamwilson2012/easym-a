@@ -5,7 +5,7 @@ import { SynergyLines } from '../shared/SynergyLines';
 import { isNonGaapDeal, combinedEbitdaLabel } from '../../../lib/reportingBasis';
 import { fmtInterest } from '../shared/deckTokens';
 import { TAX_RATE, DEBT_INTEREST_RATE } from '../../../utils/dealCalc';
-import { multipleOf, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
+import { multipleOf, multipleNumber, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 
 // Phase 8 — Pro-Forma Credit Statistics. Leverage & coverage — the credit view that replaces the
 // market-based analysis (equity performance / analyst consensus / EPS accretion) for a private deal,
@@ -13,7 +13,7 @@ import { multipleOf, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 // never a fabricated number (matches the deck's Fix-A discipline).
 const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
 const fmtM = v => v == null ? '—' : (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString()}M)` : `$${Math.round(v).toLocaleString()}M`);
-const fmtX = v => v == null ? '—' : `${v.toFixed(1)}×`;
+const fmtX = v => v == null ? '—' : `${multipleNumber(v)}×`;
 
 export function SectionCreditStats({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const R = (deal && deal._results) || {};

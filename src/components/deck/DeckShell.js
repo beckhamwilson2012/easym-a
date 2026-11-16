@@ -180,7 +180,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden', fontFamily: 'Arial, sans-serif' }}>
       {/* Sticky toolbar */}
-      <DeckToolbar target={target} acquirer={acquirer} onExport={handleExport} exporting={exporting} />
+      <DeckToolbar target={target} acquirer={acquirer} onExport={handleExport} exporting={exporting} slideName={activeSection.label} />
 
       {/* Body: always-visible left rail | slide content */}
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>

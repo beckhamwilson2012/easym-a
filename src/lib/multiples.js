@@ -14,6 +14,16 @@ export const RULE_TEXT = `Every multiple is n/m when its denominator is zero or 
 
 const toNum = (v) => { if (v == null || v === '' || v === 'N/A') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
 
+// A multiple's number, one decimal (Fix 16 Task 6): a value that rounds to zero prints with no sign ("0.0", never "-0.0"),
+// and a real negative uses the Unicode minus ("−1.9"), as per-share figures do (Fix 10). Positives are toFixed(1) as before.
+export function multipleNumber(v) {
+  const x = toNum(v);
+  if (x == null) return null;
+  if (!(x < 0)) return x.toFixed(1);
+  const t = Math.abs(x).toFixed(1);
+  return Number(t) === 0 ? t : `−${t}`;
+}
+
 // num ÷ den under the rule. denName names the denominator in the reason ("Target EBITDA", "Target EPS", …).
 export function multipleOf(num, den, { denName = 'the denominator', suffix = 'x' } = {}) {
   const n = toNum(num), d = toNum(den);
@@ -32,5 +42,5 @@ export function multipleFromRatio(v, { denName = 'the denominator', suffix = 'x'
 
 function capped(x, { denName, suffix }) {
   if (Math.abs(x) > MULTIPLE_CAP) return { value: null, nm: true, text: 'n/m', reason: `above ${MULTIPLE_CAP}x (${denName} is near zero)`, raw: x };
-  return { value: x, nm: false, text: `${x.toFixed(1)}${suffix}`, reason: null };
+  return { value: x, nm: false, text: `${multipleNumber(x)}${suffix}`, reason: null };
 }

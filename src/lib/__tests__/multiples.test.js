@@ -16,7 +16,7 @@ describe('Fix 10 Task 4 — one rule for multiples', () => {
     expect(multipleOf(5, null).text).toBe('—');
   });
   test('a negative multiple on a positive denominator (net cash) is a real figure', () => {
-    expect(multipleOf(-2780, 394).text).toBe('-7.1x');
+    expect(multipleOf(-2780, 394).text).toBe('−7.1x');
     expect(multipleOf(-4933, 22).text).toBe('n/m');           // NET/DDOG LTM pre-deal: |−224x| > 100
   });
   test('a ratio divided elsewhere (FMP evToEBITDA) gets the same cap', () => {

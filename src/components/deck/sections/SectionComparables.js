@@ -1,6 +1,6 @@
 import { apiUrl } from '../../../api';
 import { marketCapM } from '../../../lib/marketCap';
-import { multipleOf, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
+import { multipleOf, multipleNumber, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
@@ -22,7 +22,7 @@ const TARGET_BORDER = '#F59E0B';
 // ── Formatters (reference screening style) ─────────────────────────────────────
 const fmtIntParens = (v) => v == null ? '—' : (v < 0 ? `(${Math.abs(Math.round(v)).toLocaleString()})` : Math.round(v).toLocaleString());
 const fmtPctWhole  = (v) => v == null ? '—' : `${v < 0 ? '(' : ''}${Math.abs(Math.round(v))}%${v < 0 ? ')' : ''}`;
-const fmtRatioX    = (v) => v == null ? '—' : `${v.toFixed(1)}x`;
+const fmtRatioX    = (v) => v == null ? '—' : `${multipleNumber(v)}x`;
 const fmtPct1      = (v) => v == null ? '—' : `${v.toFixed(1)}%`;
 const fmtPct1Signed= (v) => v == null ? '—' : `${v >= 0 ? '+' : '−'}${Math.abs(v).toFixed(1)}%`;
 const fmtIntPlain  = (v) => v == null ? '—' : Math.round(v).toLocaleString('en-US');

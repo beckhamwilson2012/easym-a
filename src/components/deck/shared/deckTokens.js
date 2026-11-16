@@ -1,3 +1,4 @@
+import { multipleNumber } from '../../../lib/multiples';
 import { FINANCIAL_SIC } from '../../../lib/financialSic'; // shared with server.js — one SIC source of truth
 import { UTILITY_SIC, UTILITY_GROSS_REASON } from '../../../lib/utilitySic'; // same pattern
 import { grossNotMeaningfulReason } from '../../../lib/insuranceSic';
@@ -152,7 +153,7 @@ export function fmtMult(v) {
   if (v === null || v === undefined || v === 'N/A') return 'N/A';
   const n = parseFloat(v);
   if (isNaN(n) || !isFinite(n)) return 'N/A';
-  return `${n.toFixed(1)}x`;
+  return `${multipleNumber(n)}x`;
 }
 
 export function fmtPerShare(v) {

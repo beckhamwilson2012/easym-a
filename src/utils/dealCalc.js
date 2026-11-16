@@ -496,11 +496,11 @@ const usd2 = (v) => { const n = parseFloat(v); if (!Number.isFinite(n)) return '
 export function computeFlags(results, inputs) {
   const flags = [];
   if (parseFloat(results.totalPurchasePrice) > 500000)
-    flags.push({ level: 'critical', icon: '🚨', text: 'Deal size exceeds $500B — likely to face significant antitrust scrutiny' });
+    flags.push({ level: 'critical', icon: '🚨', text: 'Deal size exceeds $500B — likely to face significant antitrust scrutiny', risk: 'A deal size above $500B' });
   if (results.debtEBITDA !== 'N/A' && parseFloat(results.debtEBITDA) > 5)
-    flags.push({ level: 'critical', icon: '🚨', text: 'Combined leverage is very high — debt burden may be unsustainable' });
+    flags.push({ level: 'critical', icon: '🚨', text: 'Combined leverage is very high — debt burden may be unsustainable', risk: 'High combined leverage' });
   else if (results.debtEBITDAAboveCap)   // Debt/EBITDA is n/m above 100x: the debt burden is extreme, not unknown
-    flags.push({ level: 'critical', icon: '🚨', text: 'Combined leverage is very high — Debt/EBITDA is above 100x (n/m: combined EBITDA is near zero)' });
+    flags.push({ level: 'critical', icon: '🚨', text: 'Combined leverage is very high — Debt/EBITDA is above 100x (n/m: combined EBITDA is near zero)', risk: 'High combined leverage' });
   if (inputs.companyAShares > 0 && parseFloat(results.newSharesIssued) / inputs.companyAShares > 0.2)
     flags.push({ level: 'warning', icon: '⚠️', text: 'Significant share dilution — existing shareholders may be negatively impacted' });
   if (parseFloat(results.purchasePremium) > 50)
@@ -562,7 +562,8 @@ export function buildNarrative(results, inputs, nameA, nameB, flags) {
     text = `${deal} would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from ${usd2(results.companyAEPS)} to ${usd2(results.proFormaEPS)}.`;
   }
   if (flags.length > 0) {
-    text += ` ${flags[0].text.split('—')[0].trim()} represents the deal's biggest structural risk.`;
+    // Fix 16 Task 6: a flag whose text is a clause names its risk as a noun phrase ("High combined leverage").
+    text += ` ${flags[0].risk || flags[0].text.split('—')[0].trim()} represents the deal's biggest structural risk.`;
   }
   return text;
 }

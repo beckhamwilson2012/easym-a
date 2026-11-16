@@ -1,7 +1,7 @@
 import React from 'react';
 import { NAVY, SF_BLUE, isBankDeal } from './shared/deckTokens';
 
-export function DeckToolbar({ target, acquirer, onExport, exporting }) {
+export function DeckToolbar({ target, acquirer, onExport, exporting, slideName }) {
   const bankMode = isBankDeal(target, acquirer);
 
   return (
@@ -33,7 +33,8 @@ export function DeckToolbar({ target, acquirer, onExport, exporting }) {
 
       {/* Center: title */}
       <div style={{ flex: 1, textAlign: 'center', color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-        Target Company Profile
+        {/* Fix 16 Task 6: the slide on screen, by its sidebar name (was always "Target Company Profile"). */}
+        {slideName || 'Target Company Profile'}
         {target.name && (
           <span style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 600 }}> · {target.name}</span>
         )}
