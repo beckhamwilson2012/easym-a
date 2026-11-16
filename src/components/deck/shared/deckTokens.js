@@ -264,6 +264,15 @@ export function accretionVerdict(pct) {
   return pct >= 0 ? 'accretive' : 'dilutive';
 }
 
+// Fix 17 Task 5: where a pro forma EPS sits against the breakeven EPS the slide states ("Breakeven: $2.22"), compared at
+// the cent the slide prints, so a cell shaded green is one that reads above the stated breakeven. The Sensitivity grid
+// and the Cash Structure strip both use this; there is no neutral band around breakeven.
+export function epsVsBreakeven(eps, breakeven) {
+  if (eps == null || !Number.isFinite(eps) || !(breakeven > 0)) return null;
+  const e = Math.round(eps * 100), b = Math.round(breakeven * 100);
+  return e > b ? 'above' : e < b ? 'below' : 'at';
+}
+
 export function isSaaSLike(companyType) {
   return companyType === 'saas' || companyType === 'software';
 }

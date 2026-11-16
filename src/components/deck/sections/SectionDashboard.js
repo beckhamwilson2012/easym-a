@@ -11,7 +11,7 @@ import {
 import { calcStockIssuancePct, triggers199Rule } from '../../../lib/dealMath';
 import {
   isBankDeal, calcPTBV, combinedCET1, computeBankFlags, buildBankNarrative,
-  fmtRatio, fmtPct, fmtMoneyTable, fmtMoneyDual, fmtMoneyAccounting, fmtPerShare, fmtPctSigned, fmtInterest,
+  fmtRatio, fmtPct, fmtMoneyTable, fmtMoneyDual, fmtMoneyAccounting, fmtPerShare, fmtPctSigned, fmtInterest, epsVsBreakeven,
 } from '../shared/deckTokens';
 import { useWindowWidth } from '../../../hooks/useWindowWidth';
 import { ExplainButton } from '../../shared/ExplainButton';
@@ -528,13 +528,12 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                       const isCurrent = i === sensitivityCurrentRow && j === 2 && havePremium;
                       const breakeven = breakevenEPS;
                       const delta = (eps !== null && breakeven > 0) ? (eps - breakeven) / breakeven : 0;
+                      const side = epsVsBreakeven(eps, breakeven);   // Fix 17 Task 5: green above the stated breakeven, red below
                       let bg, color;
                       if (eps === null) { bg = '#F9FAFB'; color = '#9CA3AF'; }
-                      else if (delta < -0.10) { bg = '#DC2626'; color = '#fff'; }
-                      else if (delta < -0.03) { bg = '#FCA5A5'; color = '#7F1D1D'; }
-                      else if (delta < +0.03) { bg = '#F3F4F6'; color = '#374151'; }
-                      else if (delta < +0.10) { bg = '#86EFAC'; color = '#14532D'; }
-                      else { bg = '#10B981'; color = '#fff'; }
+                      else if (side === 'below') { if (delta <= -0.10) { bg = '#DC2626'; color = '#fff'; } else { bg = '#FCA5A5'; color = '#7F1D1D'; } }
+                      else if (side === 'above') { if (delta >= 0.10) { bg = '#10B981'; color = '#fff'; } else { bg = '#86EFAC'; color = '#14532D'; } }
+                      else { bg = '#F3F4F6'; color = '#374151'; }
                       return (
                         <td key={j} style={{ padding: cellPad, textAlign: 'center', background: bg, borderBottom: '1px solid #F3F4F6', borderLeft: '1px solid #F3F4F6', color, fontWeight: isCurrent ? 700 : 500, position: 'relative', outline: isCurrent ? '2px solid #0F2244' : 'none', outlineOffset: isCurrent ? '-2px' : undefined }}>
                           {isCurrent && (
@@ -568,9 +567,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
             {cashSensitivity.map(({ cashPct, eps }) => {
               const isCurrent = cashPct === inputs.cashPercent;
-              const acc = eps !== null && eps > breakevenEPS;
-              const bg    = isCurrent ? '#0F2244' : eps === null ? '#F9FAFB' : acc ? '#F0FDF4' : '#FEF2F2';
-              const color = isCurrent ? '#fff'    : eps === null ? '#9CA3AF' : acc ? '#166534' : '#991B1B';
+              // Fix 17 Task 5: the same comparison as the grid, against the same stated breakeven EPS.
+              const side = breakevenEPS > 0 ? epsVsBreakeven(eps, breakevenEPS) : (eps !== null && eps > breakevenEPS ? 'above' : 'below');
+              const at = side === 'at', acc = side === 'above';
+              const bg    = isCurrent ? '#0F2244' : eps === null ? '#F9FAFB' : at ? '#F3F4F6' : acc ? '#F0FDF4' : '#FEF2F2';
+              const color = isCurrent ? '#fff'    : eps === null ? '#9CA3AF' : at ? '#374151' : acc ? '#166534' : '#991B1B';
               return (
                 <div key={cashPct} style={{ background: bg, borderRadius: 8, padding: '10px 8px', textAlign: 'center', border: `1px solid ${isCurrent ? '#0F2244' : '#E5E7EB'}` }}>
                   <div style={{ fontSize: 11, color: isCurrent ? '#A8C4DC' : '#6B7280', marginBottom: 4 }}>
