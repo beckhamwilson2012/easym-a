@@ -32,10 +32,20 @@ export const CASH_YIELD_ASSUMPTION = 0.04;
 
 // The yield the cash used stops earning: the acquirer's realized yield on its selected basis (companyACashYield, set by
 // companyBasis), else CASH_YIELD_ASSUMPTION. The combined company's cash is the acquirer's once the deal closes.
+// Fix 16 Task 5: the realized yield is used only when it is above 0% and at most the DEBT_INTEREST_RATE. Outside that range
+// (KO: 7.5%, interest income that likely includes investments beyond cash and short-term investments) the stated
+// assumption is used, and the label says why.
+const pct1 = (r) => `${(r * 100).toFixed(1)}%`;
 export function cashYieldUsed(inputs) {
   const y = inputs && inputs.companyACashYield;
-  if (y && Number.isFinite(y.value) && y.value > 0) return { rate: y.value, assumption: false, label: y.label || null, reason: null };
-  return { rate: CASH_YIELD_ASSUMPTION, assumption: true, label: `${(CASH_YIELD_ASSUMPTION * 100).toFixed(1)}% (assumption)`,
+  if (y && Number.isFinite(y.value) && y.value > 0 && y.value <= DEBT_INTEREST_RATE) return { rate: y.value, assumption: false, label: y.label || null, reason: null };
+  if (y && Number.isFinite(y.value)) {
+    const why = `realized yield ${pct1(y.value)} is ${y.value > DEBT_INTEREST_RATE ? `above the ${pct1(DEBT_INTEREST_RATE)} debt rate` : 'not above 0%'}`;
+    return { rate: CASH_YIELD_ASSUMPTION, assumption: true, outOfRange: true, realized: y.value, realizedLabel: y.label || null,
+      label: `${pct1(CASH_YIELD_ASSUMPTION)} (assumption: ${why})`,
+      reason: `the acquirer's ${why}${y.label ? ` (${y.label})` : ''}, outside 0%–${pct1(DEBT_INTEREST_RATE)}, so it is not used` };
+  }
+  return { rate: CASH_YIELD_ASSUMPTION, assumption: true, label: `${pct1(CASH_YIELD_ASSUMPTION)} (assumption)`,
     reason: (y && y.reason) || 'no realized yield for the acquirer' };
 }
 

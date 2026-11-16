@@ -191,7 +191,8 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
           const y = deal?._results?.cashYield;
           const rate = y ? `${(y.rate * 100).toFixed(1)}%` : '—';
           const why = !y ? '' : y.assumption
-            ? ` The ${rate} is a stated model assumption, like the 5% debt rate: the acquirer's own realized yield is not available (${y.reason}).`
+            ? (y.outOfRange ? ` The ${rate} is a stated model assumption, like the 5% debt rate: ${y.reason}.`
+              : ` The ${rate} is a stated model assumption, like the 5% debt rate: the acquirer's own realized yield is not available (${y.reason}).`)
             : ` The ${rate} is the acquirer's own realized yield: ${y.label}.`;
           return `Lost interest on cash used: the excess cash that funds part of the deal stops earning interest, so pro forma net income subtracts excess cash used × ${rate} × (1 − 21%), beside the after-tax financing cost.${why}`;
         })(),
