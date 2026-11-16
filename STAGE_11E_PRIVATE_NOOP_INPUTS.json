@@ -9,7 +9,7 @@
     "runButton": "Run Analysis",
     "firstInput": "companyARevenue",
     "finalSection": "verification2",
-    "expectedSections": 16
+    "expectedSections": 17
   },
   "formInputs": {
     "companyARevenue": 50000,

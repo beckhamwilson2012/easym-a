@@ -12,7 +12,7 @@
     "runButton": "Run Analysis",
     "firstInput": "offerPricePerShare",
     "finalSection": "verification2",
-    "expectedSections": 17,
+    "expectedSections": 18,
     "stubFile": "tools/noop-ab/fixtures/public-NET-DDOG-responses.json"
   },
   "formInputs": {
