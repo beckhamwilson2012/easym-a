@@ -102,6 +102,10 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // Synergy reference for sensitivity: the Year 1 total as entered. With none entered there is nothing to flex, so
   // every column is the same no-synergy EPS and the page says so.
   const synergyY1Entered = results.synergies.years[0].entered;
+  // Lost interest on cash used (Fix 14 Task 2): dealCalc.financingCost's after-tax figure, beside the financing cost.
+  // Unknown → shown as "—"; a deal that uses no cash shows no row, as the financing cost does at zero.
+  const lostInterestRows = results.lostInterestAfterTax == null ? [{ label: 'Lost interest on cash used (after-tax)', value: '—' }]
+    : results.lostInterestAfterTax > 0 ? [{ label: `Lost interest on cash used (after-tax, ${results.cashYield?.assumption ? results.cashYield.label : `${(results.cashYield.rate * 100).toFixed(1)}% realized yield`})`, value: `(${fmtInterest(results.lostInterestAfterTax)})`, red: true }] : [];
   const synSensBase = results.synergiesY1;
 
   // Build a 5-row premium ladder for the sensitivity grid. Center on the deal's ACTUAL premium when
@@ -368,6 +372,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'After-Tax Cost Synergies (Y1)', value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtInterest(results.newInterestAfterTax)})`, red: true }] : []),
+              ...lostInterestRows,
               { label: 'Pro Forma Net Income',          value: fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',                 value: fmtPerShare(results.proFormaEPS), bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ] : [
@@ -380,6 +385,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               { label: 'After-Tax Synergies (Y1)',  value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered, explain: () => explainSynergies({ schedule: results.synergies, isBank: false }) },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtInterest(results.newInterestAfterTax)})`, red: true }] : []),
+              ...lostInterestRows,
               { label: 'Pro Forma Net Income', value: results.basesDiffer ? '—' : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
               { label: 'Pro Forma EPS',       value: results.basesDiffer ? '—' : fmtPerShare(results.proFormaEPS),            bold: true, green: results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (

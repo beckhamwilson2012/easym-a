@@ -21,6 +21,7 @@ const { COST_OF_REVENUE_CONCEPTS, GROSS_PROFIT_CONCEPTS, grossFromCostOfRevenue,
   LTM_COST_DISAGREES_REASON, annualCostCorrectedFromStatement } = require('./incomeConcepts');
 const { chooseNamespace, ltmRevenueConcepts, isOlderFiscalYear } = require('./revenueConcepts');
 const { DEPRECIATION_CONCEPTS, OPERATING_CASH_FLOW_CONCEPTS, resolveDepreciationAt, resolveCapexAt, computeEbitda, computeFreeCashFlow } = require('./cashFlowConcepts');
+const { realizedYield, INTEREST_INCOME_CONCEPTS } = require('./cashYield');   // realized yield on cash (Fix 14 Task 2)
 
 const DAY = 86400000;
 const days = (a, b) => Math.round((Date.parse(a) - Date.parse(b)) / DAY);
@@ -400,7 +401,12 @@ function computeLTM(facts, floorEnd = null) {
   const oi  = ltmFlow(ns, N.operatingIncome, P);
   const niF = ltmFlow(ns, N.netIncome, P);
   const noi = ltmFlow(ns, N.nonOperating, P);
-  const taxF = ltmFlow(ns, N.incomeTax, P);    // income tax LTM — same P, same selector (Fix 10 Task 7)   // net non-operating income/(expense) LTM — same P, same selector, disclosure only (does NOT touch NI)
+  const taxF = ltmFlow(ns, N.incomeTax, P);
+  // Realized yield on cash, LTM (Fix 14 Task 2): LTM interest income (same P, same selector) ÷ average cash + ST investments
+  // at the window's two ends. GAAP only; any missing leg → { value: null, reason }, and the deal uses its stated assumption.
+  const intF = useIfrs ? null : ltmFlow(gaap, INTEREST_INCOME_CONCEPTS, P);
+  const cashYield = useIfrs ? { value: null, reason: 'IFRS filer: interest income is not read' }
+    : realizedYield(gaap, intF && intF.ltm != null ? { value: intF.ltm, concept: intF.conceptName, period: 'LTM' } : null, P.iEnd);    // income tax LTM — same P, same selector (Fix 10 Task 7)   // net non-operating income/(expense) LTM — same P, same selector, disclosure only (does NOT touch NI)
   const cashFlowStatement = facts.filingStatements?.cashFlow ?? null;
   const daAnnual = resolveDepreciationAt(ns, P.annualEnd, { useIfrs, statement: cashFlowStatement });
   const daRes = ltmDA(ns, DEPRECIATION_CONCEPTS[useIfrs ? 'ifrs' : 'gaap'], P, daAnnual);   // same basis as annual EBITDA, a reconciled alternate, or none
@@ -444,6 +450,7 @@ function computeLTM(facts, floorEnd = null) {
       priorInterim:  { start: priorYTD.start, end: priorYTD.end, span: priorYTD.span, filed: priorYTD.filed },
     },
     tieOut,
+    cashYield,
     flows: {
       revenue:         flow(rev),
       // sourceLabel carries the reason when there is no figure: it is the field /quote and /api/pnl already pass through.
@@ -471,6 +478,19 @@ function computeLTM(facts, floorEnd = null) {
   };
 }
 
+// Realized yield on cash for a fiscal year (Fix 14 Task 2): that year's interest income ÷ average cash + ST investments at
+// the year's end and one year earlier. Same pure helper as the LTM yield above.
+function fyCashYield(facts, fyEnd, useIfrs = false) {
+  if (useIfrs) return { value: null, reason: 'IFRS filer: interest income is not read' };
+  const gaap = facts?.facts?.['us-gaap'] || {};
+  if (!fyEnd) return { value: null, reason: 'no fiscal-year end' };
+  for (const n of INTEREST_INCOME_CONCEPTS) {
+    const v = valFullYearAt(gaap[n]?.units?.USD || [], fyEnd);
+    if (v != null) return realizedYield(gaap, { value: v, concept: n, period: `FY${fyEnd.slice(0, 4)}` }, fyEnd);
+  }
+  return realizedYield(gaap, null, fyEnd);
+}
+
 // Convenience: fetch companyfacts for a CIK (reusing the app's UA-setting httpGet) then computeLTM.
 async function computeLTMForCik(cik) {
   const padded = String(cik).padStart(10, '0');
@@ -484,4 +504,4 @@ async function computeLTMForCik(cik) {
   return computeLTM(await prepareIncomeFacts(facts, cik), await latestAnnualFilingPeriod(cik));
 }
 
-module.exports = { computeLTM, computeLTMForCik, scaleShares };
+module.exports = { computeLTM, computeLTMForCik, scaleShares, fyCashYield };

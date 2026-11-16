@@ -16,7 +16,7 @@ const { grossNotMeaningfulReason } = require('./src/lib/insuranceSic'); // utili
 const { resolveDepreciationAt, resolveCapexAt, resolveOperatingCashFlowAt, computeEbitda, computeFreeCashFlow, traceOf } = require('./server/services/cashFlowConcepts'); // shared D&A, capex, EBITDA and FCF (/quote, /api/pnl, LTM, §16 identical)
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
-const { computeLTM, scaleShares } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
+const { computeLTM, scaleShares, fyCashYield } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
 const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod, grossProfitAbsentReason } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
 const { latestCoverShares } = require('./server/services/coverShares'); // dual-class cover-page count (sum of classes) — /quote and §16 resolve identically
@@ -792,6 +792,7 @@ async function fetchFromEDGAR(symbol, cik) {
       dilutedShares:   raw.epsDiluted.dilutedSharesM,
       cash:            raw.balanceSheet.cashM,
       debt:            raw.balanceSheet.totalDebtM,
+      cashYield:       raw.cashYield,   // realized LTM yield on cash + ST investments, or { value: null, reason } (Fix 14 Task 2)
       // provenance for a later §16 audit row — 3-period breakdown + tie-out (NOT rendered yet)
       audit: { window: raw.window, periods: raw.periods, tieOut: raw.tieOut,
                breakdown: { revenue: raw.flows.revenue, operatingIncome: raw.flows.operatingIncome,
@@ -809,6 +810,7 @@ async function fetchFromEDGAR(symbol, cik) {
       // currentEps, not eps: eps keeps a 0 for a filer with no EPS tag at all, and that 0 is not carried into LTM.
       eps: currentEps != null ? parseFloat(currentEps.toFixed(2)) : null, dilutedShares: dilutedShares != null ? inM(dilutedShares) : null,
       cash: cash != null ? inM(cash) : null, debt: debt != null ? inM(debt) : null,
+      cashYield: fyCashYield(facts, revenueEntry?.end, useIfrs),   // the latest 10-K is the LTM here, so its year's yield
     }) : { trusted: false, fallback: raw.fallback || 'annual', reason: raw.reason || null, asOf: null, tieOut: raw.tieOut || null };
   } catch (e) {
     ltm = { trusted: false, fallback: 'annual', reason: 'computeLTM error: ' + e.message, asOf: null };
@@ -860,6 +862,7 @@ async function fetchFromEDGAR(symbol, cik) {
     eps:            eps != null ? parseFloat(eps.toFixed(2)) : null,
     cash:           cash != null ? inM(cash) : null, // null when the cash tag was stale-rejected (Fix A) → deck shows N/A
     shortTermInvestments: shortTermInvestments != null ? inM(shortTermInvestments) : null, // short-term marketable securities (net-debt convention b); null → cash-only for this filer
+    cashYield:      fyCashYield(facts, revenueEntry?.end, useIfrs),   // realized FY yield on cash + ST investments, or { value: null, reason } (Fix 14 Task 2)
     debt:           debt != null ? inM(debt) : null, // null when the debt tag was stale-rejected (Fix A) → deck shows N/A
     debtLabel,                             // "$0, 10-K FY2025, no later debt tag" / "$0, nothing drawn on revolver, 10-Q 9/30/2026 note 6"; null otherwise
     debtReason,                            // why debt is null ("—"), when the zero check ran and found no filed statement

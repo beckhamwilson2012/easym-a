@@ -23,6 +23,36 @@ export const DEBT_INTEREST_RATE = 0.05;  // ~marginal investment-grade acquisiti
 // business (never a flat constant, which produced a nonsense flip on a $176M deal). Combined cash above this
 // floor funds the deal (excess cash used), cutting new debt vs the old 100%-debt assumption. User-overridable.
 export const MIN_CASH_PCT_DEFAULT = 0.02;
+// Yield the excess cash used in the deal was earning, when the acquirer's own realized yield (interest income ÷ average
+// cash + short-term investments, both filed: server/services/cashYield.js) is not available. A stated assumption, labeled
+// like DEBT_INTEREST_RATE, never a fetched figure.
+export const CASH_YIELD_ASSUMPTION = 0.04;
+
+// The yield the cash used stops earning: the acquirer's realized yield on its selected basis (companyACashYield, set by
+// companyBasis), else CASH_YIELD_ASSUMPTION. The combined company's cash is the acquirer's once the deal closes.
+export function cashYieldUsed(inputs) {
+  const y = inputs && inputs.companyACashYield;
+  if (y && Number.isFinite(y.value) && y.value > 0) return { rate: y.value, assumption: false, label: y.label || null, reason: null };
+  return { rate: CASH_YIELD_ASSUMPTION, assumption: true, label: `${(CASH_YIELD_ASSUMPTION * 100).toFixed(1)}% (assumption)`,
+    reason: (y && y.reason) || 'no realized yield for the acquirer' };
+}
+
+// ── The one financing cost (Fix 14 Task 2) ────────────────────────────────────
+// Every pro forma net income (calculate, the sensitivity grid, forward years, breakeven) subtracts this, so the two
+// after-tax lines can never diverge:
+//   financing cost       = new acquisition debt × DEBT_INTEREST_RATE × (1 − TAX_RATE)
+//   lost interest on cash used = excess cash used × the cash yield × (1 − TAX_RATE)
+// Where no cash funds the deal by construction (peer-screen impacts and bank deals keep the 100%-debt convention), the
+// cash used is a genuine 0. An unknown cash used (unknown target debt) makes the lost interest unknown, never 0.
+export function financingCost(inputs, offerOverride) {
+  const sources = acquisitionNewDebt(inputs, offerOverride);
+  const newInterestAfterTax = sources.newDebt != null ? sources.newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE) : null;
+  const cashUsed = (!inputs.applySourcesOfFunds || sources.bank) ? 0 : sources.excessCashUsed;
+  const cashYield = cashYieldUsed(inputs);
+  const lostInterestAfterTax = cashUsed != null ? cashUsed * cashYield.rate * (1 - TAX_RATE) : null;
+  const total = (newInterestAfterTax != null && lostInterestAfterTax != null) ? newInterestAfterTax + lostInterestAfterTax : null;
+  return { sources, newInterestAfterTax, lostInterestAfterTax, cashUsed, cashYield, total };
+}
 
 // Acquirer market price for share issuance: prefer the REAL live price; only fall back to a
 // P/E proxy (EPS×15) when no live price is available, and never produce a price from a loss.
@@ -238,9 +268,12 @@ export function calculate(inputs) {
   const afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE);
   // Sources of funds (Stage 2E): the drag is charged on the NEW debt after combined excess cash funds part of
   // the deal — ONE construction, shared with the sensitivity grid (calcProFormaEPS) and read by §8/§9/§10/§11.
-  const sources             = acquisitionNewDebt(inputs);
+  // financingCost (Fix 14 Task 2) also gives the after-tax interest the excess cash used stops earning.
+  const fin                 = financingCost(inputs);
+  const sources             = fin.sources;
   // newDebt is null when the target's debt is unavailable → the drag is unknown, not zero.
-  const newInterestAfterTax = sources.newDebt != null ? sources.newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE) : null;
+  const newInterestAfterTax = fin.newInterestAfterTax;
+  const lostInterestAfterTax = fin.lostInterestAfterTax;
   // Sources & Uses totals at full precision, so the table foots on the real figures rather than on rounded rows.
   // Bank deals repay no target debt and draw no excess cash (a genuine 0). Otherwise an unavailable leg stays null.
   const debtRepaidInUses   = sources.bank ? 0 : sources.targetDebtRepaid;
@@ -250,8 +283,8 @@ export function calculate(inputs) {
   // BOTH net incomes required — a null side must NOT coerce to 0 and understate the pro-forma net income
   // that drives EPS and the headline accretion. Null → EPS null → accretion not meaningful → '—' / n/m.
   // Same for an unknown financing drag.
-  const proFormaNetIncome   = (!differentBases && companyANetIncome != null && companyBNetIncome != null && newInterestAfterTax != null)
-    ? companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax : null;
+  const proFormaNetIncome   = (!differentBases && companyANetIncome != null && companyBNetIncome != null && fin.total != null)
+    ? companyANetIncome + companyBNetIncome + afterTaxSynergies - fin.total : null;
   const proFormaEPS         = (proFormaNetIncome != null && totalShares > 0) ? proFormaNetIncome / totalShares : null;
 
   // Accretion / dilution. A percent change is only meaningful when BOTH the standalone and the
@@ -315,6 +348,10 @@ export function calculate(inputs) {
     // display rounds once, through deckTokens.fmtInterest. Pre-tax interest is the same new debt × the financing rate.
     newInterestAfterTax: newInterestAfterTax,
     newInterestPreTax:   sources.newDebt == null ? null : sources.newDebt * DEBT_INTEREST_RATE,
+    // After-tax interest the excess cash used stops earning (Fix 14 Task 2), full precision; its yield and label.
+    lostInterestAfterTax,
+    cashYield:           fin.cashYield,   // { rate, assumption, label, reason }
+    cashUsedInDeal:      fin.cashUsed,
     // ── Sources of funds (Stage 2E) — the drag above is charged on newDebt; §10 renders the build ──
     newDebt:           sources.newDebt == null ? null : sources.newDebt.toFixed(0),
     cashConsideration: sources.cashConsideration.toFixed(0),
@@ -395,11 +432,10 @@ export function calcProFormaEPS(offerPrice, synergiesY1, inputs) {
   const totalShares  = acquirerDilutedShares(inputs).shares + newShares; // effective diluted base (matches calculate())
   if (totalShares === 0) return null;
   const afterTaxSynergies   = synergiesY1 * (1 - TAX_RATE);
-  // SAME sources-of-funds construction as calculate(), at this grid cell's offer — so the drag never diverges.
-  const newDebt = acquisitionNewDebt(inputs, offerPrice).newDebt;
-  if (newDebt == null) return null; // unknown target debt → unknown drag → null (matches calculate())
-  const newInterestAfterTax = newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE);
-  const netIncome = companyANetIncome + companyBNetIncome + afterTaxSynergies - newInterestAfterTax;
+  // SAME financing cost as calculate() (financingCost), at this grid cell's offer — so the drag never diverges.
+  const fin = financingCost(inputs, offerPrice);
+  if (fin.total == null) return null; // unknown target debt → unknown drag → null (matches calculate())
+  const netIncome = companyANetIncome + companyBNetIncome + afterTaxSynergies - fin.total;
   return netIncome / totalShares;
 }
 

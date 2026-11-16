@@ -2,9 +2,9 @@ import React from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
-import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf } from '../shared/deckTokens';
+import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf, fmtInterest } from '../shared/deckTokens';
 import { evClaimsNote, NET_DEBT_BASIS } from '../../../lib/netDebt';
-import { epsAccretionPct, privateConsideration } from '../../../utils/dealCalc';
+import { epsAccretionPct, privateConsideration, DEBT_INTEREST_RATE, TAX_RATE } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
 import { SynergyLines } from '../shared/SynergyLines';
@@ -160,6 +160,11 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
             {foots ? '✓ Sources = Uses' : '⚠ Sources ≠ Uses'} — {dash(totalSources)} funds {dash(totalUses)}.
           </div>
         )}
+        {/* Fix 14 Task 2: the two after-tax costs of the funding above, from dealCalc.financingCost (never recomputed). */}
+        <div data-testid="funding-costs" style={{ marginTop: 4, fontSize: 8.5, color: '#374151' }}>
+          After-tax financing cost {r.newInterestAfterTax == null ? '—' : `(${fmtInterest(r.newInterestAfterTax)})`} on new debt at {Math.round(DEBT_INTEREST_RATE * 100)}% (assumption)
+          {' · '}Lost interest on cash used {r.lostInterestAfterTax == null ? '—' : `(${fmtInterest(r.lostInterestAfterTax)})`} on excess cash used at {r.cashYield ? (r.cashYield.assumption ? r.cashYield.label : `${(r.cashYield.rate * 100).toFixed(1)}% (${aTk}'s realized yield)`) : '—'}; both after {Math.round(TAX_RATE * 100)}% tax, in pro forma net income.
+        </div>
 
         {/* Block 2 — Pro-forma capitalization / leverage (impact: pre → pro-forma) */}
         <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginTop: 14, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>

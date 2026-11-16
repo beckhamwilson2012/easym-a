@@ -15,7 +15,7 @@ describe('Fix 10 Task 7 — slide 9 ties', () => {
     const r = calculate(inputs);
     const finDrag = r.newInterestAfterTax;
     expect(finDrag).toBeCloseTo(acquisitionNewDebt(inputs).newDebt * DEBT_INTEREST_RATE * (1 - TAX_RATE), 9);
-    const pfNi = fwd.companyANetIncome + fwd.companyBNetIncome + 0 - finDrag;
+    const pfNi = fwd.companyANetIncome + fwd.companyBNetIncome + 0 - finDrag - r.lostInterestAfterTax;   // Fix 14 Task 2
     const pfSh = 85 + parseFloat(r.stockPortion) / 120.99;
     expect(pfNi / pfSh).toBeCloseTo(calcProFormaEPS(11.30, 0, fwd), 3);   // stockPortion is rounded to $1M in results
   });

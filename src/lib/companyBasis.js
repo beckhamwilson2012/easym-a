@@ -37,6 +37,7 @@ function figures(data, basis) {
       CostOfRevenue: L.costOfRevenue ?? null, CostOfRevenueSource: L.costOfRevenueSource ?? null,
       GrossProfitSource: L.grossProfit != null ? 'sec_edgar' : null, // LTM is EDGAR only (ltmCalc)
       GrossProfitBasis: L.grossProfit != null ? (L.audit?.breakdown?.grossProfit?.derived ? 'calculated' : 'filed') : null,
+      CashYield: L.cashYield ?? null,   // realized LTM yield on cash (Fix 14 Task 2), { value, label } or { value: null, reason }
     };
   }
   // The one diluted share count for pro forma EPS, Year 1 and every forward year (Fix 10 Task 1): the LATEST filed
@@ -53,6 +54,7 @@ function figures(data, basis) {
     DilutedSharesPeriod: latestDil ? { basis: 'weighted average', end: data.ltm.asOf, interim: true } : (data.dilutedSharesPeriod ?? null),
     CostOfRevenue: data.costOfRevenue ?? null, CostOfRevenueSource: data.costOfRevenueSource ?? null,
     GrossProfitSource: data.grossProfitSource ?? null, GrossProfitBasis: data.grossProfitBasis ?? null,
+    CashYield: data.cashYield ?? null,   // realized fiscal-year yield on cash (Fix 14 Task 2)
   };
 }
 

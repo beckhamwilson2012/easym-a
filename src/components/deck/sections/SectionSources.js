@@ -185,6 +185,15 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
           `Total synergies (EBITDA impact): ${deal.synergies.years.map((y) => `Year ${y.year} ${y.entered ? fmtSynergy(y.ebitda) : NONE_ENTERED}`).join(', ')}.`,
         ] : []),
         'A 21% marginal tax rate and a 5% interest rate on acquisition debt are applied as standing model assumptions.',
+        // Fix 14 Task 2: the lost interest on cash used, with the yield the deal actually used (dealCalc.financingCost).
+        (() => {
+          const y = deal?._results?.cashYield;
+          const rate = y ? `${(y.rate * 100).toFixed(1)}%` : '—';
+          const why = !y ? '' : y.assumption
+            ? ` The ${rate} is a stated model assumption, like the 5% debt rate: the acquirer's own realized yield is not available (${y.reason}).`
+            : ` The ${rate} is the acquirer's own realized yield: ${y.label}.`;
+          return `Lost interest on cash used: the excess cash that funds part of the deal stops earning interest, so pro forma net income subtracts excess cash used × ${rate} × (1 − 21%), beside the after-tax financing cost.${why}`;
+        })(),
       ],
     },
     {

@@ -72,10 +72,11 @@ describe('verdict reason', () => {
   test('HNGE on LTM: step 1 runs, so the verdict computes; no "no forecast EPS for HNGE"', () => {
     const v = dealVerdict({ deal: deal(tuckin), model: { derived: {}, verifiedData: { acquirer: {} } }, acquirerFwd: hngeFwd, targetFwd: [], acquirerName: 'HNGE', targetName: 'Target Company' });
     expect(v.step).toBe(1);
-    expect(v.verdict).toBe('accretive');
-    // (166.261 + 2 − new-debt drag) ÷ 85.073 vs 1.95
+    // (166.261 + 2 − new-debt drag − lost interest on cash used) ÷ 85.073 vs 1.95. Fix 14 Task 2: the $288M of excess
+    // cash that funds this all-cash deal stops earning 4.0% (assumption): 288 × 0.04 × 0.79 = $9.1M, so the deal is dilutive.
     const r = calculate(tuckin);
-    expect(v.proFormaEPS).toBeCloseTo((166.261 + 2 - r.newInterestAfterTax) / 85.073, 12);
+    expect(v.verdict).toBe('dilutive');
+    expect(v.proFormaEPS).toBeCloseTo((166.261 + 2 - r.newInterestAfterTax - r.lostInterestAfterTax) / 85.073, 12);
   });
 
   test('HNGE on FY (EPS −7.77): the step-2 reason names the private target, not HNGE', () => {

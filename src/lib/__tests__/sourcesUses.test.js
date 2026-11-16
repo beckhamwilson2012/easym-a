@@ -69,8 +69,9 @@ describe('Sources & Uses, private target', () => {
   test('listed acquirer, private target: the EPS helper uses the same purchase price and drag as calculate()', () => {
     const inp = { ...privateDeal, companyAEPS: 2, companyADilutedShares: 5000, companyAShares: 5000, currentSharePriceA: 30 };
     const r = calculate(inp);
-    // 36,000 stock / $30 = 1,200 new shares; NI 10,000 + 2,000 + 600 × 0.79 − 49,700 × 5% × 0.79 over 6,200 shares
-    const expected = (12000 + 600 * 0.79 - 49700 * 0.05 * 0.79) / 6200;
+    // 36,000 stock / $30 = 1,200 new shares; NI 10,000 + 2,000 + 600 × 0.79 − 49,700 × 5% × 0.79 over 6,200 shares,
+    // less the lost interest on the 4,800 of excess cash used at the 4.0% assumption, after tax (Fix 14 Task 2)
+    const expected = (12000 + 600 * 0.79 - 49700 * 0.05 * 0.79 - 4800 * 0.04 * 0.79) / 6200;
     expect(calcProFormaEPS(0, 600, inp)).toBeCloseTo(expected, 12);
     expect(r.proFormaEPS).toBe(expected.toFixed(2));
   });
