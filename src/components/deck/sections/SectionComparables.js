@@ -303,7 +303,8 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
     fetch(apiUrl(`/api/peers/${targetTicker}${acquirerTicker ? `?acquirer=${encodeURIComponent(acquirerTicker)}` : ''}`))
       .then(r => r.json())
       .then(d => { setAutoPeers(d.peers || []); setPeerSource(d.source || null); setPeerTrust(d.trust || null); setPeerSources(d.peerSources || null); setPeerSic3(d.sic3 || null); setPeerReason(d.reason || null); })
-      .catch(() => { setAutoPeers([]); setPeerSource(null); setPeerTrust(null); setPeerSources(null); setPeerSic3(null); setPeerReason(null); })
+      // A failed request is a hidden peer set too (Fix 14 Task 6): keep why, so the slide can say it.
+      .catch((e) => { setAutoPeers([]); setPeerSource(null); setPeerTrust(null); setPeerSources(null); setPeerSic3(null); setPeerReason(`the peer screen request failed (${(e && e.message) || 'no response'})`); })
       .finally(() => setPeersLoading(false));
   }, [targetTicker, acquirerTicker]);
 
@@ -348,10 +349,16 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   // cross-industry match like a space company → autos) is NOT a valid comp set — suppress the peer
   // columns and show an honest "no comparable public peers" note instead of presenting false comps.
   // Explicit user choice always wins: custom peers render regardless of trust.
-  const peersSuppressed = !customPeers && peerTrust === 'untrusted';
-  const screenPeers = peersSuppressed
+  const peersUntrusted = !customPeers && peerTrust === 'untrusted';
+  const screenPeers = peersUntrusted
     ? []
     : activePeers.filter(t => t && t !== acquirerTicker && t !== targetTicker).slice(0, 6);
+  // Fix 14 Task 6: the peer set is hidden whenever no peer column is shown, not only when the screen says untrusted: a
+  // failed request, an empty list, or a list holding only the deal's own two companies. Each case shows its reason.
+  const peersSuppressed = !customPeers && !!targetTicker && !peersLoading && (peersUntrusted || screenPeers.length === 0);
+  const peersPending = !customPeers && !!targetTicker && peersLoading;
+  const hiddenReason = peerReason
+    || (activePeers.length ? `the peer screen returned only ${activePeers.filter(Boolean).join(' and ')}, the deal's own companies` : 'the automatic peer screen returned no peers');
   const companyTickers = [acquirerTicker, targetTicker, ...screenPeers].filter(Boolean);
   const fetchKey = [...new Set(companyTickers)].sort().join(',');
   useEffect(() => {
@@ -473,7 +480,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   const peerProvenance = customPeers
     ? 'Peer set: custom (user-edited)'
     : (peersSuppressed
-        ? `No peer set: ${peerReason || 'the automatic peer screen returned no peers'} — peer screen omitted rather than filled with a default list; sector-median EV/Revenue likewise suppressed from valuation`
+        ? `No peer set: ${hiddenReason} — peer screen omitted rather than filled with a default list; sector-median EV/Revenue likewise suppressed from valuation`
         : (peerSource ? peerSourceNote(screenPeers, peerSources, peerSic3) : null));
   const subtitle = `Acquirer + target + peer screen · ${nCols} ${nCols === 1 ? 'company' : 'companies'} · ${methodLabel} · actuals on LTM basis (columns marked "· FY" lack interim data) · target shaded`;
   // Surface each subject's LTM period-end so the near-alignment is transparent (not hidden): the LTM basis
@@ -497,13 +504,18 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
         )}
       </div>
 
+      {peersPending && (
+        <div data-testid="peers-pending" style={{ margin: '4px 22px 0', fontSize: 10, color: '#6B7280', fontStyle: 'italic' }}>
+          Peer screen still loading: peer columns appear when it returns.
+        </div>
+      )}
       {peersSuppressed && (
-        <div style={{ margin: '4px 22px 0', padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderLeft: '4px solid #B45309', borderRadius: 4 }}>
+        <div data-testid="peers-hidden" style={{ margin: '4px 22px 0', padding: '10px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderLeft: '4px solid #B45309', borderRadius: 4 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: '#92400E', marginBottom: 2 }}>
             No comparable public peers identified — comparables omitted
           </div>
           <div style={{ fontSize: 10, color: '#78350F', lineHeight: 1.45 }}>
-            {peerReason || 'The automatic peer screen returned no peers'}. The screen takes FMP's peer list, keeps US
+            {hiddenReason.charAt(0).toUpperCase() + hiddenReason.slice(1)}. The screen takes FMP's peer list, keeps US
             SEC filers with a 10-K or 10-Q in the past year, a market cap 0.1×–10× the target's and reported revenue,
             and backfills only from same-industry companies sharing the target's 3-digit SIC; it needs at least 3.
             Rather than fill the slot with a default list, the peer columns are withheld; only {acquirerTicker ? 'the acquirer and target' : 'the target'} — real, deal-specific — are
