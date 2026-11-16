@@ -54,17 +54,15 @@ const PEER_OVERRIDES = {
   // Digital musculoskeletal care. Hinge (SIC 7374), Omada (8000), Teladoc (8011) and Progyny (8090) sit in
   // four SIC codes and two FMP industries, so no automatic screen pairs them (CHECK5). Set by hand.
   HNGE: ['OMDA', 'TDOC', 'PGNY'],
-  // Omada (Fix 14 Task 6): the three US-listed digital-health companies in FMP's own OMDA peer list that pass every
-  // automatic filter (SEC filer, 10-K/10-Q in the past year, market cap 0.1×–10× OMDA's, reported revenue); HNGE, the
-  // fourth FMP peer, is dropped as the acquirer. Each sells virtual care, as Omada does:
-  //   TDOC — Teladoc Health: virtual primary care, BetterHelp, and chronic-condition programs (Livongo diabetes and
-  //          hypertension), Omada's closest product overlap; sold to employers and health plans. 1.8× OMDA's cap.
-  //   AMWL — American Well: telehealth platform and virtual care programs for health plans and health systems. 0.2×.
-  //   HIMS — Hims & Hers Health: direct-to-consumer telehealth, including a weight-management (GLP-1) program, against
-  //          Omada's GLP-1 care track. 5.0×.
-  // PRVA (Privia Health, a physician-practice enablement company the automatic backfill added on SIC 800) is not
-  // digital health and is left out; setting the list by hand also keeps the slide from depending on a live FMP screen.
-  OMDA: ['TDOC', 'AMWL', 'HIMS'],
+  // Omada (Fix 17 Task 4): the brief's four candidates, each run through the automatic stock-peer filters
+  // (server/services/peerSelect.js: SEC filer, FMP market cap 0.1×–10× OMDA's, 10-K/10-Q in the past 12 months,
+  // revenue in the app's /quote; HNGE excluded as the acquirer) on Nov 16 2026, OMDA cap $899M (CNBC $14.49 × 62.04M):
+  //   TDOC — Teladoc Health, SIC 8011, 1.76× OMDA's cap: passes.
+  //   PGNY — Progyny, SIC 8090, 3.04×: passes.
+  //   HIMS — Hims & Hers Health, SIC 8011, 4.67×: passes.
+  //   TALK — Talkspace: fails "not-sec-filer" (not in SEC company_tickers.json), so it is left out.
+  // Three pass, the screen's minimum. Fix 14's list was TDOC, AMWL, HIMS.
+  OMDA: ['TDOC', 'PGNY', 'HIMS'],
 };
 
 module.exports = { PEER_OVERRIDES };

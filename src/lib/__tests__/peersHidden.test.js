@@ -32,6 +32,6 @@ test('a trusted list holding only the deal’s own companies is a hidden peer se
 });
 
 test('OMDA has a hand-set peer list of US-listed digital-health companies, without its acquirer', () => {
-  expect(PEER_OVERRIDES.OMDA).toEqual(['TDOC', 'AMWL', 'HIMS']);
+  expect(PEER_OVERRIDES.OMDA).toEqual(['TDOC', 'PGNY', 'HIMS']);   // Fix 17 Task 4
   expect(PEER_OVERRIDES.OMDA).not.toContain('HNGE');
 });
