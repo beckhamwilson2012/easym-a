@@ -127,6 +127,9 @@ const GAAP_PLAN = Object.freeze({ selected: GAAP, eps: { nonGaap: false, note: n
 // The plan for one deal: which figures each company uses and what the slides say.
 export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tickerB }) {
   if (selected !== NON_GAAP) return GAAP_PLAN;
+  // Fix 16: a computed figure needs filed inputs for BOTH companies. With a private counterparty (no payload) neither side
+  // is computed, so a tuck-in's two EBITDAs stay on one basis and combine, as they did before Fix 13.
+  if (!ngA || !ngB) { ngA = ngA && { ...ngA, computed: null }; ngB = ngB && { ...ngB, computed: null }; }
   const a = reportedNonGaap(ngA), b = reportedNonGaap(ngB);
   const ltmA = inputs?.companyABasis === BASIS_LTM, ltmB = inputs?.companyBBasis === BASIS_LTM;
   const tA = tickerA || 'the acquirer', tB = tickerB || 'the target';

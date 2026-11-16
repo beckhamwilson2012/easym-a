@@ -278,3 +278,18 @@ describe('Fix 16: reported LTM first (four quarterly releases), computed only wh
     expect(nonGaapAvailability({ ngA: only, ngB: none(null) }).available).toBe(true);
   });
 });
+
+describe('Fix 16: a private counterparty means no computed figures', () => {
+  test('HNGE tuck-in (private target, no payload): HNGE EBITDA stays GAAP computed, so the combined EBITDA is on one basis', () => {
+    const ngA = reported(2.62, 161.348, 61.471, { computed: { fy: null, ltm: { ...OMDA_LTM, netIncome: 168, pretax: { ...OMDA_LTM.pretax, value: 168 }, ebitda: 156 } } });
+    const inputs = { ...inputsFY, companyABasis: BASIS_LTM, companyBBasis: BASIS_LTM, companyADilutedShares: 85 };
+    const plan = resolveReportingBasis({ selected: NON_GAAP, ngA, ngB: null, inputs, tickerA: 'HNGE', tickerB: null });
+    expect(plan.ebitda.A.nonGaap).toBe(false);
+    expect(plan.ebitda.combinable).toBe(true);
+    expect(plan.eps.nonGaap).toBe(false);
+    expect(plan.eps.note).toBe('Year 1 non-GAAP EPS not available: the target doesn’t report adjusted EPS');   // the pre-Fix 13 wording
+    // Both public: unchanged (HNGE computed).
+    const both = resolveReportingBasis({ selected: NON_GAAP, ngA, ngB: none({ fy: null, ltm: OMDA_LTM }), inputs: { ...inputs, companyBDilutedShares: 65 }, tickerA: 'HNGE', tickerB: 'OMDA' });
+    expect(both.ebitda.A.computed).toBe(true);
+  });
+});
