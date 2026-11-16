@@ -6,6 +6,7 @@ import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isGrossNm, grossNmNote, standaloneEPS, dealNonGaap, fmtAsOf } from '../shared/deckTokens';
 import { FY_ONLY, epsCheckNote } from '../../../lib/reportingBasis';
 import { computedComponentsText } from '../../../lib/computedAdjusted';
+import { SGA_LABEL, TOTAL_COSTS_LABEL, forwardSga, forwardSgaReason, forwardTotalCosts } from '../../../lib/forwardCosts';
 import { ExplainButton } from '../../shared/ExplainButton';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
@@ -91,6 +92,10 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
     { label: 'Cost of Revenue',    get: c => c.costOfRevenue,    fmt: fmtExp, indent: true, noConsensus: true },
     { label: 'Gross Profit',       get: c => c.grossProfit,      fmt: fmtM,   bold: true, noConsensus: !grossNmMode, nm: grossNmMode },
     { label: 'Operating Expense',  get: c => c.operatingExpense, fmt: fmtExp, indent: true },
+    // Fix 17 Task 2: forward (E) columns only. SG&A is FMP's own consensus (its own row: it excludes R&D); total costs
+    // = consensus revenue − consensus operating income. Actual columns keep their filed rows above and show "—" here.
+    { label: SGA_LABEL,            get: c => forwardSga(c),       fmt: fmtExp, indent: true, fwdOnly: true },
+    { label: TOTAL_COSTS_LABEL,    get: c => forwardTotalCosts(c), fmt: fmtExp, indent: true, fwdOnly: true },
     { label: 'Operating Income',   get: c => c.operatingIncome,  fmt: fmtM,   bold: true },
     { label: 'Non-operating income/(expense)', get: c => c.nonOperatingIncome, fmt: fmtM, indent: true },
     // Filed income tax (Fix 10 Task 7), shown with the sign that foots: operating income + non-operating − tax = net income.
@@ -197,6 +202,9 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
     if (latest.grossProfitBasis === 'calculated') parts.push('Gross profit is calculated: revenue − cost of revenue for the same period, because the filer tags no gross profit.');
     return parts.length ? parts.join(' ') : null;
   })();
+
+  // Fix 17 Task 2: why a forward SG&A cell is "—" (FMP returned no SG&A estimate for that year).
+  const sgaMissing = dcols.filter(c => !c.actual).map(forwardSgaReason).filter(Boolean);
 
   const labelW = 158;
   const cellBg  = (c, ri) => c.isLtm
@@ -339,6 +347,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
         {showLtm ? <> The <strong>LTM</strong> column is the trailing twelve months (latest annual + interim YTD − prior-year YTD), a GAAP actual as of {asOfShort(L.asOf)}.{ltmDaMissing ? <> <sup>d</sup> LTM EBITDA is shown on an operating-income basis — interim D&amp;A on the same basis as the annual EBITDA is not tagged for this filer (a differently-scoped cash-flow D&amp;A is not mixed in).</> : null}</> : null}
         {incomeNote ? <> <strong style={{ color: NAVY }}>Cost of revenue / gross profit: </strong>{incomeNote}</> : null}
         {ebitdaNote ? <> {ebitdaNote}</> : null}
+        {sgaMissing.length ? <> SG&amp;A is "—" where FMP has no estimate: {sgaMissing.join('; ')}.</> : null}
         {grossNote ? <> {grossNote}</> : null}
         {noiText ? <> <strong style={{ color: NAVY }}>Non-operating income/(expense)</strong> reconciles operating income to net income. {noiText}</> : null}
         {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}

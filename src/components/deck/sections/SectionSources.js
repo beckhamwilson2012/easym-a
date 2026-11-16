@@ -139,6 +139,7 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
       label: 'Analyst Estimates & Price Targets',
       bullets: [
         'Forward revenue and EPS consensus — the FY-ahead estimate columns and the pro forma projections — are from Financial Modeling Prep analyst estimates: single-source, point-in-time, not guidance.',
+        'Forward cost rows (Pro Forma and Standalone P&L estimate columns): “SG&A (FMP consensus)” is FMP’s own SG&A estimate (analyst-estimates sgaExpenseAvg), shown only where FMP returns it, on its own row because it excludes R&D; FMP gives no analyst count for SG&A. “Total costs (derived: revenue − operating income)” is the consensus revenue less the consensus operating income shown on the same slide. Forward cost of revenue, gross profit and gross margin are not available from consensus and are never derived from a held margin or any ratio.',
         'Per-firm price targets are from Financial Modeling Prep (price-target news and grades): the latest target per broker is kept, targets whose most recent call is over 18 months old are dropped, and statistical outliers (over 3× or under one-third of the panel median) are removed. Buy / hold / sell reflects the latest grade per firm.',
         `An independent consensus cross-check (mean / high / low) draws on ${analystSrcLabel} where available. Price targets are sell-side FORECASTS, not guarantees.`,
       ],
