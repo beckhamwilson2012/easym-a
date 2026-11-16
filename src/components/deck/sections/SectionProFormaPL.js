@@ -6,7 +6,7 @@ import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote, fmtInterest } from '../shared/deckTokens';
 import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, acquirerSharePrice, forwardYearInputs, TAX_RATE, privateConsideration } from '../../../utils/dealCalc';
 import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST } from '../../../lib/forwardYears';
-import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence } from '../../../lib/synergies';
+import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence, fmtSynergy } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { isNonGaapDeal, computedSides, epsSourceText } from '../../../lib/reportingBasis';
 import { SGA_LABEL, TOTAL_COSTS_LABEL, forwardSga, forwardSgaReason, forwardTotalCosts, sumBoth } from '../../../lib/forwardCosts';
@@ -57,11 +57,33 @@ function estFetch(ticker) {
   return _estCache[ticker];
 }
 
+// What one cell prints. Cell renders it and the empty-row rule (Fix 17 Task 3) reads it, so "—" means one thing.
+export const cellText = ({ v, kind, nm, text }) => (text ? text : nm ? 'n/m' : kind === 'pct' ? fmtPct1(v) : kind === 'syn' ? fmtPlus(v) : kind === 'dash' ? '—' : kind === 'int' ? fmtFin(v) : fmtM(v));
 const Cell = ({ v, kind, bold, color, nm, text }) => (
   <span style={{ flex: 1, fontSize: text ? 9 : 10, textAlign: 'right', fontWeight: bold ? 700 : 500, color: color || (typeof v === 'number' && v < 0 ? '#DC2626' : '#374151') }}>
-    {text ? text : nm ? 'n/m' : kind === 'pct' ? fmtPct1(v) : kind === 'syn' ? fmtPlus(v) : kind === 'dash' ? '—' : kind === 'int' ? fmtFin(v) : fmtM(v)}
+    {cellText({ v, kind, nm, text })}
   </span>
 );
+// The five cells of one row (Acq., Tgt., Comb., Syn., PF Tot.). A synergy row's PF Tot. says "in EBIT" when it has a
+// synergy figure: the synergy is carried in the EBIT row's PF Tot., not added again (Fix 17 Task 3).
+export function rowCells(r) {
+  const isPct = r.pct, isDash = r.dash;
+  const base = (v, nm) => ({ v, nm, kind: isPct ? 'pct' : isDash ? 'dash' : 'm' });
+  const syn = { v: isPct || isDash ? null : r.syn, text: r.synText, kind: isPct || isDash ? 'dash' : 'syn' };
+  const synShown = r.synRow && !r.synText && cellText(syn) !== '—';
+  const pf = { v: isPct ? r.c : (isDash ? null : r.pf), nm: r.nmC, kind: isPct ? 'pct' : isDash ? 'dash' : r.fin ? 'int' : 'm', text: synShown ? 'in EBIT' : undefined };
+  return { a: base(r.a, r.nmA), b: base(r.b, r.nmB), c: base(r.c, r.nmC), syn, pf };
+}
+// Fix 17 Task 3: a forecast year past the consensus years FMP returned is one line, not a table of "—". X is that year's
+// synergy from the deal's one synergy schedule (deal.synergies.years). null when the year is within the consensus years.
+export function beyondConsensusLine(slot, yr, fwdFys) {
+  if (!slot || slot.a || slot.fyA == null || !fwdFys || !fwdFys.length) return null;
+  const lo = Math.min(...fwdFys), hi = Math.max(...fwdFys);
+  if (!(slot.fyA > hi)) return null;
+  return `Year ${slot.synYr} synergies (${yr && yr.entered ? fmtSynergy(yr.ebitda) : NONE_ENTERED}) fall in FY${slot.fyA}, beyond the consensus years (FY${lo}–FY${hi})`;
+}
+// A row that prints "—" in every column is not shown (Fix 17 Task 3).
+export const rowAllDash = (r) => Object.values(rowCells(r)).every((x) => cellText(x) === '—');
 
 function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const aTk = acquirer?.ticker || acquirer?.name || 'Acquirer';
@@ -119,6 +141,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
 
   // ══════════════════════════ §6a — detailed per-year pro-forma tables (UNCHANGED) ══════════════════════
   const nYears = sel.slots.filter(s => s.a && s.b).length;
+  const fwdFys = aFwd.filter(c => c.fy != null).map(c => c.fy);   // the consensus years FMP returned for the acquirer
   const years = [];
   if (isA) {
     for (const slot of sel.slots) {
@@ -141,6 +164,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
       const grossNm = { nmA: isGrossNm(acquirer), nmB: isGrossNm(target), nmC: isGrossNm(acquirer) || isGrossNm(target) };
       years.push({
         label: slot.label, colReason: slot.colReason,
+        // Fix 17 Task 3: a year past the consensus years FMP returns is one line, not a table of "—".
+        beyond: beyondConsensusLine(slot, yr, fwdFys),
         rows: [
           { label: 'Revenue',          a: a.revenue,        b: b.revenue,        c: cRev,   syn: yr.revenue, pf: cRev != null ? cRev + (yr.revenue ?? 0) : null },
           { label: `Revenue growth % (vs ${aPrev?.label ?? 'prior year'})`,  a: growth(a.revenue, aPrev?.revenue), b: growth(b.revenue, bPrev?.revenue), c: growth(cRev, sum(aPrev?.revenue, bPrev?.revenue)), pct: true },
@@ -154,10 +179,10 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           { label: 'Gross margin %',    a: margin(a.grossProfit, a.revenue), b: margin(b.grossProfit, b.revenue), c: margin(cGross, cRev), pct: true, noConsensus: !grossNm.nmC, ...grossNm },
           // Cost, revenue and total synergies, on their own lines in the Synergy column only: Acq/Tgt/Comb have
           // no base figure. The total is what EBIT carries, so nothing double-counts.
-          { label: 'Cost synergies', syn: yr.cost, synText: none(yr.cost), pf: null },
+          { label: 'Cost synergies', syn: yr.cost, synText: none(yr.cost), pf: null, synRow: true },
           { label: synergyMargin?.pct != null ? `Revenue synergies at ${synergyMargin.pct.toFixed(1)}% margin` : 'Revenue synergies (revenue only)', syn: yr.revenueEbitda,
-            synText: yr.revenue == null ? NONE_ENTERED : (yr.revenueEbitda == null ? 'not in EBITDA' : null), pf: null },
-          { label: 'Total synergies (EBITDA impact)', syn: yr.ebitda, synText: yr.entered ? null : NONE_ENTERED, pf: null },
+            synText: yr.revenue == null ? NONE_ENTERED : (yr.revenueEbitda == null ? 'not in EBITDA' : null), pf: null, synRow: true },
+          { label: 'Total synergies (EBITDA impact)', syn: yr.ebitda, synText: yr.entered ? null : NONE_ENTERED, pf: null, synRow: true },
           { label: 'Operating Expense', a: null,             b: null,             c: null,   syn: null,    pf: null, dash: true },
           // Fix 17 Task 2: FMP's SG&A consensus (its own row, never Operating Expense: it excludes R&D) and total costs =
           // consensus revenue − consensus operating income. Combined and PF Tot. = acquirer + target where both exist.
@@ -279,7 +304,9 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              {years.map((yr, yi) => (
+              {years.map((yr, yi) => yr.beyond ? (
+                <div key={yi} data-testid="pf-beyond-line" style={{ fontSize: 10, color: '#374151', fontStyle: 'italic' }}>{yr.beyond}</div>
+              ) : (
                 <div key={yi}>
                   <div style={{ fontSize: 10, fontWeight: 700, color: NAVY, marginBottom: 6, letterSpacing: 0.5, textTransform: 'uppercase' }}>
                     {yr.label} <span style={{ color: '#9CA3AF', fontWeight: 400 }}>($M, {CONSENSUS_BASIS}{yr.colReason ? ` — ${yr.colReason}` : ''})</span>
@@ -291,22 +318,25 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                         <span key={h} style={{ flex: 1, color: '#fff', fontSize: 9.5, fontWeight: 700, textAlign: 'right' }}>{h}</span>
                       ))}
                     </div>
-                    {yr.rows.map((r, ri) => {
-                      const isPct = r.pct, isDash = r.dash;
+                    {yr.rows.filter(r => !rowAllDash(r)).map((r, ri) => {
+                      const cells = rowCells(r);
                       return (
                         <div key={r.label} style={{ display: 'flex', padding: '4px 8px', background: r.bold ? '#EFF6FF' : (ri % 2 ? ALT_ROW : '#fff'), borderBottom: `1px solid ${GRAY_BORDER}` }}>
                           <span style={{ flex: 1.7, fontSize: 9.5, color: r.bold ? NAVY : (r.fin ? '#6B7280' : '#374151'), fontWeight: r.bold ? 700 : 400, fontStyle: r.fin ? 'italic' : 'normal', paddingLeft: r.fin ? 10 : 0 }}>
                             {r.label}{r.noConsensus && r.c == null ? <sup style={{ fontSize: 9.5, color: '#6B7280' }}> n</sup> : null}
                           </span>
-                          <Cell v={r.a} nm={r.nmA} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={r.bold} />
-                          <Cell v={r.b} nm={r.nmB} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={r.bold} />
-                          <Cell v={r.c} nm={r.nmC} kind={isPct ? 'pct' : isDash ? 'dash' : 'm'} bold={r.bold} color={r.bold ? NAVY : undefined} />
-                          <Cell v={isPct || isDash ? null : r.syn} text={r.synText} kind={isPct || isDash ? 'dash' : 'syn'} color="#166534" />
-                          <Cell v={isPct ? r.c : (isDash ? null : r.pf)} nm={r.nmC} kind={isPct ? 'pct' : isDash ? 'dash' : r.fin ? 'int' : 'm'} bold={!r.fin} color={r.fin ? '#DC2626' : NAVY} />
+                          <Cell {...cells.a} bold={r.bold} />
+                          <Cell {...cells.b} bold={r.bold} />
+                          <Cell {...cells.c} bold={r.bold} color={r.bold ? NAVY : undefined} />
+                          <Cell {...cells.syn} color="#166534" />
+                          <Cell {...cells.pf} bold={!r.fin} color={r.fin ? '#DC2626' : NAVY} />
                         </div>
                       );
                     })}
                   </div>
+                  {yi === 0 && yr.rows.some(r => (r.label === 'Cost of Revenue' || r.label === 'Gross Profit') && rowAllDash(r)) && (
+                    <div data-testid="pf-no-cogs-line" style={{ marginTop: 3, fontSize: 9.5, color: '#6B7280', fontStyle: 'italic' }}>Consensus does not provide cost of revenue or gross profit; those rows are not shown.</div>
+                  )}
                 </div>
               ))}
               {/* Accretion strip (7E — §9 folded onto §8): standalone vs PF EPS, WITH and WITHOUT synergies, per

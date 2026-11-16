@@ -203,6 +203,10 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
     return parts.length ? parts.join(' ') : null;
   })();
 
+  // Fix 17 Task 3: a row that prints "—" in every column is not shown. A forward-only row (SG&A, total costs) is "—" in
+  // every actual column by definition, so it shows exactly when a forward column has a value; no actual figure is hidden.
+  const shownLines = lines.filter((ln) => ln.nm || dcols.some((c) => ln.get(c) != null));
+  const shownMargins = margins.filter((m) => m.nm || dcols.some((c) => (m.text ? m.text(c) : m.val(c)) != null));
   // Fix 17 Task 2: why a forward SG&A cell is "—" (FMP returned no SG&A estimate for that year).
   const sgaMissing = dcols.filter(c => !c.actual).map(forwardSgaReason).filter(Boolean);
 
@@ -256,7 +260,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
             </tr>
           </thead>
           <tbody>
-            {lines.map((ln, ri) => (
+            {shownLines.map((ln, ri) => (
               <tr key={ln.label}>
                 <td style={{ padding: '4px 8px', paddingLeft: ln.indent ? 18 : 8, background: ri % 2 ? ALT_ROW : '#fff', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10.5, fontWeight: ln.bold ? 700 : 400, color: ln.ng ? '#0070D2' : (ln.bold ? NAVY : '#374151') }}>
                   {ln.label}{ln.info ? <> <ExplainButton portal explain={{ formula: ln.info }} /></> : null}
@@ -285,7 +289,7 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
             ))}
             {/* Margins & Growth — computed per column on that column's own basis */}
             <tr><td colSpan={dcols.length + 1} style={{ background: '#EEF2F7', padding: '3px 8px', fontSize: 8.5, fontWeight: 700, color: NAVY, letterSpacing: 0.5, textTransform: 'uppercase', borderBottom: `1px solid ${GRAY_BORDER}` }}>Margins &amp; Growth</td></tr>
-            {margins.map((m, ri) => (
+            {shownMargins.map((m, ri) => (
               <tr key={m.label}>
                 <td style={{ padding: '3px 8px', paddingLeft: 18, background: ri % 2 ? ALT_ROW : '#fff', borderBottom: `1px solid ${GRAY_BORDER}`, fontSize: 10, color: '#374151' }}>{m.label}</td>
                 {dcols.map((c, i) => {
