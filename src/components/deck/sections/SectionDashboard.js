@@ -243,7 +243,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               explain: () => explainPTBV({ marketCap: target?.marketCap, tangibleBookValue: target?.tangibleBookValue, ratio: calcPTBV(target), companyName: nameB }),
             },
             {
-              label: 'P / E Ratio',
+              label: 'P / E at offer price',   // Fix 14 Task 4: dealCalc's P/E is the offer (not the market price) ÷ target EPS
               value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
               note:  results.peRatio === 'N/A' ? results.peReason : null,   // dealCalc names the real reason
               explain: () => explainPeRatio(peExplainArgs),
@@ -274,7 +274,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               explain: () => explainEvEbitda({ ev, ebitda: inputs.companyBEBITDA, multiple: results.evEBITDA }),
             },
             {
-              label: 'P / E Ratio',
+              // Fix 14 Task 4: dealCalc's P/E is the offer price ÷ target EPS (a private target: purchase equity value ÷
+              // net income), never the market price; the label says so.
+              label: 'P / E at offer price',
               value: results.peRatio === 'N/A' ? 'n/m' : `${results.peRatio}x`,
               // The reason is dealCalc's (peReason): `companyBEPS <= 0` read a private target's default 0 EPS as negative earnings.
               note:  results.peRatio === 'N/A' ? results.peReason

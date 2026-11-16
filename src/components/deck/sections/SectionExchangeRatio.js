@@ -8,6 +8,8 @@ import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtPerShare, fmtShares, fmtPct, fmtPctFloor, fmtAsOf } from '../shared/deckTokens';
 import { netCashDebt, evClaims, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { useDealVerdict } from '../shared/useDealVerdict';
+import { headlineEps } from '../../../lib/dealVerdict';
 
 // Spec §2 Slide 8 — Exchange Ratio & Deal Considerations. Two side-by-side tables, ALL values read
 // from the C1 single source of truth (deckModel.derived / dealAssumptions) so they can never diverge
@@ -78,6 +80,10 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
   const offer = d.offerPrice;
   const dash = (x, f) => (x == null || Number.isNaN(x) ? '—' : f(x));
 
+  // One EPS story (Fix 14 Task 4): the EPS impact row is the verdict's own figure, the one the Deal Summary tile shows.
+  const verdict = useDealVerdict({ deal, acquirer, target, model });
+  const hEps = headlineEps(verdict, deal);
+
   // ── Data for the sensitivity matrix (§8 was pure-props; now fetches like §3/§6/§7) ──────────────────
   const { data: verifiedData } = useVerifiedData(target?.ticker ?? null); // 52-wk high/low
   const [tgtPnl, setTgtPnl] = useState(null);                             // consensus forwards (rev/EBITDA/EPS)
@@ -113,10 +119,23 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
   const stockPortion  = d.totalConsideration != null && stockPct != null ? d.totalConsideration * (stockPct / 100) : null;
 
   // EPS-impact row: render the ONE accretion result with its explicit basis (no leading '+').
-  const acc = d.accretion || {};
-  const epsImpact = deal?._results?.basesDiffer ? 'n/m (companies on different bases)' : acc.pct == null
-    ? 'n/m (acquirer or pro-forma EPS ≤ 0)'
-    : `${Math.abs(acc.pct).toFixed(1)}% ${acc.isAccretive ? 'accretive' : 'dilutive'} · ${acc.basis || 'computed basis'}`;
+  // Fix 14 Task 4: the one headline EPS figure (headlineEps), with its year and basis; "≤ 0" only when it is really so.
+  const epsImpact = deal?._results?.basesDiffer ? 'n/m (companies on different bases)' : hEps.pct == null
+    ? `n/m (${hEps.reason}) · ${hEps.label}`
+    : `${Math.abs(hEps.pct).toFixed(1)}% ${hEps.verdict === 'neutral' ? 'neutral' : hEps.pct >= 0 ? 'accretive' : 'dilutive'} · ${hEps.label}`;
+  // Fix 14 Task 4: the cash part is labeled by how Sources & Uses actually funds it (cash on hand vs new debt), not
+  // always "debt-fin.". A bank deal keeps the 100%-debt convention; that is exactly what it then says.
+  const R = deal?._results || {};
+  const fundedBy = (() => {
+    if (!(cashPortion > 0)) return null;
+    if (R.bankFinancing) return 'new debt';
+    const cashOnHand = R.excessCashUsed != null ? parseFloat(R.excessCashUsed) : null;
+    const newDebt = R.newDebt != null ? parseFloat(R.newDebt) : null;
+    if (cashOnHand == null || newDebt == null) return 'funding unknown: see Transaction Structure';
+    const parts = [cashOnHand > 0 ? `cash on hand ${fmtMoneyTable(cashOnHand)}` : null, newDebt > 0 ? `new debt ${fmtMoneyTable(newDebt)}` : null].filter(Boolean);
+    const repaid = R.targetDebtRepaid != null ? parseFloat(R.targetDebtRepaid) : 0;
+    return `${parts.join(' + ') || 'no new funding'}${repaid > 0 ? `, incl. ${bTk} debt repaid ${fmtMoneyTable(repaid)}` : ''}`;
+  })();
 
   const dealRows = [
     { k: 'Structure', v: 'Cash-and-stock acquisition' },
@@ -125,7 +144,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
     { k: deal?._inputs?.premiumReferencePrice > 0 ? `Premium to ${fmtPerShare(deal._inputs.premiumReferencePrice)} close${deal._inputs.premiumReferenceDate ? ` on ${deal._inputs.premiumReferenceDate}` : ' on the chosen date'}` : 'Premium to current', v: dash(d.premiumPct, v => fmtPct(v, 1)) },
     { k: 'Total equity value', v: dash(d.totalConsideration, fmtMoneyTable) },
     // Cash + stock portions merged (they sum to the total consideration — natural pairing, saves a row).
-    { k: 'Cash / stock split', v: (cashPortion != null && stockPortion != null) ? `${fmtMoneyTable(cashPortion)} (debt-fin.) / ${fmtMoneyTable(stockPortion)}` : '—' },
+    { k: 'Cash / stock split', v: (cashPortion != null && stockPortion != null) ? `${fmtMoneyTable(cashPortion)}${fundedBy ? ` (${fundedBy})` : ''} / ${fmtMoneyTable(stockPortion)}` : '—' },
     { k: 'Financing rate', v: `${fmtPct((da.financingRate ?? 0.05) * 100, 0)} (assumption)` },
     { k: 'Marginal tax rate', v: `${fmtPct((da.taxRate ?? 0.21) * 100, 0)}` },
     { k: 'Pro forma ownership', v: (d.ownershipExistingPct != null) ? `${fmtPctFloor(d.ownershipExistingPct, 1)} ${aTk} / ${fmtPctFloor(d.ownershipNewPct, 1)} ${bTk}` : '—' },

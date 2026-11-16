@@ -52,7 +52,8 @@ export function SectionTitlePage({ target, acquirer, model }) {
           fontSize: 10, color: 'rgba(255,255,255,0.5)',
           letterSpacing: 2.5, textTransform: 'uppercase', marginBottom: 20, fontWeight: 600,
         }}>
-          Single Company Analysis
+          {/* Fix 14 Task 4: a deck on two companies is a transaction analysis, never "single company". */}
+          {acquirer && target ? 'Transaction Analysis' : 'Single Company Analysis'}
         </div>
 
         <div style={{

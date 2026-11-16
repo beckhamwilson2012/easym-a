@@ -121,7 +121,9 @@ export function composeSourceLine(usedFieldKeys, fields, asOfISO) {
   // Use the build/bundle timestamp (asOfISO) as the canonical "as of" date so every slide — and §15 /
   // §12, which also key off the bundle asOf — render the SAME date. Fall back to the newest field asOf
   // only when no bundle timestamp was passed (Fix B).
-  const asOf = (asOfISO ? asOfISO.substring(0, 10) : null) || newestAsOf;
+  // The full timestamp, not its UTC date portion (Fix 14 Task 4): formatDeckDate shows a timestamp on the viewer's local
+  // date, as the title slide does. Cutting it to YYYY-MM-DD printed the UTC day ("November 16" on a Nov 15 evening deck).
+  const asOf = asOfISO || newestAsOf;
   if (asOf && MARKET_SOURCES.some(s => citedSources.has(s))) {
     parts.push('Market data as of ' + formatDate(asOf) + '.');
   }

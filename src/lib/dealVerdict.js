@@ -43,7 +43,9 @@ function epsBreakeven(offer, base, inputs) {
 function breakevenLine(breakeven, entered) {
   const enteredText = entered == null ? 'none entered' : `entered ${fmtVerdictMoney(entered)}`;
   if (breakeven == null) return null;
-  if (breakeven <= 0) return `Breaks even with no synergies (at ${fmtVerdictMoney(breakeven)}); ${enteredText}`;
+  // Fix 14 Task 4: a breakeven at or below zero means the deal is accretive before any synergy; a negative "breakeven
+  // synergy" amount is not a figure anyone can act on, so it is not printed.
+  if (breakeven <= 0) return `Accretive before any synergies; ${enteredText}`;
   return `Breaks even at ${fmtVerdictMoney(breakeven)} of synergies; ${enteredText}`;
 }
 
