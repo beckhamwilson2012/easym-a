@@ -52,6 +52,37 @@ const NET_EPS = [
 
 console.log('\nnonGaapTables unit tests\n');
 
+// Fix 16: one quarter's "three months ended" column, the same reader. NET's Q4 2025 column of its FY release.
+test('quarter read: the three-month column of the quarter, through the same reader and tie-out (NET Q4 2025)', () => {
+  const html = rowTable(NET_NI) + rowTable(NET_EPS);
+  const r = readNonGaapTables(html, { ...CTX, quarter: true, month: 12, periodLabel: 'quarter ended 2025-12-31' });
+  assert.strictEqual(r.netIncome.value, 106.783);
+  assert.strictEqual(r.eps.value, 0.28);
+  assert.ok(/Three Months Ended December 31/.test(r.eps.period), r.eps.period);
+  assert.strictEqual(r.eps.tieOut.reconciles, true);
+  assert.ok(/quarter ended 2025-12-31/.test(r.eps.label));
+  // The full-year read of the same exhibit is unchanged.
+  const fy = readNonGaapTables(html, CTX);
+  assert.strictEqual(fy.eps.value, 0.93);
+});
+
+test('quarter read: a release that also prints the prior quarter takes the column of the quarter\'s own month', () => {
+  const groups = ['Three Months Ended December 31,', 'Three Months Ended September 30,'];
+  const rows = [
+    ['GAAP net income', '$10', '$20', '$8', '$9'],
+    ['Stock-based compensation', '5', '6', '4', '3'],
+    ['Non-GAAP net income', '$15', '$26', '$12', '$12'],
+  ];
+  const html = rowTable(rows, { groups, years: ['2025', '2024', '2025', '2024'] });
+  assert.strictEqual(readNonGaapTables(html, { ...CTX, quarter: true, month: 12 }).netIncome.value, 0.015);
+  assert.strictEqual(readNonGaapTables(html, { ...CTX, quarter: true, month: 9 }).netIncome.value, 0.012);
+  // A nine-month or full-year column is never a quarter.
+  const nine = rowTable(rows, { groups: ['Nine Months Ended September 30,', 'Year Ended December 31,'] });
+  const r = readNonGaapTables(nine, { ...CTX, quarter: true, month: 9 });
+  assert.strictEqual(r.netIncome, null);
+  assert.ok(/no quarter \(three months\) column for 2025/.test(r.reasons.netIncome), r.reasons.netIncome);
+});
+
 test('reconcileCheck is the one shared check (server.js imports it from here)', () => {
   const src = require('fs').readFileSync(require('path').join(__dirname, '../../../server.js'), 'utf8');
   assert.ok(/require\('\.\/server\/services\/nonGaapTables'\)/.test(src));

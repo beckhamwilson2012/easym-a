@@ -22,6 +22,8 @@
 const { ltmFlow, valFullYearAt } = require('./ltmCalc');
 
 // Required: stock-based compensation, the cash-flow statement add-back (the brief's ShareBasedCompensation).
+// GAAP pre-tax income (Fix 16): the computed adjusted net income is (pre-tax income + add-backs) × (1 − t).
+const PRETAX = { key: 'pretax', label: 'GAAP pre-tax income', concepts: ['IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments'] };
 const SBC = { key: 'sbc', label: 'stock-based compensation', concepts: ['ShareBasedCompensation'] };
 
 // Added to net income only (it sits inside D&A, which EBITDA already adds back).
@@ -116,6 +118,7 @@ function amortizationItem(gaap, bd, period, P) {
 
 function periodComponents(read, base, period, amort) {
   const sbc = read(SBC);
+  const pretax = read(PRETAX);
   const amortization = amort.item;
   const found = [], notFound = [];
   for (const it of ONE_TIME) { const r = read(it); if (r) found.push(r); else notFound.push(it.label); }
@@ -129,6 +132,8 @@ function periodComponents(read, base, period, amort) {
     ebitda: val('ebitda'),                        // $M, GAAP operating income + D&A, as the deck computes it
     baseUnrounded: !!(base.precise && pr.netIncome != null),
     ebitdaReason: base.ebitda == null ? (base.ebitdaReason || 'no GAAP EBITDA (operating income + D&A) for the period') : null,
+    pretax: pretax || null,
+    pretaxReason: pretax ? null : `GAAP pre-tax income (${PRETAX.concepts[0]}) is not tagged for ${period.label}`,
     sbc: sbc || null,
     sbcReason: sbc ? null : `stock-based compensation (${SBC.concepts[0]}) is not tagged for ${period.label}`,
     amortization: amortization || null,
@@ -203,15 +208,11 @@ function adjustedComponents(facts, edgar, instances = []) {
   return out;
 }
 
-// The tax evidence for one company. vaSentence: fullValuationAllowance(10-K instance); disclosed: disclosedNonGaapTaxRate(...)
-// (fiscal year only). The calculation applies: disclosed rate, else full valuation allowance → 0, else the app's TAX_RATE.
-function taxEvidence({ vaSentence, tenK, disclosed, releaseAccession }) {
-  const va = vaSentence ? { sentence: vaSentence, accession: tenK?.accn || null, period: tenK?.reportDate || null } : null;
-  return {
-    fy: disclosed ? { basis: 'disclosed', rate: disclosed.rate, sentence: disclosed.sentence, accession: releaseAccession || null }
-      : va ? { basis: 'valuation allowance', ...va } : { basis: 'default' },
-    ltm: va ? { basis: 'valuation allowance', ...va } : { basis: 'default' },
-  };
+// The tax rate for one company's computed figure (Fix 16): the company's own non-GAAP tax rate when its earnings release states
+// one (the fiscal-year release for FY; the latest quarterly release for LTM, server.js), else the app's TAX_RATE. A full
+// valuation allowance is not a reason for no tax: companies under one still deduct a non-GAAP tax provision (HNGE, NET, DDOG).
+function taxEvidence({ disclosed, releaseAccession } = {}) {
+  return disclosed ? { basis: 'disclosed', rate: disclosed.rate, sentence: disclosed.sentence, accession: releaseAccession || null } : { basis: 'default' };
 }
 
-module.exports = { adjustedComponents, amortizationBreakdown, fullValuationAllowance, disclosedNonGaapTaxRate, taxEvidence, SBC, AMORTIZATION, ONE_TIME };
+module.exports = { adjustedComponents, amortizationBreakdown, fullValuationAllowance, disclosedNonGaapTaxRate, taxEvidence, PRETAX, SBC, AMORTIZATION, ONE_TIME };

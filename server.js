@@ -33,7 +33,7 @@ const { extractPage } = require('./server/services/extractorAgent');    // Phase
 const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
 const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
 const { readNonGaapTables, reconcileCheck, fullYearReconciliation } = require('./server/services/nonGaapTables'); // non-GAAP from the exhibit's own reconciliation tables (no model) + the one reconcile check
-const { adjustedComponents, fullValuationAllowance, disclosedNonGaapTaxRate, taxEvidence } = require('./server/services/adjustedComponents'); // filed inputs of a computed adjusted figure (Fix 13); the arithmetic is src/lib/computedAdjusted
+const { adjustedComponents, disclosedNonGaapTaxRate, taxEvidence } = require('./server/services/adjustedComponents'); // filed inputs of a computed adjusted figure (Fix 13); the arithmetic is src/lib/computedAdjusted
 const filingInstance = require('./server/services/filingInstance');
 const { classifySector, SECTORS: CLASSIFIER_SECTORS } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
@@ -2750,6 +2750,57 @@ async function filedLtmEps(ticker, cik, ns, lr, fyEps, fiscalYearEnd) {
   };
 }
 
+// Fix 16: the company's own LTM non-GAAP figures, from its last four quarterly earnings releases (8-K item 2.02, the
+// EX-99.1 reconciliation tables), each quarter's "three months ended" column read by the same reader as the fiscal year
+// (nonGaapTables.readNonGaapTables) and the four summed. A figure is reported LTM only when all four quarters report it and
+// tie; otherwise it is null with the reason, and the deck computes it instead (src/lib/reportingBasis.js). The four quarters
+// end at the deck's LTM date: the latest four 10-Q / 10-K period ends on or before it, each about a quarter apart.
+const MONTH_NAMES = ['january', 'february', 'march', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december'];
+async function reportedLtmNonGaap(ticker, cik, ltmAsOf) {
+  const out = { asOf: ltmAsOf || null, quarters: [], eps: null, netIncome: null, ebitda: null, reasons: { eps: null, ebitda: null }, taxRate: null };
+  const all = (why) => { out.reasons.eps = why; out.reasons.ebitda = why; return out; };
+  if (!ltmAsOf) return all('no trusted LTM date for this company');
+  try {
+    const sub = await filingInstance.readSubmissions(cik);
+    const r = (sub && sub.filings && sub.filings.recent) || {};
+    const ends = [...new Set((r.form || []).map((f, i) => (/^10-[QK]$/.test(f) ? r.reportDate[i] : null)).filter((d) => d && d <= ltmAsOf))].sort().reverse().slice(0, 4);
+    const gap = (a, b) => (Date.parse(a) - Date.parse(b)) / 86400000;
+    if (ends.length < 4 || ends[0] !== ltmAsOf || ends.slice(1).some((e, i) => { const g = gap(ends[i], e); return g < 80 || g > 100; })) {
+      return all(`the last four quarter ends to ${ltmAsOf} are not all filed (${ends.join(', ') || 'none'})`);
+    }
+    for (const end of ends.slice().reverse()) {
+      const year = Number(end.slice(0, 4));
+      const q = { end, accession: null, filed: null, eps: null, netIncome: null, ebitda: null, reasons: null, checked: [] };
+      const list = await fyReleaseCandidates(cik, end);
+      for (const c of list) {
+        const rel = await releaseHtml(ticker, c.acc);
+        if (!rel.html) { q.checked.push(`${c.acc}: ${rel.reason}`); continue; }
+        const t = readNonGaapTables(rel.html, { quarter: true, month: Number(end.slice(5, 7)), fiscalYear: year, fyEndYear: year, periodLabel: `quarter ended ${end}`, accession: c.acc, sourceUrl: rel.loc && rel.loc.sourceUrl });
+        if (!(t.eps || t.netIncome || t.ebitda)) { q.checked.push(`${c.acc}: ${t.reasons.eps || t.reasons.ebitda}`); continue; }
+        Object.assign(q, { accession: c.acc, filed: c.date, eps: t.eps, netIncome: t.netIncome, ebitda: t.ebitda, reasons: t.reasons, sourceUrl: rel.loc && rel.loc.sourceUrl });
+        if (end === ltmAsOf) { const d = disclosedNonGaapTaxRate(rel.html, year); if (d) out.taxRate = { basis: 'disclosed', rate: d.rate, sentence: d.sentence, accession: c.acc }; }
+        break;
+      }
+      out.quarters.push(q);
+    }
+    const missing = (k) => out.quarters.filter((q) => !q[k]).map((q) => `${q.end}${q.accession ? '' : ' (no earnings release with a reconciliation found)'}`);
+    const sum = (k) => Math.round(out.quarters.reduce((s, q) => s + q[k].value, 0) * 10000) / 10000;
+    const legs = (k) => out.quarters.map((q) => ({ end: q.end, value: q[k].value, accession: q.accession, rowLabel: q[k].rowLabel }));
+    const period = `LTM to ${ltmAsOf} (sum of four quarters)`;
+    const label = (k) => `non-GAAP, company reported, ${period}: ${out.quarters.map((q) => q.accession).join(', ')}`;
+    if (!missing('eps').length && !missing('netIncome').length) {
+      out.eps = { value: sum('eps'), unit: 'per share', period, label: label('eps'), rowLabel: out.quarters[3].eps.rowLabel, quarters: legs('eps') };
+      out.netIncome = { value: sum('netIncome'), unit: '$M', period, label: label('netIncome'), quarters: legs('netIncome') };
+    } else out.reasons.eps = `adjusted EPS and net income are not reported for every quarter: missing ${[...new Set([...missing('eps'), ...missing('netIncome')])].join(', ')}`;
+    if (!missing('ebitda').length) {
+      out.ebitda = { value: sum('ebitda'), unit: '$M', period, label: label('ebitda'), name: out.quarters[3].ebitda.name, rowLabel: out.quarters[3].ebitda.rowLabel, quarters: legs('ebitda') };
+    } else out.reasons.ebitda = `adjusted EBITDA is not reported for every quarter: missing ${missing('ebitda').join(', ')}`;
+    return out;
+  } catch (e) {
+    return all(`quarterly release read failed: ${e.message}`);
+  }
+}
+
 // Fix 13: the filed inputs behind a computed adjusted figure, FY and LTM, with the tax evidence (10-K tax note's full valuation
 // allowance). Never throws: an unreadable input is null with the reason, and the deck then shows "—".
 async function computedInputs(cik, edgar) {
@@ -2765,10 +2816,10 @@ async function computedInputs(cik, edgar) {
       [kXml, qXml] = await Promise.all([tenK ? filingInstance.readInstanceXml(cik, tenK) : null, tenQ ? filingInstance.readInstanceXml(cik, tenQ) : null]);
     } catch (e) { console.error(`[computedInputs] filing instance read failed for ${cik}: ${e.message}`); }
     const c = adjustedComponents(facts, edgar, [kXml, qXml]);
-    const vaSentence = fullValuationAllowance(kXml);
-    const tax = taxEvidence({ vaSentence, tenK });
-    if (c.fy) c.fy.tax = tax.fy;
-    if (c.ltm) c.ltm.tax = tax.ltm;
+    // Tax (Fix 16): the app's TAX_RATE until a release states the company's own non-GAAP rate (set by /api/nongaap: the
+    // fiscal-year release for FY, the latest quarterly release for LTM).
+    if (c.fy) c.fy.tax = taxEvidence();
+    if (c.ltm) c.ltm.tax = taxEvidence();
     return c;
   } catch (e) {
     return { fy: null, ltm: null, reasons: { fy: `computed inputs unavailable: ${e.message}`, ltm: `computed inputs unavailable: ${e.message}` } };
@@ -2783,6 +2834,7 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     reasons: { eps: null, netIncome: null, dilutedShares: null, ebitda: null },
     status: null, note: null, cached: false,
     computed: null,   // Fix 13: filed inputs of a computed adjusted figure ({ fy, ltm, reasons }); used only where nothing is reported
+    ltm: null,        // Fix 16: company-reported LTM figures, the sum of the last four quarterly releases ({ eps, netIncome, ebitda, quarters, reasons })
   };
   const allReasons = (why) => { for (const k of Object.keys(out.reasons)) out.reasons[k] = why; };
 
@@ -2803,6 +2855,9 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     // Fix 13: the filed inputs of a computed adjusted net income / EBITDA, for any period the release has no reconciliation for.
     // The deck uses them only on Non-GAAP and only where no company-reported figure exists (src/lib/reportingBasis.js).
     out.computed = await computedInputs(cik, edgar);
+    // Fix 16: the company's own LTM figures (four quarterly releases, summed); the LTM computed figure is only the fallback.
+    out.ltm = await reportedLtmNonGaap(ticker, cik, edgar && edgar.ltm && edgar.ltm.trusted ? edgar.ltm.asOf : null);
+    if (out.computed && out.computed.ltm) out.computed.ltm.tax = out.ltm.taxRate || { basis: 'default' };
     if (!fy || !fyEndYear) { out.status = 'no_8k'; out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; allReasons(out.note); return res.json(out); }
 
     // 2–3) The fiscal-year-END earnings release and its exhibit (fyRelease — shared with the LTM EPS Q4 read).

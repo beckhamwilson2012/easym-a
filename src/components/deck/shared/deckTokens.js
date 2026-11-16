@@ -195,8 +195,10 @@ export function dealNonGaap(deal, side) {
     epsNote:       plan.eps.note,                  // why the deal's EPS stayed GAAP, else null
     epsComputed:   !!(eps && eps.computed),        // Fix 13: computed by EasyM&A (src/lib/computedAdjusted.js), never company reported
     epsResult:     eps && eps.computed ? eps.result : null,
+    epsLtmReported: !!(eps && eps.ltmReported),    // Fix 16: company reported, the sum of the last four quarterly releases
+    epsQuarters:   eps && eps.ltmReported ? eps.quarters : null,
     // fyValue / fiscalYear (Fix 14 Task 5): the filed fiscal-year figure for its own P&L column, also on an LTM card.
-    ebitda:        e.nonGaap ? { value: e.value, fyValue: e.fyValue ?? null, fiscalYear: e.fiscalYear ?? null, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null, ...(e.computed ? { computed: true, result: e.result } : {}) } : null,
+    ebitda:        e.nonGaap ? { value: e.value, fyValue: e.fyValue ?? null, fiscalYear: e.fiscalYear ?? null, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null, ...(e.computed ? { computed: true, result: e.result } : {}), ...(e.ltmReported ? { ltmReported: true, quarters: e.quarters } : {}) } : null,
     accession:     (eps && eps.accession) || (e.nonGaap ? e.accession : null) || null,
   };
 }

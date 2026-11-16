@@ -118,11 +118,11 @@ test('disclosed non-GAAP tax rate: HNGE’s FY2025 rate is read; an outlook or a
   assert.strictEqual(disclosedNonGaapTaxRate(null, 2025), null);
 });
 
-test('tax evidence: disclosed (FY only) > full valuation allowance > default', () => {
+test('tax evidence (Fix 16): the disclosed rate, else the default; a full valuation allowance is not a basis', () => {
   const t = taxEvidence({ vaSentence: 'full valuation allowance', tenK: { accn: 'k' }, disclosed: { rate: 0.2, sentence: 's' }, releaseAccession: 'r' });
-  assert.strictEqual(t.fy.basis, 'disclosed');
-  assert.strictEqual(t.ltm.basis, 'valuation allowance');
-  assert.strictEqual(taxEvidence({}).fy.basis, 'default');
+  assert.deepStrictEqual(t, { basis: 'disclosed', rate: 0.2, sentence: 's', accession: 'r' });
+  assert.deepStrictEqual(taxEvidence({ vaSentence: 'full valuation allowance', tenK: { accn: 'k' } }), { basis: 'default' });
+  assert.deepStrictEqual(taxEvidence(), { basis: 'default' });
 });
 
 for (const [name, fn] of tests) {

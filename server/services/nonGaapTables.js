@@ -134,6 +134,22 @@ const PART_YEAR_RE = /\b(three|six|nine|quarter|fourth\s+quarter|1[2-7]\s+weeks|
 const PERIOD_RE = /\b(three|six|nine|twelve|12)\s+months|quarters?\s+ended|years?\s+ended|fiscal\s+year|full[\s-]year|fourth\s+quarter|weeks\s+ended/i;
 const yearIn = (t) => { const m = String(t).match(/\b(19|20)\d{2}\b/g); return m ? Number(m[m.length - 1]) : null; };
 const isFullYearText = (t) => FULL_YEAR_RE.test(t) && !PART_YEAR_RE.test(t);
+// The column a reading wants (Fix 16): `fy` is the calendar year of a full fiscal-year column (a number, as before), or
+// { year, quarter: true } for one quarter's "three months ended" column of that year (the quarterly releases behind a
+// company-reported LTM figure). Only the column choice differs; every table, tie-out and matcher is the same reader.
+const QUARTER_RE = /\b(three\s+months|quarters?\s+ended|fourth\s+quarter|1[2-4]\s+weeks|q[1-4])\b/i;
+const NOT_QUARTER_RE = /\b(six|nine|twelve|12)\s+months|\byears?\s+ended|fiscal\s+year|full[\s-]year/i;
+const isQuarter = (fy) => !!(fy && typeof fy === 'object' && fy.quarter);
+const wantYear = (fy) => (isQuarter(fy) ? fy.year : fy);
+// A quarter's column must name the quarter's own end month when it names a month: a release that also prints the prior
+// quarter ("Three Months Ended December 31 / September 30") has two three-month columns in one year.
+const MONTH_RE = /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2}\b/i;
+const MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+const monthOk = (fy, text) => { const m = String(text).match(MONTH_RE); return !fy.month || !m || MONTHS.indexOf(m[1].toLowerCase()) + 1 === fy.month; };
+const periodMatches = (fy, text) => !!text && (isQuarter(fy) ? QUARTER_RE.test(text) && !NOT_QUARTER_RE.test(text) && monthOk(fy, text) : isFullYearText(text));
+const colMatches = (fy) => (c) => c.year === wantYear(fy) && !!c.period && periodMatches(fy, c.period);
+const noColumn = (fy) => (isQuarter(fy) ? `no quarter (three months) column for ${fy.year}` : `no full-year column for FY${fy}`);
+const notSection = (fy) => (isQuarter(fy) ? `not the ${fy.year} quarter (three months) section` : `not the FY${fy} full-year section`);
 
 // Row-oriented column model for a table: the year row (≥2 cells carrying a year) gives the columns in
 // order; the period row above it (if any) groups them. Returns [{year, period}] or null.
@@ -208,8 +224,8 @@ function rowBlocks(table, fy, { isTotal, isAnchor, isSubtotal = () => false, uni
     const cols = rowColumns(table.rows, a);
     const base = { table: table.index, layout: 'row', totalLabel: sr.label, anchorLabel: rows[a].label };
     if (!cols) { out.push({ ...base, error: `table ${table.index}: no period header row` }); return; }
-    const ci = cols.findIndex(c => c.year === fy && c.period && isFullYearText(c.period));
-    if (ci < 0) { out.push({ ...base, error: `no full-year column for FY${fy} (table ${table.index} columns: ${cols.map(c => `${c.period || '?'} ${c.year || ''}`.trim()).join(' / ')})` }); return; }
+    const ci = cols.findIndex(colMatches(fy));
+    if (ci < 0) { out.push({ ...base, error: `${noColumn(fy)} (table ${table.index} columns: ${cols.map(c => `${c.period || '?'} ${c.year || ''}`.trim()).join(' / ')})` }); return; }
     const pick = (row) => (row.values.length === cols.length ? row.values[ci] : null);
     const g = pick(rows[a]); const tot = pick(sr);
     if (!g || g.value == null || !tot || tot.value == null) { out.push({ ...base, error: `table ${table.index}: GAAP or non-GAAP row does not align with its ${cols.length} period columns` }); return; }
@@ -251,7 +267,7 @@ function transposedBlocks(table, fy, { isMeasure, unit }) {
     }
     const base = { table: table.index, layout: 'transposed', anchorLabel: sr.label, totalLabel: rows[t].label };
     if (headRow < 0 || !periodText) { out.push({ ...base, error: `table ${table.index}: no period heading or measure row above "${sr.label}"` }); return; }
-    if (!(yearIn(periodText) === fy && isFullYearText(periodText))) { out.push({ ...base, period: periodText, error: `not the FY${fy} full-year section (${periodText})` }); return; }
+    if (!(yearIn(periodText) === wantYear(fy) && periodMatches(fy, periodText))) { out.push({ ...base, period: periodText, error: `${notSection(fy)} (${periodText})` }); return; }
     const measures = table.rows[headRow].map(c => c.text).filter(x => !PERIOD_RE.test(x));
     if (measures.length !== sr.values.length) { out.push({ ...base, error: `table ${table.index}: ${measures.length} measure columns vs ${sr.values.length} GAAP values` }); return; }
     const mi = measures.findIndex(isMeasure);
@@ -331,7 +347,7 @@ function shareCandidates(tables, fy) {
       if (!M.shares(ctx)) return;
       const cols = rowColumns(table.rows, r);
       if (!cols || sr.values.length !== cols.length) return;
-      const ci = cols.findIndex(c => c.year === fy && c.period && isFullYearText(c.period));
+      const ci = cols.findIndex(colMatches(fy));
       if (ci < 0 || sr.values[ci].value == null || !(sr.values[ci].value > 0)) return;
       out.push({ table: table.index, label: ctx, native: sr.values[ci].value, unit: table.unit, millions: toMillions(sr.values[ci].value, table.unit), nonGaapLabeled: /non-?gaap/i.test(ctx) });
     });
@@ -351,9 +367,10 @@ const inherited = (c) => (c.tableUnit == null && c.inheritedUnit ? { nativeUnit:
  *   { value, unit, period, fiscalYear, rowLabel, name, accession, label, tieOut, table }
  */
 function readNonGaapTables(html, ctx) {
-  const fy = ctx.fyEndYear;
+  // ctx.quarter (Fix 16): read the "three months ended" column of ctx.fyEndYear instead of the full-year column.
+  const fy = ctx.quarter ? { year: ctx.fyEndYear, quarter: true, month: ctx.month || null } : ctx.fyEndYear;
   const tables = parseTables(html);
-  const label = `non-GAAP, company reported, FY${ctx.fiscalYear}, ${ctx.accession}`;
+  const label = `non-GAAP, company reported, ${ctx.quarter ? (ctx.periodLabel || `quarter ${ctx.fyEndYear}`) : `FY${ctx.fiscalYear}`}, ${ctx.accession}`;
   const reasons = { eps: null, netIncome: null, dilutedShares: null, ebitda: null };
   const res = { eps: null, netIncome: null, dilutedShares: null, ebitda: null, reasons, tablesRead: tables.length };
 
@@ -401,7 +418,7 @@ function readNonGaapTables(html, ctx) {
     const t = tables[res.netIncome.table];
     const rows = t.rows.map(splitRow);
     const cols = rowColumns(t.rows, rows.findIndex(r => r.label === res.netIncome.tieOut.gaap.label));
-    const ci = cols ? cols.findIndex(c => c.year === fy && c.period && isFullYearText(c.period)) : -1;
+    const ci = cols ? cols.findIndex(colMatches(fy)) : -1;
     const perShare = rows.filter(r => M.epsTotal(r.label) || (/per\s+share/i.test(r.label) && /diluted/i.test(r.label) && /non-?gaap|after/i.test(r.label) && !/before/i.test(r.label)));
     const hits = [];
     for (const r of perShare) {

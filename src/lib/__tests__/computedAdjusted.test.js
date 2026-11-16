@@ -11,6 +11,7 @@ import { BASIS_FY, BASIS_LTM } from '../companyBasis';
 const TDOC_FY = {
   period: { kind: 'fy', label: 'FY2025', end: '2025-12-31', source: '10-K full year' },
   netIncome: -200, operatingIncome: -263, ebitda: 101, ebitdaReason: null,
+  pretax: { key: 'pretax', label: 'GAAP pre-tax income', value: -235.53, concept: 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest' },
   sbc: { key: 'sbc', label: 'stock-based compensation', value: 80.414, concept: 'ShareBasedCompensation' }, sbcReason: null,
   amortization: { key: 'amortization', label: 'amortization of acquired intangibles', value: 183.147, concept: 'AmortizationOfIntangibleAssets (acquired-intangibles member)' },
   oneTime: [
@@ -21,13 +22,13 @@ const TDOC_FY = {
   oneTimeNotFound: ['intangible asset impairment', 'long-lived asset impairment', 'integration costs', 'litigation settlements'],
   tax: { basis: 'default' },
 };
-const VA = { basis: 'valuation allowance', sentence: 'a full valuation allowance has been recorded', accession: '0001628280-26-015637' };
 const OMDA_LTM = {
   period: { kind: 'ltm', label: 'LTM to 2026-09-30', end: '2026-09-30' },
   netIncome: 14, operatingIncome: 7, ebitda: 13, ebitdaReason: null,
+  pretax: { key: 'pretax', label: 'GAAP pre-tax income', value: 14, concept: 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest' },
   sbc: { key: 'sbc', label: 'stock-based compensation', value: 19.436, concept: 'ShareBasedCompensation' },
   amortization: null, amortizationReason: 'not tagged',
-  oneTime: [], oneTimeNotFound: ['restructuring', 'goodwill impairment'], tax: VA,
+  oneTime: [], oneTimeNotFound: ['restructuring', 'goodwill impairment'], tax: { basis: 'default' },
 };
 
 describe('computeAdjusted — the one calculation', () => {
@@ -35,12 +36,13 @@ describe('computeAdjusted — the one calculation', () => {
     expect(TAX_RATE).toBe(DEAL_TAX_RATE);
   });
 
-  test('TDOC FY2025 by hand: GAAP + SBC + acquired amortization + one-time − 21% tax', () => {
+  test('TDOC FY2025 by hand: (GAAP pre-tax + SBC + acquired amortization + one-time) × (1 − 21%)', () => {
     const r = computeAdjusted(TDOC_FY, { dilutedShares: 176 });
     const addBacks = 80.414 + 183.147 + 18.785 + 71.763 + 9.01;   // 363.119
     expect(r.taxRate).toBe(0.21);
-    expect(r.taxEffect).toBeCloseTo(addBacks * 0.21, 6);
-    expect(r.netIncome).toBeCloseTo(-200 + addBacks * 0.79, 6);   // 86.864
+    expect(r.adjustedPretax).toBeCloseTo(-235.53 + addBacks, 6);   // 127.589
+    expect(r.taxEffect).toBeCloseTo((-235.53 + addBacks) * 0.21, 6);
+    expect(r.netIncome).toBeCloseTo((-235.53 + addBacks) * 0.79, 6);   // 100.795
     expect(r.ebitda).toBeCloseTo(101 + 80.414 + 18.785 + 71.763 + 9.01, 6);   // amortization is already in D&A
     expect(r.eps).toBeCloseTo(r.netIncome / 176, 9);
   });
@@ -54,10 +56,11 @@ describe('computeAdjusted — the one calculation', () => {
     expect(r.epsReason).toMatch(/stock-based compensation/);
   });
 
-  test('missing GAAP net income → null with the reason; EBITDA still computes on its own inputs', () => {
-    const r = computeAdjusted({ ...TDOC_FY, netIncome: null }, { dilutedShares: 176 });
+  test('missing GAAP pre-tax income → null with the reason (never GAAP net income in its place); EBITDA still computes', () => {
+    const r = computeAdjusted({ ...TDOC_FY, pretax: null, pretaxReason: 'GAAP pre-tax income (IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest) is not tagged for FY2025' }, { dilutedShares: 176 });
     expect(r.netIncome).toBeNull();
-    expect(r.netIncomeReason).toMatch(/GAAP net income is not available/);
+    expect(r.eps).toBeNull();
+    expect(r.netIncomeReason).toMatch(/GAAP pre-tax income .* is not tagged for FY2025/);
     expect(r.ebitda).not.toBeNull();
   });
 
@@ -69,7 +72,7 @@ describe('computeAdjusted — the one calculation', () => {
 
   test('an untagged one-time item is not added and is listed as not found', () => {
     const r = computeAdjusted(OMDA_LTM, { dilutedShares: 60 });
-    expect(r.netIncome).toBeCloseTo(14 + 19.436, 9);   // only SBC: amortization and every one-time item untagged
+    expect(r.netIncome).toBeCloseTo((14 + 19.436) * 0.79, 9);   // only SBC: amortization and every one-time item untagged
     expect(r.ebitda).toBeCloseTo(13 + 19.436, 9);
     expect(r.addBacks.map((x) => x.key)).toEqual(['sbc']);
     expect(r.notFound).toEqual(['amortization of acquired intangibles', 'restructuring', 'goodwill impairment']);
@@ -82,22 +85,22 @@ describe('computeAdjusted — the one calculation', () => {
     expect(r.notFound).toEqual(['amortization of acquired intangibles', 'restructuring']);
   });
 
-  test('full valuation allowance → no tax effect, said in the label', () => {
-    const r = computeAdjusted(OMDA_LTM);
-    expect(r.taxRate).toBe(0);
-    expect(r.taxEffect).toBe(0);
-    expect(r.taxBasis).toBe('valuation allowance');
-    expect(r.label).toBe('Computed by EasyM&A: GAAP + stock comp + amortization + one-time items, tax at 0% (full valuation allowance)');
+  test('a full valuation allowance is not "no tax": the app rate applies when no company rate is stated (Fix 16)', () => {
+    const r = computeAdjusted({ ...OMDA_LTM, tax: { basis: 'valuation allowance', rate: 0 } });
+    expect(r.taxRate).toBe(TAX_RATE);
+    expect(r.taxBasis).toBe('default');
+    expect(r.label).toBe('Computed by EasyM&A: (GAAP pre-tax income + stock comp + amortization + one-time items) × (1 − 21%, app’s tax rate)');
   });
 
   test('the company’s own disclosed non-GAAP rate wins over the default', () => {
     const r = computeAdjusted({ ...TDOC_FY, tax: { basis: 'disclosed', rate: 0.2, accession: 'x' } });
     expect(r.taxRate).toBe(0.2);
-    expect(r.label).toBe('Computed by EasyM&A: GAAP + stock comp + amortization + one-time items, tax at 20% (company’s own non-GAAP rate)');
+    expect(r.netIncome).toBeCloseTo((-235.53 + 363.119) * 0.8, 6);
+    expect(r.label).toBe('Computed by EasyM&A: (GAAP pre-tax income + stock comp + amortization + one-time items) × (1 − 20%, company’s own non-GAAP rate)');
   });
 
   test('label text on the default rate', () => {
-    expect(computedLabel(TDOC_FY)).toBe('Computed by EasyM&A: GAAP + stock comp + amortization + one-time items, tax at 21%');
+    expect(computedLabel(TDOC_FY)).toBe('Computed by EasyM&A: (GAAP pre-tax income + stock comp + amortization + one-time items) × (1 − 21%, app’s tax rate)');
     expect(taxBasisOf({}).rate).toBe(TAX_RATE);
   });
 
@@ -146,23 +149,23 @@ describe('precedence: the company’s own reconciliation always wins', () => {
     expect(plan.eps.nonGaap).toBe(true);
     expect(plan.eps.B.computed).toBe(true);
     expect(plan.eps.B.dilutedShares).toBe(181);
-    expect(plan.eps.B.value).toBeCloseTo((-200 + 363.119 * 0.79) / 181, 9);
-    expect(epsSourceText(plan)).toBe('HNGE: company reported; TDOC: Computed by EasyM&A: GAAP + stock comp + amortization + one-time items, tax at 21%');
+    expect(plan.eps.B.value).toBeCloseTo(((-235.53 + 363.119) * 0.79) / 181, 9);
+    expect(epsSourceText(plan)).toBe('HNGE: company reported; TDOC: Computed by EasyM&A: (GAAP pre-tax income + stock comp + amortization + one-time items) × (1 − 21%, app’s tax rate)');
     const out = applyReportingBasis(inputsFY, plan);
     expect(out.companyANetIncome).toBe(161.348);          // reported side as before
     expect(out.companyADilutedShares).toBe(61.471);
-    expect(out.companyBNetIncome).toBeCloseTo(-200 + 363.119 * 0.79, 9);
+    expect(out.companyBNetIncome).toBeCloseTo((-235.53 + 363.119) * 0.79, 9);
     expect(out.companyBDilutedShares).toBe(181);          // computed side keeps the Year 1 count
   });
 
   test('LTM card: a fiscal-year reported figure does not cover the LTM period, so LTM is computed', () => {
-    const ngA = reported(2.62, 161.348, 61.471, { computed: { fy: null, ltm: { ...OMDA_LTM, netIncome: 168, ebitda: 156 } } });
+    const ngA = reported(2.62, 161.348, 61.471, { computed: { fy: null, ltm: { ...OMDA_LTM, netIncome: 168, pretax: { ...OMDA_LTM.pretax, value: 168 }, ebitda: 156 } } });
     const ngB = none({ fy: null, ltm: OMDA_LTM });
     const inputs = { ...inputsFY, companyABasis: BASIS_LTM, companyBBasis: BASIS_LTM, companyADilutedShares: 85.073, companyBDilutedShares: 60 };
     const plan = resolveReportingBasis({ selected: NON_GAAP, ngA, ngB, inputs, tickerA: 'HNGE', tickerB: 'OMDA' });
     expect(plan.eps.nonGaap).toBe(true);
     expect(plan.eps.A.computed).toBe(true);
-    expect(plan.eps.A.value).toBeCloseTo((168 + 19.436) / 85.073, 9);
+    expect(plan.eps.A.value).toBeCloseTo((168 + 19.436) * 0.79 / 85.073, 9);
     expect(plan.ebitda.A.computed).toBe(true);
     expect(plan.ebitda.B.computed).toBe(true);
     expect(plan.ebitda.combinable).toBe(true);
@@ -207,10 +210,71 @@ describe('precedence: the company’s own reconciliation always wins', () => {
 describe('footnote text', () => {
   test('negative GAAP base prints in parentheses; EBITDA text has no tax effect and no amortization', () => {
     const r = computeAdjusted(TDOC_FY, { dilutedShares: 176 });
-    expect(computedComponentsText(r)).toMatch(/^FY2025: GAAP net income \(\$200\.0M\); stock-based compensation \$80\.4M \(ShareBasedCompensation\); amortization of acquired intangibles \$183\.1M/);
-    expect(computedComponentsText(r)).toMatch(/tax effect \(\$76\.3M\): the app’s 21% tax rate/);
+    expect(computedComponentsText(r)).toMatch(/^FY2025: GAAP pre-tax income \(\$235\.5M\); stock-based compensation \$80\.4M \(ShareBasedCompensation\); amortization of acquired intangibles \$183\.1M/);
+    expect(computedComponentsText(r)).toMatch(/adjusted pre-tax income \$127\.6M; tax \(\$26\.8M\) at 21%: the app’s 21% tax rate/);
     const e = computedComponentsText(r, { ebitda: true });
     expect(e).toMatch(/^FY2025: GAAP EBITDA \$101\.0M; stock-based compensation/);
-    expect(e).not.toMatch(/amortization|tax effect/);
+    expect(e).not.toMatch(/amortization|tax|pre-tax/);
+  });
+});
+
+// ── Fix 16: company-reported LTM, the sum of the last four quarterly releases, wins over a computed LTM figure ──
+const q4 = (vals) => ['2025-12-31', '2026-03-31', '2026-06-30', '2026-09-30'].map((end, i) => ({ end, value: vals[i], accession: `q${i}` }));
+const ltmPayload = ({ eps, ni, ebitda, reasons = {} }) => ({
+  asOf: '2026-09-30',
+  eps: eps ? { value: eps.reduce((s, v) => s + v, 0), period: 'LTM to 2026-09-30 (sum of four quarters)', label: 'non-GAAP, company reported, LTM to 2026-09-30 (sum of four quarters): q0, q1, q2, q3', rowLabel: 'Non-GAAP EPS', quarters: q4(eps) } : null,
+  netIncome: ni ? { value: ni.reduce((s, v) => s + v, 0), quarters: q4(ni) } : null,
+  ebitda: ebitda ? { value: ebitda.reduce((s, v) => s + v, 0), name: 'Adjusted EBITDA', rowLabel: 'Adjusted EBITDA', label: 'non-GAAP, company reported, LTM', quarters: q4(ebitda) } : null,
+  reasons: { eps: eps ? null : (reasons.eps || 'adjusted EPS and net income are not reported for every quarter: missing 2026-03-31'), ebitda: ebitda ? null : (reasons.ebitda || 'adjusted EBITDA is not reported for every quarter: missing 2025-12-31, 2026-03-31, 2026-06-30, 2026-09-30') },
+});
+describe('Fix 16: reported LTM first (four quarterly releases), computed only when not', () => {
+  const inputsLTM = { ...inputsFY, companyABasis: BASIS_LTM, companyBBasis: BASIS_LTM, companyADilutedShares: 85, companyBDilutedShares: 65 };
+  // HNGE: quarterly EPS 0.49 + 0.45 + 0.59 + 0.71 (8-K EX-99.1, filed); OMDA: quarterly Adjusted EBITDA 8.478 + 0.938 + 10.786 + 12.379.
+  const ngA = { ...reported(2.62, 161.348, 61.471, { computed: { fy: null, ltm: { ...OMDA_LTM, netIncome: 168, pretax: { ...OMDA_LTM.pretax, value: 168 }, ebitda: 156 } } }), ltm: ltmPayload({ eps: [0.49, 0.45, 0.59, 0.71], ni: [41.127, 36.872, 49.147, 61.257] }) };
+  const ngB = { ...none({ fy: null, ltm: OMDA_LTM }), figures: { eps: null, netIncome: null, dilutedShares: null, ebitda: { value: 6.482, name: 'Adjusted EBITDA', rowLabel: 'Adjusted EBITDA', label: 'non-GAAP, company reported, FY2025' } }, reasons: { eps: 'no adjusted (non-GAAP) diluted EPS row', ebitda: null }, ltm: ltmPayload({ ebitda: [8.478, 0.938, 10.786, 12.379] }) };
+
+  test('HNGE LTM EPS is the sum of its four reported quarters, labeled company reported; Year 1 keeps its share count', () => {
+    const plan = resolveReportingBasis({ selected: NON_GAAP, ngA, ngB, inputs: inputsLTM, tickerA: 'HNGE', tickerB: 'OMDA' });
+    expect(plan.eps.nonGaap).toBe(true);
+    expect(plan.eps.A.computed).toBeFalsy();
+    expect(plan.eps.A.ltmReported).toBe(true);
+    expect(Math.round(plan.eps.A.value * 100) / 100).toBe(2.24);
+    expect(plan.eps.A.netIncome).toBeCloseTo(188.403, 9);
+    expect(plan.eps.B.computed).toBe(true);   // OMDA reports no adjusted EPS in any quarter
+    expect(epsSourceText(plan)).toMatch(/^HNGE: company reported, sum of four quarterly releases; OMDA: Computed by EasyM&A/);
+    const out = applyReportingBasis(inputsLTM, plan);
+    expect(out.companyAEPS).toBeCloseTo(2.24, 9);
+    expect(out.companyANetIncome).toBeCloseTo(188.403, 9);
+    expect(out.companyADilutedShares).toBe(85);   // not replaced: the four-quarter sum has no single filed count
+  });
+
+  test('OMDA LTM Adjusted EBITDA is the sum of its four reported quarters; the FY figure is kept for its own column', () => {
+    const plan = resolveReportingBasis({ selected: NON_GAAP, ngA, ngB, inputs: inputsLTM, tickerA: 'HNGE', tickerB: 'OMDA' });
+    expect(plan.ebitda.B.ltmReported).toBe(true);
+    expect(plan.ebitda.B.computed).toBeFalsy();
+    expect(plan.ebitda.B.value).toBeCloseTo(32.581, 9);
+    expect(plan.ebitda.B.fyValue).toBe(6.482);
+    expect(plan.ebitda.A.computed).toBe(true);   // HNGE reports no adjusted EBITDA
+    expect(plan.ebitda.combinable).toBe(true);
+    expect(ebitdaRow(plan, 'B').label).toBe('Adjusted EBITDA (non-GAAP, LTM, sum of four quarters)');
+    expect(applyReportingBasis(inputsLTM, plan).companyBEBITDA).toBeCloseTo(32.581, 9);
+  });
+
+  test('a quarter missing → no reported LTM; the computed figure is used and says so', () => {
+    const a3 = { ...ngA, ltm: ltmPayload({}) };
+    const plan = resolveReportingBasis({ selected: NON_GAAP, ngA: a3, ngB, inputs: inputsLTM, tickerA: 'HNGE', tickerB: 'OMDA' });
+    expect(plan.eps.A.computed).toBe(true);
+    expect(plan.eps.A.value).toBeCloseTo((168 + 19.436) * 0.79 / 85, 9);
+  });
+
+  test('a fiscal-year card never uses the LTM sum', () => {
+    const plan = resolveReportingBasis({ selected: NON_GAAP, ngA, ngB: reported(1, 100, 100), inputs: inputsFY, tickerA: 'HNGE', tickerB: 'X' });
+    expect(plan.eps.A.value).toBe(2.62);
+    expect(plan.eps.A.ltmReported).toBeFalsy();
+  });
+
+  test('the toggle offers Non-GAAP on a reported LTM figure alone', () => {
+    const only = { ...none(null), ltm: ltmPayload({ ebitda: [1, 2, 3, 4] }) };
+    expect(nonGaapAvailability({ ngA: only, ngB: none(null) }).available).toBe(true);
   });
 });

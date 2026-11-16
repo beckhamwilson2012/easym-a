@@ -67,12 +67,31 @@ export function reportedNonGaap(payload) {
   };
 }
 
+// Fix 16: one company's company-reported LTM figures, the sum of its last four quarterly releases (/api/nongaap `ltm`).
+// A figure is here only when all four quarters report it; otherwise null with the reason, and the LTM figure is computed.
+// The LTM EPS is the sum of the four quarters' EPS; the deal's Year 1 keeps the diluted count it already uses.
+export const LTM_REPORTED = 'company reported, sum of four quarterly releases';
+export function reportedLtmNonGaap(payload) {
+  const l = payload && payload.ltm;
+  if (!l) return { eps: null, ebitda: null };
+  const eps = l.eps && fin(l.eps.value) != null && l.netIncome && fin(l.netIncome.value) != null
+    ? { value: fin(l.eps.value), netIncome: fin(l.netIncome.value), dilutedShares: null, ltmReported: true, quarters: l.eps.quarters || [], niQuarters: l.netIncome.quarters || [],
+        rowLabel: l.eps.rowLabel || null, label: l.eps.label || null, period: l.eps.period || null, accession: null, fiscalYear: null, fiscalYearEnd: null, checkMethod: null }
+    : null;
+  const ebitda = l.ebitda && fin(l.ebitda.value) != null
+    ? { value: fin(l.ebitda.value), name: l.ebitda.name || l.ebitda.rowLabel || 'Adjusted EBITDA', rowLabel: l.ebitda.rowLabel || null, label: l.ebitda.label || null, period: l.ebitda.period || null, quarters: l.ebitda.quarters || [] }
+    : null;
+  return { eps, ebitda, epsReason: eps ? null : (l.reasons && l.reasons.eps) || null, ebitdaReason: ebitda ? null : (l.reasons && l.reasons.ebitda) || null };
+}
+
 // What the toggle shows. Non-GAAP is offered when at least one company has at least one company-reported figure.
 export function nonGaapAvailability({ ngA, ngB, loadingA, loadingB, tickerA, tickerB, privateA, privateB }) {
   if (loadingA || loadingB) return { state: 'loading', available: false, reason: 'checking each company’s fiscal-year earnings release' };
   const a = privateA ? { eps: null, ebitda: null } : reportedNonGaap(ngA);
   const b = privateB ? { eps: null, ebitda: null } : reportedNonGaap(ngB);
   if (a.eps || a.ebitda || b.eps || b.ebitda) return { state: 'ready', available: true, reason: null };
+  const la = privateA ? {} : reportedLtmNonGaap(ngA), lb = privateB ? {} : reportedLtmNonGaap(ngB);
+  if (la.eps || la.ebitda || lb.eps || lb.ebitda) return { state: 'ready', available: true, reason: null };
   if ((!privateA && anyComputed(ngA)) || (!privateB && anyComputed(ngB))) return { state: 'ready', available: true, reason: null };
   const who = [tickerA || 'the acquirer', tickerB || 'the target'].join(' nor ');
   return { state: 'ready', available: false, reason: `neither ${who} reports an adjusted EPS or EBITDA that ties to GAAP in its fiscal-year earnings release, and neither can be computed from its filings` };
@@ -114,16 +133,19 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
 
   // Computed figures (Fix 13) for each card's period, on the diluted count Year 1 already uses.
   const cA = computedFor(ngA, ltmA, inputs?.companyADilutedShares), cB = computedFor(ngB, ltmB, inputs?.companyBDilutedShares);
+  // Company-reported LTM figures (Fix 16): on an LTM card they win over a computed figure.
+  const lA = ltmA ? reportedLtmNonGaap(ngA) : {}, lB = ltmB ? reportedLtmNonGaap(ngB) : {};
 
   // EPS: both or neither. Each side is its company-reported figure (fiscal-year card only), else its computed figure.
-  const epsSide = (x, ltm, c, t) => {
+  const epsSide = (x, ltm, c, t, l) => {
     if (x.eps && !ltm) return { eps: x.eps, why: null };
+    if (ltm && l.eps) return { eps: l.eps, why: null };
     if (c.r && c.r.eps != null) return { eps: computedEps(c.r), why: null };
     const head = x.eps ? `${t} has no company-reported EPS for the LTM period (${FY_ONLY})`
       : NOT_REPORTED.test(x.epsReason || '') ? `${t} doesn’t report adjusted EPS` : `${t}’s adjusted EPS doesn’t tie to GAAP in its release`;
     return { eps: null, why: `${head}, and its computed figure is “—”: ${(c.r && c.r.epsReason) || c.reason}` };
   };
-  const eA = epsSide(a, ltmA, cA, tA), eB = epsSide(b, ltmB, cB, tB);
+  const eA = epsSide(a, ltmA, cA, tA, lA), eB = epsSide(b, ltmB, cB, tB, lB);
   const epsNonGaap = !!(eA.eps && eB.eps);
   let epsNote = null;
   if (!epsNonGaap && !(ngA && ngA.computed) && !(ngB && ngB.computed)) {
@@ -137,14 +159,15 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
   // EBITDA: each company on its own. Company reported (fiscal-year card), else computed, else GAAP computed.
   // fyValue (Fix 14 Task 5): the filed fiscal-year figure, for its own fiscal-year column on the P&L even when the card is
   // on LTM.
-  const side = (x, ltm, c) => {
+  const side = (x, ltm, c, l) => {
     const fy = x.ebitda ? { fyValue: x.ebitda.value, period: x.ebitda.period || null } : {};
+    if (ltm && l.ebitda) return { nonGaap: true, ltmReported: true, value: l.ebitda.value, fyValue: x.ebitda ? x.ebitda.value : null, period: l.ebitda.period, name: l.ebitda.name, rowLabel: l.ebitda.rowLabel, label: l.ebitda.label, accession: null, fiscalYear: x.ebitda ? x.ebitda.fiscalYear : null, note: null, quarters: l.ebitda.quarters };
     if (x.ebitda && !ltm) return { nonGaap: true, value: x.ebitda.value, ...fy, name: x.ebitda.name, rowLabel: x.ebitda.rowLabel, label: x.ebitda.label, accession: x.ebitda.accession, fiscalYear: x.ebitda.fiscalYear, note: null };
-    if (c.r && c.r.ebitda != null) return { nonGaap: true, computed: true, value: c.r.ebitda, name: COMPUTED_EBITDA_NAME, rowLabel: null, label: c.r.label, accession: null, fiscalYear: x.ebitda ? x.ebitda.fiscalYear : null, note: null, result: c.r };
+    if (c.r && c.r.ebitda != null) return { nonGaap: true, computed: true, value: c.r.ebitda, name: COMPUTED_EBITDA_NAME, rowLabel: null, label: c.r.ebitdaLabel || c.r.label, accession: null, fiscalYear: x.ebitda ? x.ebitda.fiscalYear : null, note: null, result: c.r };
     if (x.ebitda) return { nonGaap: true, value: null, ...fy, name: x.ebitda.name, rowLabel: x.ebitda.rowLabel, label: x.ebitda.label, accession: x.ebitda.accession, fiscalYear: x.ebitda.fiscalYear, note: FY_ONLY };
     return { nonGaap: false, value: null, reason: x.ebitdaReason, computedReason: (c.r && c.r.ebitdaReason) || c.reason };
   };
-  const A = side(a, ltmA, cA), B = side(b, ltmB, cB);
+  const A = side(a, ltmA, cA, lA), B = side(b, ltmB, cB, lB);
   const combinable = A.nonGaap === B.nonGaap;
   const noChange = (!epsNonGaap && !A.nonGaap && !B.nonGaap) ? noChangeLine(a, b, tA, tB, epsNote) : null;
   return {
@@ -196,13 +219,14 @@ export function applyReportingBasis(inputs, plan) {
     out.companyANetIncome = A.netIncome;
     out.companyAEPS = A.value;
     // A computed EPS is on the Year 1 diluted count already in the inputs (Fix 13), so the count and its period stay as they are.
-    if (!A.computed) {
+    // So is a company-reported LTM EPS (Fix 16): the sum of four quarters' EPS has no single filed share count.
+    if (!A.computed && !A.ltmReported) {
       out.companyADilutedShares = A.dilutedShares;
       out.companyADilutedSharesPeriod = { basis: 'non-GAAP diluted', end: A.fiscalYearEnd ?? null };
     }
     out.companyBNetIncome = B.netIncome;
     out.companyBEPS = B.value;
-    if (!B.computed) out.companyBDilutedShares = B.dilutedShares;
+    if (!B.computed && !B.ltmReported) out.companyBDilutedShares = B.dilutedShares;
   }
   out.companyAEpsBasis = NON_GAAP;   // Year 1 is non-GAAP or "—"; the forward years are consensus (non-GAAP)
   out.companyBEpsBasis = NON_GAAP;
@@ -237,12 +261,12 @@ export function epsSourceText(plan, tickers = {}) {
   return ['A', 'B'].map((P) => {
     const e = plan.eps[P];
     const t = tickers[P] || plan.tickers?.[P] || (P === 'A' ? 'acquirer' : 'target');
-    return e.computed ? `${t}: ${e.label}` : `${t}: company reported`;
+    return e.computed ? `${t}: ${e.label}` : e.ltmReported ? `${t}: ${LTM_REPORTED}` : `${t}: company reported`;
   }).join('; ');
 }
 
 // The source of one company's non-GAAP EBITDA on a Non-GAAP deck: "company reported" or the computed label.
-export const ebitdaSourceText = (e) => (e && e.nonGaap ? (e.computed ? e.label : 'company reported') : null);
+export const ebitdaSourceText = (e) => (e && e.nonGaap ? (e.computed ? e.label : e.ltmReported ? LTM_REPORTED : 'company reported') : null);
 
 // One company's EBITDA row label and footnote on a Non-GAAP deal, or null on GAAP.
 export function ebitdaRow(plan, P) {
@@ -250,6 +274,7 @@ export function ebitdaRow(plan, P) {
   const e = plan.ebitda[P];
   if (!e.nonGaap) return { label: 'EBITDA (computed, GAAP inputs)', nonGaap: false, value: undefined, note: null };
   if (e.computed) return { label: `${e.name} (non-GAAP, computed by EasyM&A)`, nonGaap: true, computed: true, value: e.value, note: e.label };
+  if (e.ltmReported) return { label: `${e.name} (non-GAAP, LTM, sum of four quarters)`, nonGaap: true, value: e.value, note: e.label };
   return { label: `${e.name} (non-GAAP)`, nonGaap: true, value: e.value, note: e.note || e.label };
 }
 
