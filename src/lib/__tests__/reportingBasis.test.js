@@ -137,8 +137,11 @@ describe('reportingBasis — the one GAAP | Non-GAAP switch', () => {
     // all stock, no synergies: new shares = 156 × 350 ÷ 200 = 273; PF NI = 342.882 + 746.582; PF shares = 370.274 + 273
     const pf = (342.882 + 746.582) / (370.274 + 273);
     expect(r.proFormaEPS).toBe(pf.toFixed(2));
-    expect(r.companyAEPS).toBe('0.93');                            // standalone = the filed adjusted EPS
-    expect(parseFloat(r.epsChangePct)).toBeCloseTo((pf / 0.93 - 1) * 100, 1);
+    // Fix 17 Task 1: standalone = non-GAAP net income ÷ the same share count the pro forma uses (342.882 ÷ 370.274 =
+    // 0.92602), not the filed $0.93; the filed figure is a reference line on the slide.
+    const sa = 342.882 / 370.274;
+    expect(r.companyAEPS).toBe(sa.toFixed(2));
+    expect(parseFloat(r.epsChangePct)).toBeCloseTo((pf / sa - 1) * 100, 1);
     expect(x.companyBDilutedShares).toBe(363.471);                 // forward consensus rows pair with the filed non-GAAP count
   });
 });

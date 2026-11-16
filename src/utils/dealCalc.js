@@ -79,15 +79,28 @@ export function acquirerSharePrice(inputs) {
 // (the filed per-share figure) is canonical and primary. Fall back to net income ÷ weighted-average
 // DILUTED shares only when reported EPS is genuinely unavailable — never net income ÷ the
 // point-in-time cover-page share count, which biased EPS high (the bug this fixes).
+// Fix 17 Task 1: the standalone EPS that accretion, the verdict, breakeven and the sensitivity "breakeven EPS" compare
+// against is the acquirer's net income (on the deck's basis) ÷ the SAME acquirer share count the pro forma divides by
+// (acquirerDilutedShares, used by proFormaBreakdown and calculate()). Before and after are then one method. The
+// company's own reported EPS (e.g. HNGE's $2.24, the sum of four quarterly releases) is a reference line on the slide,
+// not the comparison base: it was $2.24 against pro forma NI ÷ (85.0M + new shares), while 188.403 ÷ 85.0 = $2.2165.
+// A forward year (forwardYearInputs) sets NI = consensus EPS × this same count, so its standalone EPS is unchanged.
 export function acquirerStandaloneEPS(inputs) {
-  const reported = parseFloat(inputs.companyAEPS);
-  if (Number.isFinite(reported) && reported !== 0) return reported;
   // An absent net income is an absent EPS (null → "—"), never 0: on a Non-GAAP deal with no company-reported Year 1 EPS
   // both legs are null on purpose (Fix 10 Task 2), and `|| 0` here read that as a $0.00 standalone EPS (pattern B).
-  const ni     = parseFloat(inputs.companyANetIncome);
+  if (inputs.companyANetIncome == null || inputs.companyANetIncome === '') return null;
+  const ni = parseFloat(inputs.companyANetIncome);
   if (!Number.isFinite(ni)) return null;
-  const shares = parseFloat(inputs.companyADilutedShares) || parseFloat(inputs.companyAShares) || 0;
+  const shares = acquirerDilutedShares(inputs).shares;
   return shares > 0 ? ni / shares : null;
+}
+
+// The acquirer's company-reported EPS for the reference line beside "Before" (Fix 17 Task 1): the filed figure as loaded,
+// never computed here, or null when there is none.
+export function acquirerReportedEPS(inputs) {
+  if (inputs.companyAEPS == null || inputs.companyAEPS === '') return null;
+  const v = parseFloat(inputs.companyAEPS);
+  return Number.isFinite(v) && v !== 0 ? v : null;
 }
 
 // Effective acquirer DILUTED share count for the EPS basis. Prefer the real weighted-average diluted
@@ -255,7 +268,7 @@ export function calculate(inputs) {
   const acqPrice         = acquirerSharePrice(inputs);
   const newSharesIssued  = acqPrice > 0 ? stockPortion / acqPrice : null;
   // EPS math uses the weighted-average DILUTED share base (falls back to companyAShares if absent),
-  // so pro-forma EPS sits on the same basis as the reported-diluted standalone EPS. Ownership and
+  // so pro-forma EPS sits on the same basis as the standalone EPS (NI ÷ this count). Ownership and
   // market cap read companyAShares (point-in-time) directly elsewhere and are unaffected by this.
   const acqDiluted       = acquirerDilutedShares(inputs);
   const acqBaseShares    = acqDiluted.shares;

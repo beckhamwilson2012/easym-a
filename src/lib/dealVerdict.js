@@ -1,4 +1,4 @@
-import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration } from '../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerReportedEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration } from '../utils/dealCalc';
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
 import { NON_GAAP, computedSides } from './reportingBasis';
 import { selectForwardYears, slotName, CONSENSUS_BASIS } from './forwardYears';
@@ -196,6 +196,30 @@ export function headlineEps(verdict, deal) {
     standaloneEPS: results.basesDiffer ? null : sa, proFormaEPS: results.basesDiffer ? null : pf, pct: results.basesDiffer ? null : pct,
     verdict: pct == null ? null : accretionVerdict(pct), reason,
   };
+}
+
+// Fix 17 Task 1: the company-reported EPS shown as a labeled reference beside "Before" (Year 1 only; a forecast year's
+// standalone EPS is the consensus figure itself). "Before" is net income ÷ the pro forma's share count; this line is the
+// figure the company published, e.g. "Reported: $2.24 (sum of four quarterly releases)". null when the company reported
+// none (a computed non-GAAP EPS is not reported) or when the headline is not Year 1.
+export function reportedEpsReference(h, deal) {
+  if (!h || h.year !== 'Year 1' || h.standaloneEPS == null) return null;
+  const inputs = deal?._inputs || {};
+  const v = acquirerReportedEPS(inputs);
+  if (v == null) return null;
+  let src;
+  if (inputs.reportingBasis === NON_GAAP) {
+    const plan = deal?.reportingBasis;
+    const A = plan && plan.eps && plan.eps.nonGaap ? plan.eps.A : null;
+    if (!A || A.computed) return null;
+    src = A.ltmReported ? 'sum of four quarterly releases'
+      : `${A.fiscalYearEnd ? `FY${String(A.fiscalYearEnd).slice(0, 4)} ` : ''}earnings release`;
+  } else {
+    src = inputs.companyABasis === 'ltm'
+      ? (inputs.companyAEpsLabel || 'diluted, filed')   // ltmEps's own label: "sum of 4 filed quarters: quarter to … $0.37 + 9 months to … $1.58"
+      : `diluted, ${inputs.companyAPeriodLabel || 'fiscal year'} 10-K`;
+  }
+  return { value: v, text: `Reported: ${fmtEps(v)} (${src})` };
 }
 
 // The breakeven line plus which years the verdict and breakeven used, and why any earlier year did not compute.

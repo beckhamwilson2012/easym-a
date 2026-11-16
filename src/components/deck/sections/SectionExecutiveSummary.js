@@ -184,7 +184,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     ? `Earnings: Year-1 accretion / (dilution) is not shown — ${y1Reason}.`
     : R.accretionMeaningful === false
     ? `Earnings: Year-1 accretion / (dilution) is not meaningful — the acquirer's or pro-forma EPS base is non-positive, so a percentage change carries no signal.`
-    : `Earnings: Year-1 pro forma EPS moves ${pcS(accPct)} against the acquirer's standalone reported-diluted EPS.`);
+    : `Earnings: Year-1 pro forma EPS moves ${pcS(accPct)} against the acquirer's standalone EPS (its net income ÷ the same diluted share count the pro forma uses).`);
 
   // ── Certainty of close — three-state, every item ──────────────────────────
   const checklist = [

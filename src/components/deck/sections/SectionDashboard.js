@@ -25,7 +25,7 @@ import { multipleNumber } from '../../../lib/multiples';
 import { isNonGaapDeal, FY_ONLY, computedSides, epsSourceText, combinedEbitdaShort } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
-import { verdictFlags, headlineEps } from '../../../lib/dealVerdict';
+import { verdictFlags, headlineEps, reportedEpsReference } from '../../../lib/dealVerdict';
 import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
   explainPTBV, explainCombinedCET1,
@@ -80,6 +80,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // One EPS story (Fix 14 Task 3): the tile and EPS Analysis show the verdict's own year (headlineEps), each labeled with
   // its year and basis. When Year 1 is "—" that is the forecast year the verdict used, never a bare "n/m".
   const hEps        = headlineEps(verdict, deal);
+  const epsRef      = results.basesDiffer ? null : reportedEpsReference(hEps, deal);   // Fix 17 Task 1: the company's own figure, a labeled reference
   const accOK       = hEps.pct != null;
   const accUp       = hEps.verdict === 'accretive';
   const accColor    = !accOK ? '#6B7280' : accUp ? '#16A34A' : hEps.verdict === 'neutral' ? '#374151' : '#DC2626'; // dark green / red
@@ -364,6 +365,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Before</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold' }}>{results.basesDiffer ? '—' : fmtPerShare(hEps.standaloneEPS)}</div>
+                {epsRef && <div data-testid="eps-reported-ref" style={{ fontSize: 10, color: '#6B7280', maxWidth: 170, lineHeight: 1.3 }}>{epsRef.text}</div>}
               </div>
               <div style={{ fontSize: 24, color: '#6B7280', alignSelf: 'center' }}>→</div>
               <div style={{ textAlign: 'center' }}>

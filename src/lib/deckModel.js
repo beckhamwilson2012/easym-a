@@ -137,7 +137,7 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
   const accretion = {
     pct:           num(deal.epsAccretion),       // results.epsChangePct
     isAccretive:   !!deal.isAccretive,
-    standaloneEPS: num(results?.companyAEPS),     // reported diluted EPS (NI ÷ diluted shares as fallback)
+    standaloneEPS: num(results?.companyAEPS),     // net income ÷ the pro forma's acquirer share count (Fix 17 Task 1)
     proFormaEPS:   num(deal.proFormaEPS),
     // A Non-GAAP deal names its EPS basis (src/lib/reportingBasis.js); a GAAP deal keeps the label it had.
     basis: !isNonGaapDeal(deal) ? 'Reported diluted EPS (net income ÷ diluted shares as fallback)'
