@@ -154,7 +154,7 @@ export function SectionSources({ target, acquirer, deal, pageNum, exhibitLabel }
       label: 'Company & Descriptive Data',
       bullets: [
         'Company descriptions, CEO, headquarters, employee counts, IPO date, sector / industry classification, beta, average trading volume, and company logos are from the Financial Modeling Prep company profile.',
-        'Segment, geography, and customer-mix figures, where shown, are illustrative and are not company-disclosed breakdowns.',
+        'Target Profile revenue by product/segment and by geography: the company’s own latest 10-K XBRL split (revenue members on one axis, e.g. product or service, business segment or geographic area, for the fiscal year), shown only when the members sum to the filed total revenue within 0.5%; otherwise Financial Modeling Prep’s split, shown only when it sums to filed revenue within 2%; otherwise “not reported” or the mismatch. Customer-mix figures, where shown, are illustrative and are not company-disclosed breakdowns.',
         'The pro-forma forward columns use FMP CONSENSUS (NON-GAAP) estimates (sell-side analysts via Financial Modeling Prep) for forward revenue and EPS. On a GAAP deck the forward EPS years are “—”: consensus is non-GAAP; no GAAP forecast. Each forward year is the first fiscal year that begins after Year 1 ends, so none overlaps Year 1. These are analyst forecasts, not the app’s own model. The accretion, synergy and combination MATH applied on top of those inputs IS the app’s model. Multi-year synergies are entered assumptions, not guidance; forward operating expense is shown as "—" rather than estimated.',
       ],
     },

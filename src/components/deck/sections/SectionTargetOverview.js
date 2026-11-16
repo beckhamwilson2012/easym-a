@@ -82,6 +82,15 @@ function NotReported({ label }) {
   );
 }
 
+// Fix 17 Task 9: which split a box shows, the same rule for every company. The company's own 10-K XBRL split first
+// (/api/segments-sec: members that sum to the filed total within 0.5%); FMP's only when the 10-K has none and FMP's sums
+// to filed revenue within 2% (segmentMismatch); otherwise today's message.
+export function chooseSplit(sec, fmp, actuals) {
+  if (sec && sec.ok && Array.isArray(sec.segments) && sec.segments.length) return { seg: { ...sec, ok: true }, mismatch: null, source: 'sec' };
+  const mismatch = segmentMismatch(fmp, actuals);
+  return { seg: mismatch ? null : fmp, mismatch, source: mismatch ? null : (fmp?.ok ? 'fmp' : null) };
+}
+
 function SegBox({ title, seg, mismatch }) {
   return (
     <div style={{ flex: 1, border: `1px solid ${GRAY_BORDER}`, borderRadius: 6, overflow: 'hidden' }}>
@@ -92,9 +101,12 @@ function SegBox({ title, seg, mismatch }) {
       </div>
       {mismatch ? (
         <div data-testid="segment-mismatch" style={{ padding: '16px 12px', textAlign: 'center', fontSize: 9.5, color: '#92400E', fontStyle: 'italic' }}>
-          Segment figures from FMP don't sum to reported revenue (${Math.round(mismatch.sum).toLocaleString('en-US')}M vs ${Math.round(mismatch.revenue).toLocaleString('en-US')}M); not shown.
+          {title.includes('GEO') ? 'Geographic' : 'Segment'} figures from FMP don't sum to reported revenue (${Math.round(mismatch.sum).toLocaleString('en-US')}M vs ${Math.round(mismatch.revenue).toLocaleString('en-US')}M); not shown.
         </div>
-      ) : seg?.ok && seg.segments?.length ? <SegmentBars rows={seg.segments} /> : <NotReported label={title.includes('GEO') ? 'Geographic split' : 'Segment split'} />}
+      ) : seg?.ok && seg.segments?.length ? <>
+        <SegmentBars rows={seg.segments} />
+        {seg.source === 'sec' && <div data-testid="segment-source" style={{ padding: '0 12px 7px', fontSize: 8.5, color: '#6B7280', fontStyle: 'italic' }}>{seg.label}</div>}
+      </> : <NotReported label={title.includes('GEO') ? 'Geographic split' : 'Segment split'} />}
     </div>
   );
 }
@@ -117,6 +129,7 @@ const pct = (v, dp = 1) => (v == null ? '—' : `${(v * 100).toFixed(dp)}%`);
 export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibitLabel }) {
   const tk = target?.ticker;
   const [prod, setProd] = useState(null);
+  const [sec, setSec]   = useState(null);   // Fix 17 Task 9: the 10-K XBRL split
   const [geo, setGeo]   = useState(null);
   const [km, setKm]     = useState(null);
   const [pnl, setPnl]   = useState(null);
@@ -129,9 +142,10 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
       j(`/api/segments-product/${tk}`), j(`/api/segments-geo/${tk}`), j(`/api/key-metrics/${tk}`),
       j(`/api/pnl/${encodeURIComponent(tk)}`), j(`/api/profile/${encodeURIComponent(tk)}`),
       j(`/quote?symbol=${encodeURIComponent(tk)}`), j(`/api/price/${encodeURIComponent(tk)}`),
-    ]).then(([p, g, k, pn, pf, q, pr]) => {
+      j(`/api/segments-sec/${encodeURIComponent(tk)}`),
+    ]).then(([p, g, k, pn, pf, q, pr, sc]) => {
       if (cancel) return;
-      setProd(p); setGeo(g); setKm(k);
+      setProd(p); setGeo(g); setKm(k); setSec(sc);
       setPnl(pn && pn.ok && Array.isArray(pn.columns) ? pn : null);
       setFmp(pf && pf.ok ? pf : null);
       // Fix 14 Task 5: the same inputs Comparables' fetchOne gives buildCompany (/quote + the live price).
@@ -196,8 +210,8 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
 
         {/* Segment mix — product (left) + geographic (right), real FMP or "not reported" */}
         <div style={{ display: 'flex', gap: 14, marginBottom: 12 }}>
-          <SegBox title="REVENUE BY PRODUCT / SEGMENT" seg={prod} mismatch={segmentMismatch(prod, actuals)} />
-          <SegBox title="REVENUE BY GEOGRAPHY" seg={geo} />
+          <SegBox title="REVENUE BY PRODUCT / SEGMENT" {...chooseSplit(sec?.product, prod, actuals)} />
+          <SegBox title="REVENUE BY GEOGRAPHY" {...chooseSplit(sec?.geo, geo, actuals)} />
         </div>
 
         <div style={{ display: 'flex', gap: 14, alignItems: 'stretch' }}>
@@ -243,7 +257,7 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
       <BasisNote only={target} style={{ padding: '6px 20px 0' }} />
       <div style={{ padding: '8px 20px 16px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>
         {isGrossNm(target) ? <>{grossNmNote(target)} </> : null}
-        Segment &amp; geographic revenue are the target's <strong>latest reported fiscal year</strong> (Financial Modeling Prep); foreign filers reporting in another currency are converted to USD at the fiscal-year average rate. Geographic tiers are shown as reported and may include overlapping regions/countries — figures are magnitudes, not a normalized 100% split. Operating metrics are <strong>trailing-twelve-month</strong> ratios (return / yield){bsAsOf ? <> — return metrics use trailing-twelve-month earnings over balance-sheet figures <strong>as of {bsAsOf}</strong></> : null}; {onLtm ? 'margins are LTM; revenue CAGR is from reported annual filings.' : 'margins & revenue CAGR are from reported annual filings.'} Where a filer does not report a segmentation, the block reads "not reported" — never an estimate.
+        Segment &amp; geographic revenue are the target's <strong>latest reported fiscal year</strong>: the company's own 10-K XBRL split where its members sum to filed revenue within 0.5% (labeled "SEC 10-K"), otherwise Financial Modeling Prep where its figures sum to filed revenue within 2%; foreign filers reporting in another currency are converted to USD at the fiscal-year average rate. Geographic tiers are shown as reported and may include overlapping regions/countries — figures are magnitudes, not a normalized 100% split. Operating metrics are <strong>trailing-twelve-month</strong> ratios (return / yield){bsAsOf ? <> — return metrics use trailing-twelve-month earnings over balance-sheet figures <strong>as of {bsAsOf}</strong></> : null}; {onLtm ? 'margins are LTM; revenue CAGR is from reported annual filings.' : 'margins & revenue CAGR are from reported annual filings.'} Where a filer does not report a segmentation, the block reads "not reported" — never an estimate.
       </div>
     </PageFrame>
   );

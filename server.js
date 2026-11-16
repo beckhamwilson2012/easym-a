@@ -1412,6 +1412,19 @@ async function fmpSegmentLatest(ticker, path) {
   return { ok: true, year: String(latest.fiscalYear || String(latest.date || '').slice(0, 4)), reportedCurrency: ccy, converted: ccy !== 'USD', segments };
 }
 
+// Fix 17 Task 9: the company's own revenue split from its latest 10-K XBRL (server/services/revenueSplit.js). The Target
+// Profile shows it first; FMP's split only when this has none and FMP's sums to filed revenue within 2%.
+const { revenueSplit } = require('./server/services/revenueSplit');
+app.get('/api/segments-sec/:ticker', async (req, res) => {
+  const ticker = req.params.ticker.toUpperCase();
+  try {
+    await loadTickers();
+    const cik = cikBySymbol[ticker] || null;
+    if (!cik) return res.json({ ticker, product: { ok: false, reason: 'not an SEC filer' }, geo: { ok: false, reason: 'not an SEC filer' } });
+    res.json({ ticker, ...(await revenueSplit(cik)) });
+  } catch (e) { res.json({ ticker, product: { ok: false, reason: e.message }, geo: { ok: false, reason: e.message } }); }
+});
+
 app.get('/api/segments-product/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
   try { res.json({ ok: false, ticker, ...(await fmpSegmentLatest(ticker, 'revenue-product-segmentation')) }); }
