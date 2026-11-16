@@ -40,11 +40,13 @@ export function shortPeriod(period) {
   return period || 'period unknown';
 }
 
-const infoButton = (section, open, setOpen, testId) => (
+// The input page's ⓘ toggle and the box it opens (closed by default; each caller keeps its own open state).
+// Also used by SuggestedPremiumBox and ReportingBasisToggle.
+export const infoButton = (section, open, setOpen, testId) => (
   <button type="button" data-testid={testId || `${section}-info-toggle`} onClick={() => setOpen(v => !v)} aria-expanded={open}
     style={{ background: 'none', border: 'none', color: '#0070D2', fontSize: 12, cursor: 'pointer', padding: 0, marginLeft: 4 }}>ⓘ</button>
 );
-const infoBox = (section, children) => (
+export const infoBox = (section, children) => (
   <div data-testid={`${section}-info`} style={{ ...small, color: '#374151', background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 6, padding: '6px 10px', marginBottom: 8 }}>{children}</div>
 );
 

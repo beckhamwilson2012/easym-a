@@ -1,9 +1,13 @@
+import { useState } from 'react';
 import { GAAP, NON_GAAP } from '../../lib/reportingBasis';
+import { infoButton, infoBox } from './SynergyInputs';
 
 // "GAAP | Non-GAAP" on the input page: the one reporting-basis switch (src/lib/reportingBasis.js decides what
 // each choice means for each company). Non-GAAP is disabled, with the reason, when neither company reports a
 // non-GAAP figure that ties to GAAP in its fiscal-year earnings release. While the lookups run, it waits.
+// The basis notes sit behind the input page's ⓘ toggle (closed by default), with a count beside the switch.
 export function ReportingBasisToggle({ value, availability, plan, onChange }) {
+  const [notesOpen, setNotesOpen] = useState(false);
   const loading = availability.state === 'loading';
   const seg = (v, label, disabled, title) => {
     const on = value === v && !loading;
@@ -37,13 +41,22 @@ export function ReportingBasisToggle({ value, availability, plan, onChange }) {
           {seg(NON_GAAP, 'Non-GAAP', nonGaapDisabled, nonGaapDisabled && !loading ? availability.reason : undefined)}
         </div>
         {loading && <span style={{ fontSize: 11, color: '#9CA3AF', fontStyle: 'italic' }}>Checking the earnings releases…</span>}
+        {notes.length > 0 && (
+          <span data-testid="basis-notes-count" style={{ fontSize: 12, color: '#92400E' }}>
+            ⚠ {notes.length} {notes.length === 1 ? 'note' : 'notes'} on this basis{infoButton('basis-notes', notesOpen, setNotesOpen)}
+          </span>
+        )}
       </div>
       {!loading && !availability.available && (
         <div data-testid="basis-toggle-reason" style={{ fontSize: 11, color: '#9CA3AF', fontStyle: 'italic', marginTop: 3 }}>Non-GAAP not available: {availability.reason}.</div>
       )}
-      {notes.length > 0 && (
-        <div data-testid="basis-toggle-notes" style={{ fontSize: 11, color: '#6B7280', marginTop: 4, lineHeight: 1.45 }}>
-          {notes.map((n, i) => <div key={i}>{n}</div>)}
+      {notes.length > 0 && notesOpen && (
+        <div style={{ marginTop: 6 }}>
+          {infoBox('basis-notes', (
+            <div data-testid="basis-toggle-notes">
+              {notes.map((n, i) => <div key={i}>{n}</div>)}
+            </div>
+          ))}
         </div>
       )}
     </div>

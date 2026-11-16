@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { DEFAULT_PREMIUM_PCT, offerFromPremium } from '../../lib/offerPremium';
 import { fmtPerShare } from '../deck/shared/deckTokens';
+import { infoButton, infoBox } from './SynergyInputs';
 
 function Option({ label, offer, detail, onUse, testId }) {
   return (
@@ -19,23 +21,30 @@ function Option({ label, offer, detail, onUse, testId }) {
   );
 }
 
-// Two starting points for the premium. The default is plain arithmetic on the spot price. The second is solved
-// from this deal's own model, and shows "—" with the reason when it can't be.
+// Two starting points for the premium. The default is plain arithmetic on the spot price and stays visible. The
+// second is solved from this deal's own model, and shows "—" with the reason when it can't be; it sits behind the
+// input page's ⓘ toggle, closed by default.
 export function SuggestedPremiumBox({ spot, solve, onUse }) {
   const defaultOffer = offerFromPremium(spot, DEFAULT_PREMIUM_PCT);
   const solved = solve.premium != null;
+  const [accretiveOpen, setAccretiveOpen] = useState(false);
   return (
     <div style={{ background: '#EFF6FF', border: '1px solid #BFDBFE', borderRadius: 6, padding: '5px 10px', marginBottom: 10 }}>
       <Option testId="premium-default" label={`Default · ${DEFAULT_PREMIUM_PCT}%`} offer={defaultOffer}
         detail={defaultOffer == null ? 'no live price' : null}
         onUse={defaultOffer != null ? () => onUse(DEFAULT_PREMIUM_PCT) : null} />
       <div style={{ borderTop: '1px solid #BFDBFE' }} />
-      <Option testId="premium-accretive" label={`Highest premium still accretive in Year 2 · ${solved ? `${solve.premium}%` : '—'}`}
-        offer={solved ? solve.offer : null}
-        detail={solved
-          ? (solve.atLimit ? 'Still accretive at the slider\'s 100% limit, so the true limit may be higher.' : 'Solved from this deal\'s model, in whole percents.')
-          : solve.reason}
-        onUse={solved ? () => onUse(solve.premium) : null} />
+      <div data-testid="premium-accretive-short" style={{ fontSize: 12, fontWeight: 700, color: '#0F2244', padding: '5px 0' }}>
+        Highest premium still accretive{infoButton('premium-accretive', accretiveOpen, setAccretiveOpen)}
+      </div>
+      {accretiveOpen && infoBox('premium-accretive', (
+        <Option testId="premium-accretive" label={`Highest premium still accretive in Year 2 · ${solved ? `${solve.premium}%` : '—'}`}
+          offer={solved ? solve.offer : null}
+          detail={solved
+            ? (solve.atLimit ? 'Still accretive at the slider\'s 100% limit, so the true limit may be higher.' : 'Solved from this deal\'s model, in whole percents.')
+            : solve.reason}
+          onUse={solved ? () => onUse(solve.premium) : null} />
+      ))}
     </div>
   );
 }
