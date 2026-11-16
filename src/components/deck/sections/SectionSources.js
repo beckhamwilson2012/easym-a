@@ -261,7 +261,7 @@ function nonGaapSourceBullets(plan, acquirer, target) {
     out.push(`Reporting basis selected: Non-GAAP. Year 1 EPS, pro forma EPS and accretion are “—”, never GAAP: ${plan.eps.note}. The forward years use FMP consensus (non-GAAP); the verdict uses only the years that computed.`);
   }
   const eb = (e, t) => (e.nonGaap && e.computed
-    ? `${t}: Adjusted EBITDA — ${e.label}: GAAP operating income + D&A + stock comp + one-time items (${computedComponentsText(e.result, { ebitda: true })})`
+    ? `${t}: Adjusted EBITDA — ${e.label} (${computedComponentsText(e.result, { ebitda: true })})`   // the label names the formula (Fix 16)
     : e.nonGaap
     ? (e.value == null ? `${t}: ${e.name} — (non-GAAP available for fiscal year only)` : `${t}: ${e.name} (${e.label}), tied to GAAP net income in the filed reconciliation table`)
     : `${t}: computed (operating income + D&A; ${t} reports no adjusted EBITDA)`);
