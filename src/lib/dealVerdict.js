@@ -1,6 +1,6 @@
 import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration } from '../utils/dealCalc';
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
-import { NON_GAAP } from './reportingBasis';
+import { NON_GAAP, computedSides } from './reportingBasis';
 import { selectForwardYears, slotName, CONSENSUS_BASIS } from './forwardYears';
 
 // The deal verdict ladder. Deal Summary and Executive Summary both render this one result. It uses the first test
@@ -75,7 +75,9 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   const results = deal?._results || {};
   // A Non-GAAP deal names the EPS basis in the tag (a GAAP deal's tags are unchanged).
   const ngDeal = inputs.reportingBasis === NON_GAAP;
-  const epsTag = (t) => (ngDeal ? `${t} (${inputs.companyAEpsBasis === NON_GAAP ? 'non-GAAP EPS' : 'GAAP EPS'})` : t);
+  // Fix 13: a Year 1 EPS computed by EasyM&A (not company reported) is named in the tag; [] leaves the tag as it was.
+  const ngComputed = ngDeal && deal?.reportingBasis ? computedSides(deal.reportingBasis).map((P) => deal.reportingBasis.tickers?.[P] || (P === 'A' ? A : T)) : [];
+  const epsTag = (t) => (ngDeal ? `${t} (${inputs.companyAEpsBasis === NON_GAAP ? `non-GAAP EPS${ngComputed.length ? `; ${ngComputed.join(' and ')} computed by EasyM&A` : ''}` : 'GAAP EPS'})` : t);
   const offer = num(deal?.offerPrice) || num(inputs.offerPricePerShare) || 0;   // slide 8's own offer read
   const synY = [deal?.synergiesY1, deal?.synergiesY2, deal?.synergiesY3];
   const missing = [];

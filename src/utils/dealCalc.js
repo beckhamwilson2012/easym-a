@@ -3,6 +3,7 @@ import { synergySchedule } from '../lib/synergies';
 import { basesDiffer, combination } from '../lib/companyBasis';
 import { ebitdaBasesDiffer } from '../lib/reportingBasis';
 import { multipleOf } from '../lib/multiples';
+import { TAX_RATE } from '../lib/taxRate';
 
 // ── Sensitivity table constants ───────────────────────────────────────────────
 export const PRICE_MULTS  = [0.8, 0.9, 1.0, 1.1, 1.2];
@@ -11,8 +12,9 @@ export const SYN_MULTS    = [0.5, 0.75, 1.0, 1.25, 1.5];
 export const SYN_LABELS   = ['50%', '75%', '100%', '125%', '150%'];
 
 // ── Transaction assumptions (documented; not fetched data) ────────────────────
-// TAX_RATE applies to synergies (taxed) and to financing interest (tax-shielded).
-export const TAX_RATE           = 0.21;  // US federal statutory rate
+// TAX_RATE applies to synergies (taxed) and to financing interest (tax-shielded). Defined once in src/lib/taxRate.js
+// (dependency-free, so the computed non-GAAP calculation can read the same constant without an import cycle).
+export { TAX_RATE };
 // Incremental acquisition-financing cost. A cash-financed deal carries a real interest drag: the
 // cash portion is funded by new debt at the acquirer's marginal cost. We charge this on the FULL
 // cash portion, after tax — i.e. recurring pro-forma EPS = (A.NI + B.NI + after-tax synergies

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { GAAP, NON_GAAP } from '../../lib/reportingBasis';
+import { GAAP, NON_GAAP, computedSides, epsSourceText } from '../../lib/reportingBasis';
 import { infoButton, infoBox } from './SynergyInputs';
 
 // "GAAP | Non-GAAP" on the input page: the one reporting-basis switch (src/lib/reportingBasis.js decides what
@@ -25,10 +25,13 @@ export function ReportingBasisToggle({ value, availability, plan, onChange }) {
   if (!loading && value === NON_GAAP && plan && plan.selected === NON_GAAP && plan.noChange) {
     notes.push(plan.noChange);   // the toggle still switches; this says why no figure moves
   } else if (!loading && value === NON_GAAP && plan && plan.selected === NON_GAAP) {
-    notes.push(plan.eps.nonGaap ? 'EPS, pro forma EPS and accretion: non-GAAP (company reported, both companies).' : `EPS, pro forma EPS and accretion: ${plan.eps.note}.`);
+    notes.push(!plan.eps.nonGaap ? `EPS, pro forma EPS and accretion: ${plan.eps.note}.`
+      : computedSides(plan).length ? `EPS, pro forma EPS and accretion: non-GAAP — ${epsSourceText(plan)}.`
+        : 'EPS, pro forma EPS and accretion: non-GAAP (company reported, both companies).');
     ['A', 'B'].forEach((P) => {
       const e = plan.ebitda[P];
-      if (e.nonGaap) notes.push(`${P === 'A' ? 'Acquirer' : 'Target'} EBITDA: ${e.name} (non-GAAP, company reported)${e.note ? ` — ${e.note}` : ''}.`);
+      if (e.nonGaap && e.computed) notes.push(`${P === 'A' ? 'Acquirer' : 'Target'} EBITDA: ${e.name} (non-GAAP) — ${e.label}.`);
+      else if (e.nonGaap) notes.push(`${P === 'A' ? 'Acquirer' : 'Target'} EBITDA: ${e.name} (non-GAAP, company reported)${e.note ? ` — ${e.note}` : ''}.`);
     });
     if (!plan.ebitda.combinable) notes.push('Combined EBITDA: — (companies on different bases).');
   }

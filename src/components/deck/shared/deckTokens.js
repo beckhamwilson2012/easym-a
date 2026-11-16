@@ -193,8 +193,10 @@ export function dealNonGaap(deal, side) {
     epsRowLabel:   eps ? eps.rowLabel : null,      // the company's own row label
     epsCheckMethod: eps ? (eps.checkMethod || null) : null,   // how the server tied it (reportingBasis.epsCheckNote reads it)
     epsNote:       plan.eps.note,                  // why the deal's EPS stayed GAAP, else null
+    epsComputed:   !!(eps && eps.computed),        // Fix 13: computed by EasyM&A (src/lib/computedAdjusted.js), never company reported
+    epsResult:     eps && eps.computed ? eps.result : null,
     // fyValue / fiscalYear (Fix 14 Task 5): the filed fiscal-year figure for its own P&L column, also on an LTM card.
-    ebitda:        e.nonGaap ? { value: e.value, fyValue: e.fyValue ?? null, fiscalYear: e.fiscalYear ?? null, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null } : null,
+    ebitda:        e.nonGaap ? { value: e.value, fyValue: e.fyValue ?? null, fiscalYear: e.fiscalYear ?? null, name: e.name, label: e.label, rowLabel: e.rowLabel, note: e.note || null, ...(e.computed ? { computed: true, result: e.result } : {}) } : null,
     accession:     (eps && eps.accession) || (e.nonGaap ? e.accession : null) || null,
   };
 }
@@ -324,7 +326,7 @@ export function buildFinancialCommentary(target, deal) {
     lines.push(`Entry EV/EBITDA of ${fmtMult(deal.evEBITDA)} is ${adj2} sector median.`);
   }
   if (niVal > 0 && rev > 0) {
-    lines.push(`Net income of ${fmtMoney(niVal)}${niIsNonGaap ? ' (non-GAAP)' : ''} represents a ${(niVal / rev * 100).toFixed(1)}% net margin.`);
+    lines.push(`Net income of ${fmtMoney(niVal)}${niIsNonGaap ? (ng.epsComputed ? ' (non-GAAP, computed by EasyM&A)' : ' (non-GAAP)') : ''} represents a ${(niVal / rev * 100).toFixed(1)}% net margin.`);
   }
   lines.push(`Transaction financed ${fmtPct(deal.cashPercent)} cash / ${fmtPct(100 - parseFloat(deal.cashPercent || 0))} stock.`);
   return lines;

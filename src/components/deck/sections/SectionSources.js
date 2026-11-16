@@ -5,7 +5,8 @@ import { NAVY, SF_BLUE, GRAY_BORDER } from '../shared/deckTokens';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { HEADLINE_SOURCES, formatDeckDate, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
 import { NONE_ENTERED, fmtSynergy, marginSentence } from '../../../lib/synergies';
-import { isNonGaapDeal, DIFFERENT_BASES } from '../../../lib/reportingBasis';
+import { isNonGaapDeal, DIFFERENT_BASES, computedSides } from '../../../lib/reportingBasis';
+import { computedComponentsText } from '../../../lib/computedAdjusted';
 
 // ── Sources & Methodology — the closing page (§14) ─────────────────────────────
 // Methodology bullets are static, but the named data providers (pricing, analyst targets) are
@@ -246,16 +247,27 @@ function nonGaapSourceBullets(plan, acquirer, target) {
   const tk = (c, fb) => c?.ticker || c?.name || fb;
   const A = tk(acquirer, 'the acquirer'), B = tk(target, 'the target');
   const out = [];
-  if (plan.eps.nonGaap) {
+  const anyComputed = computedSides(plan).length > 0 || plan.ebitda.A.computed || plan.ebitda.B.computed;
+  if (plan.eps.nonGaap && computedSides(plan).length) {
+    // Fix 13: at least one side's Year 1 EPS is computed; each side says which it is.
+    const epsSrc = (e, t) => (e.computed
+      ? `${t}: adjusted EPS — ${e.label} (${t} has no company-reported adjusted EPS for ${e.period || 'the period'}). Inputs, ${computedComponentsText(e.result)}. Adjusted net income ÷ the Year 1 diluted share count (${e.dilutedShares != null ? `${e.dilutedShares.toFixed(1)}M` : '—'})`
+      : `${t}: company reported, “${e.rowLabel}” (${e.label}), read from the reconciliation table in its fiscal-year earnings release and tied to GAAP there`);
+    out.push(`Reporting basis selected: Non-GAAP. Net income, diluted EPS, pro forma EPS, accretion and the verdict use non-GAAP figures for both companies — ${epsSrc(plan.eps.A, A)}; ${epsSrc(plan.eps.B, B)}. A company-reported figure is always used where one exists for the period; a computed figure is never presented as company reported.`);
+  } else if (plan.eps.nonGaap) {
     out.push(`Reporting basis selected: Non-GAAP. Net income, diluted EPS, pro forma EPS, accretion and the verdict use company-reported non-GAAP figures for both companies: ${A} “${plan.eps.A.rowLabel}” (${plan.eps.A.label}); ${B} “${plan.eps.B.rowLabel}” (${plan.eps.B.label}). Each was read from the reconciliation table in the company’s fiscal-year earnings release and ties to GAAP there (GAAP + each filed adjustment = the non-GAAP total).`);
   } else {
     out.push(`Reporting basis selected: Non-GAAP. Year 1 EPS, pro forma EPS and accretion are “—”, never GAAP: ${plan.eps.note}. The forward years use FMP consensus (non-GAAP); the verdict uses only the years that computed.`);
   }
-  const eb = (e, t) => (e.nonGaap
+  const eb = (e, t) => (e.nonGaap && e.computed
+    ? `${t}: Adjusted EBITDA — ${e.label}: GAAP operating income + D&A + stock comp + one-time items (${computedComponentsText(e.result, { ebitda: true })})`
+    : e.nonGaap
     ? (e.value == null ? `${t}: ${e.name} — (non-GAAP available for fiscal year only)` : `${t}: ${e.name} (${e.label}), tied to GAAP net income in the filed reconciliation table`)
     : `${t}: computed (operating income + D&A; ${t} reports no adjusted EBITDA)`);
-  out.push(`EBITDA by company — ${eb(plan.ebitda.A, A)}; ${eb(plan.ebitda.B, B)}. ${plan.ebitda.combinable ? `Combined EBITDA adds the two on one basis (${plan.ebitda.A.nonGaap ? 'non-GAAP' : 'computed'}).` : `Combined EBITDA and the leverage ratios on it are “—”: ${DIFFERENT_BASES}.`}`);
+  out.push(`EBITDA by company — ${eb(plan.ebitda.A, A)}; ${eb(plan.ebitda.B, B)}. ${plan.ebitda.combinable ? `Combined EBITDA adds the two on one basis (${plan.ebitda.A.nonGaap ? 'non-GAAP' : 'computed'}${plan.ebitda.A.computed || plan.ebitda.B.computed ? `: ${A} ${plan.ebitda.A.computed ? 'computed by EasyM&A' : 'company reported'}, ${B} ${plan.ebitda.B.computed ? 'computed by EasyM&A' : 'company reported'}` : ''}).` : `Combined EBITDA and the leverage ratios on it are “—”: ${DIFFERENT_BASES}.`}`);
   out.push('Operating income, gross profit, operating expenses and their margins are GAAP. The comparables and screening views use GAAP and computed figures for every company, including these two, because the peers carry no company-reported figures in this deck.');
-  out.push('Forward years are FMP consensus (non-GAAP). FMP does not label the basis; its EPS consensus matches the companies’ own non-GAAP guidance where they give one. Year 1 is non-GAAP company-reported EPS or “—”, never a GAAP figure beside non-GAAP forward years.');
+  out.push(anyComputed
+    ? 'Forward years are FMP consensus (non-GAAP). FMP does not label the basis; its EPS consensus matches the companies’ own non-GAAP guidance where they give one. Year 1 is non-GAAP EPS — company reported, or computed by EasyM&A from the filings where a company reports none for the period — or “—”, never a GAAP figure beside non-GAAP forward years.'
+    : 'Forward years are FMP consensus (non-GAAP). FMP does not label the basis; its EPS consensus matches the companies’ own non-GAAP guidance where they give one. Year 1 is non-GAAP company-reported EPS or “—”, never a GAAP figure beside non-GAAP forward years.');
   return out;
 }

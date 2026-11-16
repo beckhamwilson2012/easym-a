@@ -5,6 +5,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtMoneyAccounting, fmtPct, fmtPerShare, buildFinancialCommentary, isFinancial, isRestaurant, isGrossNm, grossNmNote, standaloneEPS, dealNonGaap, fmtAsOf } from '../shared/deckTokens';
 import { FY_ONLY, epsCheckNote } from '../../../lib/reportingBasis';
+import { computedComponentsText } from '../../../lib/computedAdjusted';
 import { ExplainButton } from '../../shared/ExplainButton';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
@@ -118,7 +119,8 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
   const lines = !ngRows ? baseLines : baseLines.flatMap((l) => {
     const extra = ngRows.filter(r => r.after === l.label).map(r => ({
       label: r.label, ng: true, fmt: r.kind === 'eps' ? fmtEpsV : fmtM, bold: false, info: r.info || null,
-      get: (c) => (!r.ltmCard && c.actual && !c.isLtm && r.fyLabel && c.label === r.fyLabel ? r.value : null),
+      // A computed LTM figure (Fix 13) sits in the LTM column only; every other row stays in its fiscal-year column.
+      get: (c) => (r.ltmCol ? (c.isLtm ? r.value : null) : (!r.ltmCard && c.actual && !c.isLtm && r.fyLabel && c.label === r.fyLabel ? r.value : null)),
     }));
     return [l, ...extra];
   });
@@ -464,7 +466,7 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
       const info = epsNonGaap ? ngEpsInfo(target, ng) : null;
       lines.push(info ? <>{epsLine} <ExplainButton portal explain={{ formula: info }} /></> : epsLine);
     }
-    if (ngEbitda && ngEbitda.value != null) lines.push(`${ngEbitda.name} of ${fmtUSDmAcct(ngEbitda.value)} (non-GAAP, company reported).`);
+    if (ngEbitda && ngEbitda.value != null) lines.push(`${ngEbitda.name} of ${fmtUSDmAcct(ngEbitda.value)} (non-GAAP, ${ngEbitda.computed ? 'computed by EasyM&A' : 'company reported'}).`);
     if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}${target?.debtLabel ? `; total debt ${target.debtLabel}` : ''}.`);
     else if (target?.debtReason) lines.push(`Net cash / (debt) position: N/A — total debt is not shown: ${target.debtReason}.`);
     else lines.push(`Net cash / (debt) position: N/A — a balance-sheet figure was unavailable in the filing.`);
@@ -490,7 +492,7 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
       <PageHeader
         title={`Standalone P&L — ${role || 'Target'}: ${target.name || 'N/A'}`}
         subtitle={pnl
-          ? `${pnl.columns.filter(c => c.actual).length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''}${pnl.columns.some(c => !c.actual) ? ` + ${pnl.columns.filter(c => !c.actual).length} forecast years` : ''} · $M · actuals GAAP (SEC EDGAR), forward FMP consensus (non-GAAP)${ngPlan && (ng || ngEbitda) ? ', non-GAAP rows company reported (earnings 8-K)' : ''}`
+          ? `${pnl.columns.filter(c => c.actual).length} fiscal years${pnl.ltm?.trusted ? ' + LTM' : ''}${pnl.columns.some(c => !c.actual) ? ` + ${pnl.columns.filter(c => !c.actual).length} forecast years` : ''} · $M · actuals GAAP (SEC EDGAR), forward FMP consensus (non-GAAP)${ngPlan && (ng || ngEbitda) ? ngRowsSourceText(ng, ngEbitda) : ''}`
           : `${fyLabel} · $ in millions · profitability Non-GAAP where labeled (see basis note)`}
       />
 
@@ -692,19 +694,31 @@ function ngEpsInfo(company, ng) {
     { value: ng.dilutedEPS, netIncome: ng.netIncome, dilutedShares: ng.dilutedShares, checkMethod: ng.epsCheckMethod });
 }
 
+// The subtitle clause naming where the non-GAAP rows come from (Fix 13: computed rows are never called company reported).
+function ngRowsSourceText(ng, ngEbitda) {
+  const comp = [ng && ng.epsComputed, ngEbitda && ngEbitda.computed];
+  const rep = [ng && !ng.epsComputed, ngEbitda && !ngEbitda.computed];
+  if (!comp.some(Boolean)) return ', non-GAAP rows company reported (earnings 8-K)';
+  if (!rep.some(Boolean)) return ', non-GAAP rows computed by EasyM&A from the filings (not company reported)';
+  return `, non-GAAP rows: ${ng ? `net income and EPS ${ng.epsComputed ? 'computed by EasyM&A' : 'company reported (earnings 8-K)'}` : ''}${ng && ngEbitda ? '; ' : ''}${ngEbitda ? `${ngEbitda.name} ${ngEbitda.computed ? 'computed by EasyM&A' : 'company reported (earnings 8-K)'}` : ''}`;
+}
+
 // The non-GAAP rows the multi-year table adds on a Non-GAAP deal (null on a GAAP deal → table unchanged).
 // Each row carries one company-reported figure for the fiscal-year column it was reported for.
 function ngRowsFor(ngPlan, ng, ngEbitda, company, ltmCard) {
   if (!ngPlan || (!ng && !ngEbitda)) return null;
   const fyLabel = company?.fiscalYear ? `FY${company.fiscalYear}` : null;
   const rows = [];
+  // Fix 13: a computed figure's row says "computed" and sits in its own period's column (the LTM column on an LTM card).
+  const at = (computed) => (computed && ltmCard ? { ltmCol: true } : {});
   // Fix 14 Task 5: the company-reported fiscal-year figure shows in its own fiscal-year column on an LTM card too (OMDA
   // FY2025 Adjusted EBITDA $6.482M, FY release 8-K); the LTM column stays "—" because no LTM figure is reported.
   const ebitdaFyLabel = ngEbitda && ngEbitda.fiscalYear ? `FY${ngEbitda.fiscalYear}` : fyLabel;
-  if (ngEbitda) rows.push({ after: 'EBITDA', kind: 'money', label: `${ngEbitda.name} (non-GAAP)`, value: ngEbitda.fyValue ?? ngEbitda.value, fyLabel: ebitdaFyLabel, ltmCard: false });
+  if (ngEbitda && ngEbitda.computed) rows.push({ after: 'EBITDA', kind: 'money', label: `${ngEbitda.name} (non-GAAP, computed)`, value: ngEbitda.value, fyLabel, ltmCard, ...at(true) });
+  else if (ngEbitda) rows.push({ after: 'EBITDA', kind: 'money', label: `${ngEbitda.name} (non-GAAP)`, value: ngEbitda.fyValue ?? ngEbitda.value, fyLabel: ebitdaFyLabel, ltmCard: false });
   if (ng) {
-    rows.push({ after: 'Net Income', kind: 'money', label: 'Net Income (non-GAAP)', value: ng.netIncome, fyLabel, ltmCard });
-    rows.push({ after: 'Diluted EPS', kind: 'eps', label: 'Diluted EPS (non-GAAP)', value: ng.dilutedEPS, fyLabel, ltmCard, info: ngEpsInfo(company, ng) });
+    rows.push({ after: 'Net Income', kind: 'money', label: ng.epsComputed ? 'Net Income (non-GAAP, computed)' : 'Net Income (non-GAAP)', value: ng.netIncome, fyLabel, ltmCard, ...at(ng.epsComputed) });
+    rows.push({ after: 'Diluted EPS', kind: 'eps', label: ng.epsComputed ? 'Diluted EPS (non-GAAP, computed)' : 'Diluted EPS (non-GAAP)', value: ng.dilutedEPS, fyLabel, ltmCard, info: ngEpsInfo(company, ng), ...at(ng.epsComputed) });
   }
   return rows;
 }
@@ -714,9 +728,11 @@ function ngRowsFor(ngPlan, ng, ngEbitda, company, ltmCard) {
 function nonGaapBasisText(company, ngPlan, ng, ngEbitda, ltmCard) {
   const name = company?.name || 'the company';
   const parts = [];
-  if (ng) parts.push(`Net income and diluted EPS rows marked non-GAAP are ${name}’s own (“${ng.epsRowLabel}”; ${ng.epsLabel}), tied to GAAP in the filed reconciliation table; the deal’s EPS and accretion use them. `);
+  if (ng && ng.epsComputed) parts.push(`Net income and diluted EPS rows marked non-GAAP, computed are not company reported: ${name} reports no adjusted EPS for ${ng.epsResult?.period?.label || 'the period'}, so they are ${ng.epsLabel}. Inputs, ${computedComponentsText(ng.epsResult)}. EPS = adjusted net income ÷ ${ng.dilutedShares != null ? `${ng.dilutedShares.toFixed(1)}M` : 'the'} Year 1 diluted shares. The deal’s EPS and accretion use them. `);
+  else if (ng) parts.push(`Net income and diluted EPS rows marked non-GAAP are ${name}’s own (“${ng.epsRowLabel}”; ${ng.epsLabel}), tied to GAAP in the filed reconciliation table; the deal’s EPS and accretion use them. `);
   else if (ngPlan.epsNote) parts.push(`EPS: ${ngPlan.epsNote}. `);
-  if (ngEbitda) parts.push(ltmCard || ngEbitda.value == null
+  if (ngEbitda && ngEbitda.computed) parts.push(`${ngEbitda.name} (non-GAAP, computed) is not company reported: ${ngEbitda.label}; GAAP operating income + D&A + stock comp + one-time items (amortization is already in D&A). Inputs, ${computedComponentsText(ngEbitda.result, { ebitda: true })}. The deal uses it for this company’s EBITDA. `);
+  else if (ngEbitda) parts.push(ltmCard || ngEbitda.value == null
     ? (ngEbitda.fyValue != null
       ? `${ngEbitda.name} (non-GAAP) is reported for the fiscal year only: FY${ngEbitda.fiscalYear ?? ''} ${fmtUSDmAcct(ngEbitda.fyValue)} (${ngEbitda.label || 'earnings release'}), shown in its fiscal-year column. There is no LTM figure, so with this company on LTM the deal has no ${ngEbitda.name} for it. `
       : `${ngEbitda.name} (non-GAAP): — (${FY_ONLY}; this company is on LTM). `)

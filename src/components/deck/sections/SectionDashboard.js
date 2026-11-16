@@ -19,7 +19,7 @@ import { SynergyLines } from '../shared/SynergyLines';
 import { BasisNote } from '../shared/BasisNote';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
-import { isNonGaapDeal, FY_ONLY } from '../../../lib/reportingBasis';
+import { isNonGaapDeal, FY_ONLY, computedSides, epsSourceText, combinedEbitdaShort } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { verdictFlags, headlineEps } from '../../../lib/dealVerdict';
@@ -47,9 +47,11 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // GAAP | Non-GAAP plan (src/lib/reportingBasis.js) — null on a GAAP deal, which leaves every label below as it was.
   const ngPlan = isNonGaapDeal(deal) ? deal.reportingBasis : null;
   const ebB = ngPlan ? ngPlan.ebitda.B : null;
-  const ebitdaBasisText = (e) => (e.nonGaap ? `${e.name} (non-GAAP)` : 'computed EBITDA');
+  const ebitdaBasisText = (e) => (e.nonGaap ? (e.computed ? `${e.name} (non-GAAP, computed by EasyM&A)` : `${e.name} (non-GAAP)`) : 'computed EBITDA');
   const ebDiffer = !!(ngPlan && results.ebitdaBasesDiffer);
   const combinedEbitdaBasis = ngPlan ? (ebDiffer ? null : (ngPlan.ebitda.A.nonGaap ? 'non-GAAP' : 'computed')) : null;
+  // Fix 13: a non-GAAP combined EBITDA with a computed side names each company's source; null when both are company reported.
+  const ebSources = ngPlan && !ebDiffer && (ngPlan.ebitda.A.computed || ngPlan.ebitda.B.computed) ? combinedEbitdaShort(ngPlan) : null;
 
   const bankMode = isBankDeal(target, acquirer);
   const flags     = bankMode
@@ -281,7 +283,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // The reason is dealCalc's (peReason): `companyBEPS <= 0` read a private target's default 0 EPS as negative earnings.
               note:  results.peRatio === 'N/A' ? results.peReason
                 : results.peBasis ? results.peBasis
-                : (ngPlan ? (ngPlan.eps.nonGaap ? 'on adjusted EPS (non-GAAP)' : 'on GAAP EPS') : null),
+                : (ngPlan ? (ngPlan.eps.nonGaap ? (ngPlan.eps.B?.computed ? 'on adjusted EPS (non-GAAP, computed by EasyM&A)' : 'on adjusted EPS (non-GAAP)') : 'on GAAP EPS') : null),
               explain: () => explainPeRatio(peExplainArgs),
             },
             {
@@ -293,7 +295,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 ? ((results.basesDiffer || ebDiffer) ? DIFFERENT_BASES : results.debtEBITDAAboveCap ? results.debtEBITDAReason : results.combinedEBITDA == null ? 'Combined EBITDA not available'
                   : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
                   : 'Combined debt not available')
-                : (combinedEbitdaBasis ? `on ${combinedEbitdaBasis} combined EBITDA` : null),
+                : (combinedEbitdaBasis ? `on ${combinedEbitdaBasis} combined EBITDA${ebSources ? ` (${ebSources})` : ''}` : null),
               explain: () => explainDebtEbitda({ combinedDebt: combinedDebtForExplain, combinedEbitda: results.combinedEBITDA, multiple: results.debtEBITDA }),
             },
           ]).map(m => (
@@ -326,7 +328,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             </h3>
             {ngPlan && (
               <div data-testid="eps-basis-note" style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 12, fontStyle: 'italic' }}>
-                {ngPlan.eps.nonGaap ? 'Non-GAAP EPS, company reported by both companies (fiscal-year earnings releases).' : `${ngPlan.eps.note}.`}
+                {!ngPlan.eps.nonGaap ? `${ngPlan.eps.note}.` : computedSides(ngPlan).length ? `Non-GAAP EPS — ${epsSourceText(ngPlan)}.` : 'Non-GAAP EPS, company reported by both companies (fiscal-year earnings releases).'}
               </div>
             )}
             <div data-testid="eps-analysis-label" style={{ fontSize: 11, color: '#374151', fontWeight: 600, marginTop: -6, marginBottom: 10 }}>{hEps.label}</div>
@@ -386,10 +388,10 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             ] : [
               { label: 'Combined Revenue',    value: results.basesDiffer ? '—' : fmtMoneyTable(results.combinedRevenue)                          },
               ...(results.synergies.years[0].revenue != null ? [{ label: 'Pro Forma Revenue (incl. Y1 revenue synergies)', value: fmtMoneyTable(results.proFormaRevenue) }] : []),
-              { label: ngPlan ? `Combined EBITDA (${combinedEbitdaBasis || 'n/a'}, incl. Y1 synergies)` : 'Combined EBITDA (incl. Y1 synergies)',
+              { label: ngPlan ? `Combined EBITDA (${combinedEbitdaBasis || 'n/a'}${ebSources ? `: ${ebSources}` : ''}, incl. Y1 synergies)` : 'Combined EBITDA (incl. Y1 synergies)',
                 value: results.basesDiffer ? '—' : ebDiffer ? `— (${DIFFERENT_BASES})` : fmtMoneyTable(results.combinedEBITDA) },
-              { label: ngPlan && ngPlan.eps.nonGaap ? 'Acquirer Net Income (non-GAAP)' : (inputs.companyANetIncomeToCommon ? 'Acquirer Net Income to Common (EPS numerator)' : 'Acquirer Net Income'), value: fmtMoneyAccounting(inputs.companyANetIncome) },
-              { label: ngPlan && ngPlan.eps.nonGaap ? 'Target Net Income (non-GAAP)' : (inputs.companyBNetIncomeToCommon ? 'Target Net Income to Common (EPS numerator)' : 'Target Net Income'),   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
+              { label: ngPlan && ngPlan.eps.nonGaap ? (ngPlan.eps.A?.computed ? 'Acquirer Net Income (non-GAAP, computed)' : 'Acquirer Net Income (non-GAAP)') : (inputs.companyANetIncomeToCommon ? 'Acquirer Net Income to Common (EPS numerator)' : 'Acquirer Net Income'), value: fmtMoneyAccounting(inputs.companyANetIncome) },
+              { label: ngPlan && ngPlan.eps.nonGaap ? (ngPlan.eps.B?.computed ? 'Target Net Income (non-GAAP, computed)' : 'Target Net Income (non-GAAP)') : (inputs.companyBNetIncomeToCommon ? 'Target Net Income to Common (EPS numerator)' : 'Target Net Income'),   value: fmtMoneyAccounting(inputs.companyBNetIncome) },
               { label: 'After-Tax Synergies (Y1)',  value: synergyY1Entered ? `+${fmtMoneyTable(results.afterTaxSynergies)}` : NONE_ENTERED, green: synergyY1Entered, explain: () => explainSynergies({ schedule: results.synergies, isBank: false }) },
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtInterest(results.newInterestAfterTax)})`, red: true }] : []),

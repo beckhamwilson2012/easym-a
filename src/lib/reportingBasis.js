@@ -1,4 +1,5 @@
 import { BASIS_LTM, DIFFERENT_BASES } from './companyBasis';
+import { computeAdjusted } from './computedAdjusted';
 
 // The one GAAP | Non-GAAP switch. The input page's toggle picks the reporting basis; this file decides, for that
 // choice, which of each company's figures the deal model and the deck use, and what every slide must say about it.
@@ -13,6 +14,11 @@ import { BASIS_LTM, DIFFERENT_BASES } from './companyBasis';
 //             EBITDA adds the two only when both are on the same basis; otherwise "—" (companies on different bases).
 //   Period  — non-GAAP figures are fiscal-year only. A company card on LTM shows its non-GAAP rows as "—".
 //   GAAP    — with GAAP selected the inputs pass through untouched, so every deck is exactly what it was.
+//   Computed (Fix 13) — where a company's release has no reconciled figure for the period (no adjusted EPS, no adjusted
+//             EBITDA, or an LTM card, which no fiscal-year release covers), the figure is computed by the one calculation
+//             (src/lib/computedAdjusted.js) from the company's filed facts, and labeled "Computed by EasyM&A: …" everywhere.
+//             A company-reported figure always wins for its period. Computed and reported are both non-GAAP, so EPS and
+//             combined EBITDA may pair one of each; the slides say which is which.
 
 export const GAAP = 'GAAP';
 export const NON_GAAP = 'Non-GAAP';
@@ -67,8 +73,24 @@ export function nonGaapAvailability({ ngA, ngB, loadingA, loadingB, tickerA, tic
   const a = privateA ? { eps: null, ebitda: null } : reportedNonGaap(ngA);
   const b = privateB ? { eps: null, ebitda: null } : reportedNonGaap(ngB);
   if (a.eps || a.ebitda || b.eps || b.ebitda) return { state: 'ready', available: true, reason: null };
+  if ((!privateA && anyComputed(ngA)) || (!privateB && anyComputed(ngB))) return { state: 'ready', available: true, reason: null };
   const who = [tickerA || 'the acquirer', tickerB || 'the target'].join(' nor ');
-  return { state: 'ready', available: false, reason: `neither ${who} reports an adjusted EPS or EBITDA that ties to GAAP in its fiscal-year earnings release` };
+  return { state: 'ready', available: false, reason: `neither ${who} reports an adjusted EPS or EBITDA that ties to GAAP in its fiscal-year earnings release, and neither can be computed from its filings` };
+}
+
+// Whether a computed adjusted net income or EBITDA exists for either period (Fix 13).
+function anyComputed(payload) {
+  const c = payload && payload.computed;
+  if (!c) return false;
+  return [c.fy, c.ltm].some((p) => { if (!p) return false; const r = computeAdjusted(p); return r.netIncome != null || r.ebitda != null; });
+}
+
+// One company's computed figures for the card's period, on the Year 1 diluted share count. null when no inputs.
+function computedFor(payload, ltm, dilutedShares) {
+  const c = payload && payload.computed;
+  const per = c ? (ltm ? c.ltm : c.fy) : null;
+  if (!per) return { r: null, reason: (c && c.reasons && (ltm ? c.reasons.ltm : c.reasons.fy)) || 'no filed inputs for a computed figure' };
+  return { r: computeAdjusted(per, { dilutedShares }), reason: null };
 }
 
 // The default the toggle starts on: Non-GAAP when anything is available, else GAAP.
@@ -90,31 +112,57 @@ export function resolveReportingBasis({ selected, ngA, ngB, inputs, tickerA, tic
   const ltmA = inputs?.companyABasis === BASIS_LTM, ltmB = inputs?.companyBBasis === BASIS_LTM;
   const tA = tickerA || 'the acquirer', tB = tickerB || 'the target';
 
-  // EPS: both or neither.
-  const epsNonGaap = !!(a.eps && b.eps) && !ltmA && !ltmB;
+  // Computed figures (Fix 13) for each card's period, on the diluted count Year 1 already uses.
+  const cA = computedFor(ngA, ltmA, inputs?.companyADilutedShares), cB = computedFor(ngB, ltmB, inputs?.companyBDilutedShares);
+
+  // EPS: both or neither. Each side is its company-reported figure (fiscal-year card only), else its computed figure.
+  const epsSide = (x, ltm, c, t) => {
+    if (x.eps && !ltm) return { eps: x.eps, why: null };
+    if (c.r && c.r.eps != null) return { eps: computedEps(c.r), why: null };
+    const head = x.eps ? `${t} has no company-reported EPS for the LTM period (${FY_ONLY})`
+      : NOT_REPORTED.test(x.epsReason || '') ? `${t} doesn’t report adjusted EPS` : `${t}’s adjusted EPS doesn’t tie to GAAP in its release`;
+    return { eps: null, why: `${head}, and its computed figure is “—”: ${(c.r && c.r.epsReason) || c.reason}` };
+  };
+  const eA = epsSide(a, ltmA, cA, tA), eB = epsSide(b, ltmB, cB, tB);
+  const epsNonGaap = !!(eA.eps && eB.eps);
   let epsNote = null;
-  if (!epsNonGaap) {
+  if (!epsNonGaap && !(ngA && ngA.computed) && !(ngB && ngB.computed)) {
+    // No computed inputs in either payload (a private company, or a payload from before Fix 13): the wording is unchanged.
     const missing = [!a.eps && tA, !b.eps && tB].filter(Boolean);
     epsNote = missing.length
       ? `Year 1 non-GAAP EPS not available: ${missing.join(' and ')} ${missing.length > 1 ? 'don’t' : 'doesn’t'} report adjusted EPS`
       : `Year 1 non-GAAP EPS not available: ${FY_ONLY}`;
-  }
+  } else if (!epsNonGaap) epsNote = `Year 1 non-GAAP EPS not available: ${[eA.why, eB.why].filter(Boolean).join('; ')}`;
 
-  // EBITDA: each company on its own.
-  const side = (x, ltm) => {
-    if (!x.ebitda) return { nonGaap: false, value: null, reason: x.ebitdaReason };
-    // fyValue (Fix 14 Task 5): the filed fiscal-year figure, for its own fiscal-year column on the P&L even when the
-    // card is on LTM. `value`, what the deal uses, stays null on LTM: there is no LTM adjusted EBITDA.
-    return { nonGaap: true, value: ltm ? null : x.ebitda.value, fyValue: x.ebitda.value, period: x.ebitda.period || null, name: x.ebitda.name, rowLabel: x.ebitda.rowLabel, label: x.ebitda.label, accession: x.ebitda.accession, fiscalYear: x.ebitda.fiscalYear, note: ltm ? FY_ONLY : null };
+  // EBITDA: each company on its own. Company reported (fiscal-year card), else computed, else GAAP computed.
+  // fyValue (Fix 14 Task 5): the filed fiscal-year figure, for its own fiscal-year column on the P&L even when the card is
+  // on LTM.
+  const side = (x, ltm, c) => {
+    const fy = x.ebitda ? { fyValue: x.ebitda.value, period: x.ebitda.period || null } : {};
+    if (x.ebitda && !ltm) return { nonGaap: true, value: x.ebitda.value, ...fy, name: x.ebitda.name, rowLabel: x.ebitda.rowLabel, label: x.ebitda.label, accession: x.ebitda.accession, fiscalYear: x.ebitda.fiscalYear, note: null };
+    if (c.r && c.r.ebitda != null) return { nonGaap: true, computed: true, value: c.r.ebitda, name: COMPUTED_EBITDA_NAME, rowLabel: null, label: c.r.label, accession: null, fiscalYear: x.ebitda ? x.ebitda.fiscalYear : null, note: null, result: c.r };
+    if (x.ebitda) return { nonGaap: true, value: null, ...fy, name: x.ebitda.name, rowLabel: x.ebitda.rowLabel, label: x.ebitda.label, accession: x.ebitda.accession, fiscalYear: x.ebitda.fiscalYear, note: FY_ONLY };
+    return { nonGaap: false, value: null, reason: x.ebitdaReason, computedReason: (c.r && c.r.ebitdaReason) || c.reason };
   };
-  const A = side(a, ltmA), B = side(b, ltmB);
+  const A = side(a, ltmA, cA), B = side(b, ltmB, cB);
   const combinable = A.nonGaap === B.nonGaap;
   const noChange = (!epsNonGaap && !A.nonGaap && !B.nonGaap) ? noChangeLine(a, b, tA, tB, epsNote) : null;
   return {
     selected: NON_GAAP,
+    tickers: { A: tA, B: tB },   // Fix 13: the source lines name each company
     noChange,   // one line when Non-GAAP changes no figure for this pair; null otherwise
-    eps: { nonGaap: epsNonGaap, note: epsNote, A: epsNonGaap ? a.eps : null, B: epsNonGaap ? b.eps : null },
+    eps: { nonGaap: epsNonGaap, note: epsNote, A: epsNonGaap ? eA.eps : null, B: epsNonGaap ? eB.eps : null },
     ebitda: { A, B, combinable, note: combinable ? null : DIFFERENT_BASES },
+  };
+}
+
+// A computed EPS in the same shape as a company-reported one (the deal model reads value / netIncome / dilutedShares).
+export const COMPUTED_EBITDA_NAME = 'Adjusted EBITDA';
+function computedEps(r) {
+  return {
+    value: r.eps, netIncome: r.netIncome, dilutedShares: r.dilutedShares, computed: true, result: r,
+    rowLabel: 'Adjusted EPS (computed)', label: r.label, period: r.period ? r.period.label : null,
+    accession: null, fiscalYear: null, fiscalYearEnd: null, checkMethod: null,
   };
 }
 
@@ -147,11 +195,14 @@ export function applyReportingBasis(inputs, plan) {
     const A = plan.eps.A, B = plan.eps.B;
     out.companyANetIncome = A.netIncome;
     out.companyAEPS = A.value;
-    out.companyADilutedShares = A.dilutedShares;
-    out.companyADilutedSharesPeriod = { basis: 'non-GAAP diluted', end: A.fiscalYearEnd ?? null };
+    // A computed EPS is on the Year 1 diluted count already in the inputs (Fix 13), so the count and its period stay as they are.
+    if (!A.computed) {
+      out.companyADilutedShares = A.dilutedShares;
+      out.companyADilutedSharesPeriod = { basis: 'non-GAAP diluted', end: A.fiscalYearEnd ?? null };
+    }
     out.companyBNetIncome = B.netIncome;
     out.companyBEPS = B.value;
-    out.companyBDilutedShares = B.dilutedShares;
+    if (!B.computed) out.companyBDilutedShares = B.dilutedShares;
   }
   out.companyAEpsBasis = NON_GAAP;   // Year 1 is non-GAAP or "—"; the forward years are consensus (non-GAAP)
   out.companyBEpsBasis = NON_GAAP;
@@ -172,14 +223,33 @@ export const isNonGaapDeal = (deal) => !!(deal && deal.reportingBasis && deal.re
 // "Diluted EPS (non-GAAP)" / "Diluted EPS (GAAP)" plus the reason line when the deal had to stay on GAAP.
 export function epsBasisLabel(plan) {
   if (!plan || plan.selected !== NON_GAAP) return null;
-  return plan.eps.nonGaap ? 'non-GAAP EPS' : plan.eps.note;
+  if (!plan.eps.nonGaap) return plan.eps.note;
+  const comp = computedSides(plan);
+  return comp.length ? `non-GAAP EPS (${epsSourceText(plan)})` : 'non-GAAP EPS';
 }
+
+// Fix 13: which side's Year 1 EPS is computed. [] when both are company reported (every existing label then stands).
+export const computedSides = (plan) => (plan && plan.eps && plan.eps.nonGaap ? ['A', 'B'].filter((P) => plan.eps[P] && plan.eps[P].computed) : []);
+
+// "HNGE company reported; OMDA Computed by EasyM&A: …" — the source of each company's Year 1 non-GAAP EPS.
+export function epsSourceText(plan, tickers = {}) {
+  if (!plan || !plan.eps || !plan.eps.nonGaap) return null;
+  return ['A', 'B'].map((P) => {
+    const e = plan.eps[P];
+    const t = tickers[P] || plan.tickers?.[P] || (P === 'A' ? 'acquirer' : 'target');
+    return e.computed ? `${t}: ${e.label}` : `${t}: company reported`;
+  }).join('; ');
+}
+
+// The source of one company's non-GAAP EBITDA on a Non-GAAP deck: "company reported" or the computed label.
+export const ebitdaSourceText = (e) => (e && e.nonGaap ? (e.computed ? e.label : 'company reported') : null);
 
 // One company's EBITDA row label and footnote on a Non-GAAP deal, or null on GAAP.
 export function ebitdaRow(plan, P) {
   if (!plan || plan.selected !== NON_GAAP) return null;
   const e = plan.ebitda[P];
   if (!e.nonGaap) return { label: 'EBITDA (computed, GAAP inputs)', nonGaap: false, value: undefined, note: null };
+  if (e.computed) return { label: `${e.name} (non-GAAP, computed by EasyM&A)`, nonGaap: true, computed: true, value: e.value, note: e.label };
   return { label: `${e.name} (non-GAAP)`, nonGaap: true, value: e.value, note: e.note || e.label };
 }
 
@@ -187,5 +257,20 @@ export function ebitdaRow(plan, P) {
 export function combinedEbitdaLabel(plan) {
   if (!plan || plan.selected !== NON_GAAP) return null;
   if (!plan.ebitda.combinable) return { basis: null, note: DIFFERENT_BASES };
+  // Fix 13: one or both non-GAAP EBITDAs computed. `note` stays null (it means "not combinable" to every slide); `sources`
+  // says which company's figure is which, and `short` is the same in a few words for labels.
+  if (plan.ebitda.A.nonGaap && (plan.ebitda.A.computed || plan.ebitda.B.computed)) return { basis: 'non-GAAP', note: null, sources: combinedEbitdaSources(plan), short: combinedEbitdaShort(plan) };
   return { basis: plan.ebitda.A.nonGaap ? 'non-GAAP' : 'computed', note: null };
+}
+
+// "HNGE computed by EasyM&A, OMDA company reported".
+export function combinedEbitdaShort(plan) {
+  if (!plan || !plan.ebitda || !plan.ebitda.A.nonGaap || !plan.ebitda.B.nonGaap) return null;
+  return ['A', 'B'].map((P) => `${plan.tickers?.[P] || (P === 'A' ? 'acquirer' : 'target')} ${plan.ebitda[P].computed ? 'computed by EasyM&A' : 'company reported'}`).join(', ');
+}
+
+// Fix 13: which company's non-GAAP EBITDA is company reported and which is computed, for the combined-EBITDA footnote.
+export function combinedEbitdaSources(plan, tickers = {}) {
+  if (!plan || !plan.ebitda || !plan.ebitda.A.nonGaap || !plan.ebitda.B.nonGaap) return null;
+  return ['A', 'B'].map((P) => `${tickers[P] || plan.tickers?.[P] || (P === 'A' ? 'acquirer' : 'target')}: ${ebitdaSourceText(plan.ebitda[P])}`).join('; ');
 }

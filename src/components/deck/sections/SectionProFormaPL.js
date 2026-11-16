@@ -8,7 +8,7 @@ import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, acquirerShareP
 import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST } from '../../../lib/forwardYears';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
-import { isNonGaapDeal } from '../../../lib/reportingBasis';
+import { isNonGaapDeal, computedSides, epsSourceText } from '../../../lib/reportingBasis';
 
 // ── §6 — Pro Forma & Accretion (one logical exhibit, split across two pages) ─────────────────────────────
 // §6a "Pro Forma Combined" (Exhibit E): the detailed per-forward-year tables (Revenue, growth %, Gross
@@ -225,7 +225,10 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   // GAAP | Non-GAAP plan (src/lib/reportingBasis.js): null on a GAAP deal, which keeps the Year 1 tag as it was.
   const ngPlan = isNonGaapDeal(deal) ? deal.reportingBasis : null;
   const y1Period = (acquirer?.basis === 'ltm' || target?.basis === 'ltm') ? (deal?._results?.basesDiffer ? 'companies on different bases' : 'LTM actuals') : 'fiscal-year actuals';
-  const y1Fy = ngPlan ? (ngPlan.eps.nonGaap ? `${y1Period}, non-GAAP (company reported)` : `— ${ngPlan.eps.note}`) : `${y1Period}, GAAP`;
+  // Fix 13: where a side's Year 1 EPS is computed, the tag says so (computedSides is [] when both are company reported).
+  const y1Computed = ngPlan ? computedSides(ngPlan) : [];
+  const y1Src = y1Computed.length === 2 ? 'computed by EasyM&A' : y1Computed.length ? `${ngPlan.tickers?.[y1Computed[0]] || 'one side'} computed by EasyM&A` : 'company reported';
+  const y1Fy = ngPlan ? (ngPlan.eps.nonGaap ? `${y1Period}, non-GAAP (${y1Src})` : `— ${ngPlan.eps.note}`) : `${y1Period}, GAAP`;
   const accRows = [
     { label: 'Year 1', tag: y1Fy, basis: 'verified', na: !!inputs.year1Reason, standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
     ...forwardRows.map(r => r.na
@@ -318,7 +321,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                 {ngPlan && (
                   <div data-testid="pf-eps-basis-note" style={{ fontSize: 9.5, color: '#6B7280', fontStyle: 'italic', marginBottom: 4, lineHeight: 1.35 }}>
                     {ngPlan.eps.nonGaap
-                      ? `Year 1: non-GAAP EPS, company reported by both companies (fiscal-year earnings releases). Forward years: ${CONSENSUS_BASIS}. Every year is non-GAAP.`
+                      ? (y1Computed.length ? `Year 1: non-GAAP EPS — ${epsSourceText(ngPlan)}. Forward years: ${CONSENSUS_BASIS}. Every year is non-GAAP.`
+                        : `Year 1: non-GAAP EPS, company reported by both companies (fiscal-year earnings releases). Forward years: ${CONSENSUS_BASIS}. Every year is non-GAAP.`)
                       : `Year 1: ${ngPlan.eps.note}, so Year 1 is "—" rather than a GAAP figure. Forward years: ${CONSENSUS_BASIS}.`}
                   </div>
                 )}
@@ -350,7 +354,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
                   })}
                 </div>
                 <div style={{ marginTop: 3, fontSize: 9.5, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.3 }}>
-                  Ex-syn./w-syn. exclude/include the deal's entered synergies (same split as Combined vs PF above); Each year is measured on its own standalone EPS: Year 1 {inputs.year1Reason ? '“—”' : ngPlan ? 'non-GAAP (company reported)' : 'GAAP'}, Years 2–4 {sel.gaap ? '“—”' : CONSENSUS_BASIS}.{sel.gaap ? <> Years 2–4 are "—" on a GAAP deck: {NO_GAAP_FORECAST}.</> : null} Year 2 is the first fiscal year that begins after Year 1 ends{sel.firstFy.A != null ? <> ({aTk}: FY{sel.firstFy.A})</> : null}, so no forward year overlaps Year 1.
+                  Ex-syn./w-syn. exclude/include the deal's entered synergies (same split as Combined vs PF above); Each year is measured on its own standalone EPS: Year 1 {inputs.year1Reason ? '“—”' : ngPlan ? `non-GAAP (${y1Src})` : 'GAAP'}, Years 2–4 {sel.gaap ? '“—”' : CONSENSUS_BASIS}.{sel.gaap ? <> Years 2–4 are "—" on a GAAP deck: {NO_GAAP_FORECAST}.</> : null} Year 2 is the first fiscal year that begins after Year 1 ends{sel.firstFy.A != null ? <> ({aTk}: FY{sel.firstFy.A})</> : null}, so no forward year overlaps Year 1.
                   {forwardRows.some(r => !r.na) && <> {forwardNetIncomeLabel(inputs)}.</>}
                   {forwardRows.some(r => !r.na && r.tieNi != null && r.tieSh > 0) && <> Ties to the table above: {forwardRows.filter(r => !r.na && r.tieNi != null && r.tieSh > 0).map(r => `FY${r.acqFY}E PF net income ${fmtM(r.tieNi)} ÷ ${r.tieSh.toFixed(1)}M shares = ${fmtPerShare(r.tieNi / r.tieSh)}`).join('; ')}.</>}
                 </div>

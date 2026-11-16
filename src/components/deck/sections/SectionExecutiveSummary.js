@@ -146,7 +146,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     { label: 'Pro forma ownership — target holders', value: pcF(d.ownershipNewPct) },
     { label: `EPS accretion / (dilution) — ${hEps.label}`, value: accText, bold: true },
     { label: 'Combined revenue', value: money(d.combinedRevenue) },
-    { label: ngEb ? `Combined EBITDA (${ngEb.basis || 'n/a'}, incl. Year-1 synergies)` : 'Combined EBITDA (incl. Year-1 synergies)',
+    { label: ngEb ? `Combined EBITDA (${ngEb.basis || 'n/a'}${ngEb.short ? `: ${ngEb.short}` : ''}, incl. Year-1 synergies)` : 'Combined EBITDA (incl. Year-1 synergies)',
       value: ngEb && ngEb.note ? `— (${ngEb.note})` : money(combinedEBITDA) },
     { label: 'Year-1 cost synergies', value: fmtSynergy(synY1?.cost) },
     { label: 'Year-1 revenue synergies', value: fmtSynergy(synY1?.revenue) },
