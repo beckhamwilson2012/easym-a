@@ -438,7 +438,7 @@ function computeLTM(facts, floorEnd = null) {
   const pct  = (l, a) => (a > 0 && l != null ? +(((l - a) / a) * 100).toFixed(1) : null);
   const flow = (o) => ({ annualM: inM(o.annual), latestYtdM: inM(o.latestYTD), priorYtdM: inM(o.priorYTD), ltmM: inM(o.ltm), deltaPct: pct(o.ltm, o.annual), conceptName: o.conceptName ?? null, fellThrough: o.fellThrough ?? false, derived: o.derived ?? false });
 
-  return {
+  const result = {
     ltm: true,
     basis: 'LTM',
     conceptName: revConcept,                                   // B5 — the single revenue concept sourcing all three legs
@@ -476,6 +476,9 @@ function computeLTM(facts, floorEnd = null) {
       convention: 'LTM net income ÷ latest interim diluted weighted-avg shares (NOT Σ quarterly EPS)',
     },
   };
+  // Fix 13: the unrounded LTM bases (full $) for the computed non-GAAP calculation. Non-enumerable: no serialized output changes.
+  Object.defineProperty(result, 'precise', { enumerable: false, value: { netIncome: niF.ltm, operatingIncome: oi.ltm, ebitda: ebitdaLtm } });
+  return result;
 }
 
 // Realized yield on cash for a fiscal year (Fix 14 Task 2): that year's interest income ÷ average cash + ST investments at
@@ -504,4 +507,6 @@ async function computeLTMForCik(cik) {
   return computeLTM(await prepareIncomeFacts(facts, cik), await latestAnnualFilingPeriod(cik));
 }
 
-module.exports = { computeLTM, computeLTMForCik, scaleShares, fyCashYield };
+// ltmFlow / valFullYearAt are exported so the computed non-GAAP add-backs (adjustedComponents) are built by THIS LTM method at
+// the same revenue-anchored period keys, never by a second one.
+module.exports = { computeLTM, computeLTMForCik, scaleShares, fyCashYield, ltmFlow, valFullYearAt };

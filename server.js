@@ -33,6 +33,8 @@ const { extractPage } = require('./server/services/extractorAgent');    // Phase
 const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
 const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
 const { readNonGaapTables, reconcileCheck, fullYearReconciliation } = require('./server/services/nonGaapTables'); // non-GAAP from the exhibit's own reconciliation tables (no model) + the one reconcile check
+const { adjustedComponents, fullValuationAllowance, disclosedNonGaapTaxRate, taxEvidence } = require('./server/services/adjustedComponents'); // filed inputs of a computed adjusted figure (Fix 13); the arithmetic is src/lib/computedAdjusted
+const filingInstance = require('./server/services/filingInstance');
 const { classifySector, SECTORS: CLASSIFIER_SECTORS } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
 console.log('[peerResolver] module loaded, override count:', Object.keys(PEER_OVERRIDES).length);
 
@@ -820,7 +822,7 @@ async function fetchFromEDGAR(symbol, cik) {
     Object.assign(ltm, await filedLtmEps(symbol, cik, gaap, ltmRaw, currentEps, revenueEntry?.end ?? null));
   }
 
-  return {
+  const edgarResult = {
     name:           cleanEntityTitle(titleBySymbol[symbol]) || facts.entityName || symbol,  // registry title (BAC fix) > entityName (can be a subsidiary shell) > ticker
     companyType,
     revenue:        revenueM,
@@ -889,6 +891,15 @@ async function fetchFromEDGAR(symbol, cik) {
     filingForm:     revenueEntry?.form  ?? null,  // "10-K" or "20-F"
     ltm,                                          // ADDITIVE — Stage 1 LTM (trailing-12mo); no consumer yet
   };
+  // Fix 13: the unrounded GAAP bases ($M) behind netIncome / operatingIncome / ebitda (and the LTM ones), for the computed
+  // non-GAAP calculation only. Non-enumerable, so /quote's JSON and every existing consumer are byte-identical.
+  const toPreciseM = (v) => (v != null && Number.isFinite(v) ? v / 1e6 : null);
+  Object.defineProperty(edgarResult, 'precise', { enumerable: false, value: { netIncome: toPreciseM(netIncome), operatingIncome: toPreciseM(operatingIncome), ebitda: toPreciseM(ebitda) } });
+  if (ltm && ltm.trusted) {
+    const lp = ltmRaw && ltmRaw.ltm && ltmRaw.precise ? ltmRaw.precise : (ltm.asOf === (revenueEntry?.end ?? null) ? { netIncome: netIncome, operatingIncome: operatingIncome, ebitda: ebitda } : null);
+    if (lp) Object.defineProperty(ltm, 'precise', { enumerable: false, value: { netIncome: toPreciseM(lp.netIncome), operatingIncome: toPreciseM(lp.operatingIncome), ebitda: toPreciseM(lp.ebitda) } });
+  }
+  return edgarResult;
 }
 
 async function fetchFromFMP(symbol) {
@@ -2739,6 +2750,31 @@ async function filedLtmEps(ticker, cik, ns, lr, fyEps, fiscalYearEnd) {
   };
 }
 
+// Fix 13: the filed inputs behind a computed adjusted figure, FY and LTM, with the tax evidence (10-K tax note's full valuation
+// allowance). Never throws: an unreadable input is null with the reason, and the deck then shows "—".
+async function computedInputs(cik, edgar) {
+  try {
+    const facts = getEdgarFactsCache(cik) || await get(`https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`);
+    // The latest 10-K (tax note; amortization breakdown) and latest 10-Q (amortization breakdown for the LTM legs).
+    let tenK = null, tenQ = null, kXml = null, qXml = null;
+    try {
+      const sub = await filingInstance.readSubmissions(cik);
+      const r = sub && sub.filings && sub.filings.recent;
+      const latestOf = (form) => { let b = null; if (r && r.form) r.form.forEach((f, i) => { if (f === form && (!b || r.filingDate[i] > b.filed)) b = { form: f, accn: r.accessionNumber[i], filed: r.filingDate[i], reportDate: r.reportDate[i], primaryDocument: r.primaryDocument ? r.primaryDocument[i] : null }; }); return b; };
+      tenK = latestOf('10-K'); tenQ = latestOf('10-Q');
+      [kXml, qXml] = await Promise.all([tenK ? filingInstance.readInstanceXml(cik, tenK) : null, tenQ ? filingInstance.readInstanceXml(cik, tenQ) : null]);
+    } catch (e) { console.error(`[computedInputs] filing instance read failed for ${cik}: ${e.message}`); }
+    const c = adjustedComponents(facts, edgar, [kXml, qXml]);
+    const vaSentence = fullValuationAllowance(kXml);
+    const tax = taxEvidence({ vaSentence, tenK });
+    if (c.fy) c.fy.tax = tax.fy;
+    if (c.ltm) c.ltm.tax = tax.ltm;
+    return c;
+  } catch (e) {
+    return { fy: null, ltm: null, reasons: { fy: `computed inputs unavailable: ${e.message}`, ltm: `computed inputs unavailable: ${e.message}` } };
+  }
+}
+
 app.get('/api/nongaap/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
   const out = {
@@ -2746,6 +2782,7 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     figures: { eps: null, netIncome: null, dilutedShares: null, ebitda: null },
     reasons: { eps: null, netIncome: null, dilutedShares: null, ebitda: null },
     status: null, note: null, cached: false,
+    computed: null,   // Fix 13: filed inputs of a computed adjusted figure ({ fy, ltm, reasons }); used only where nothing is reported
   };
   const allReasons = (why) => { for (const k of Object.keys(out.reasons)) out.reasons[k] = why; };
 
@@ -2763,6 +2800,9 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     out.fiscalYear = fy;
     out.fiscalYearEnd = edgar ? (edgar.fiscalYearEnd || null) : null;
     const fyEndYear = out.fiscalYearEnd ? Number(String(out.fiscalYearEnd).slice(0, 4)) : null;
+    // Fix 13: the filed inputs of a computed adjusted net income / EBITDA, for any period the release has no reconciliation for.
+    // The deck uses them only on Non-GAAP and only where no company-reported figure exists (src/lib/reportingBasis.js).
+    out.computed = await computedInputs(cik, edgar);
     if (!fy || !fyEndYear) { out.status = 'no_8k'; out.note = 'Could not determine fiscalYear/fiscalYearEnd from EDGAR — cannot period-match the annual non-GAAP.'; allReasons(out.note); return res.json(out); }
 
     // 2–3) The fiscal-year-END earnings release and its exhibit (fyRelease — shared with the LTM EPS Q4 read).
@@ -2774,6 +2814,9 @@ app.get('/api/nongaap/:ticker', async (req, res) => {
     out.sourceUrl = loc.sourceUrl;
     if (!loc.sourceUrl) { out.status = 'no_8k'; out.note = rel.reason; allReasons(out.note); return res.json(out); }
     const html = rel.html;
+    // The company's own non-GAAP tax rate for this fiscal year, when its release states one (fiscal-year computed figure only).
+    const disclosed = disclosedNonGaapTaxRate(html, fyEndYear);
+    if (disclosed && out.computed && out.computed.fy) out.computed.fy.tax = { basis: 'disclosed', rate: disclosed.rate, sentence: disclosed.sentence, accession: best.acc };
     const t = readNonGaapTables(html, { fiscalYear: fy, fyEndYear, accession: best.acc, sourceUrl: loc.sourceUrl });
     Object.assign(out.figures, { eps: t.eps, netIncome: t.netIncome, dilutedShares: t.dilutedShares, ebitda: t.ebitda });
     Object.assign(out.reasons, t.reasons);
