@@ -38,7 +38,7 @@ export function SuggestedPremiumBox({ spot, solve, onUse }) {
         Highest premium still accretive{infoButton('premium-accretive', accretiveOpen, setAccretiveOpen)}
       </div>
       {accretiveOpen && infoBox('premium-accretive', (
-        <Option testId="premium-accretive" label={`Highest premium still accretive in Year 2 · ${solved ? `${solve.premium}%` : '—'}`}
+        <Option testId="premium-accretive" label={`Highest premium still accretive in ${solve.year || 'Year 2'} · ${solved ? `${solve.premium}%` : '—'}`}
           offer={solved ? solve.offer : null}
           detail={solved
             ? (solve.atLimit ? 'Still accretive at the slider\'s 100% limit, so the true limit may be higher.' : 'Solved from this deal\'s model, in whole percents.')

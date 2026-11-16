@@ -47,7 +47,7 @@ describe('Fix 10 Task 2 — forward EPS follows the toggle', () => {
   });
   test('premium solve: a forward reason ends the solve with it', () => {
     const r = highestAccretivePremium({ calcInputs: {}, spot: 10, synergyY1: 0, acquirerFwd: null, targetFwd: null, forwardReason: NO_GAAP_FORECAST, pnlLoading: false });
-    expect(r).toEqual({ premium: null, reason: 'Year 2 is “—”: consensus is non-GAAP; no GAAP forecast.' });
+    expect(r).toEqual({ premium: null, year: 'Year 2', reason: 'Year 2 is “—”: consensus is non-GAAP; no GAAP forecast.' });
   });
 });
 

@@ -23,6 +23,7 @@ import { ReportingBasisToggle } from './components/shared/ReportingBasisToggle';
 import { NON_GAAP, nonGaapAvailability, effectiveBasis, resolveReportingBasis, applyReportingBasis } from './lib/reportingBasis';
 import { synergySchedule } from './lib/synergies';
 import { BASIS_FY, ltmAvailability, companyInputs, combination } from './lib/companyBasis';
+import { verdictForwardSlot } from './lib/dealVerdict';
 import { DEFAULT_PREMIUM_PCT, liveSpot, offerFromPremium, formatOfferInput, highestAccretivePremium, premiumReference, PRICE_BASIS_TODAY } from './lib/offerPremium';
 import { selectForwardYears } from './lib/forwardYears';
 import { claimsOf } from './lib/netDebt';
@@ -1323,12 +1324,17 @@ function App() {
               // year that overlaps Year 1 are excluded here exactly as they are on the deck.
               const calcInputs = modelInputs(inputs).resolvedWithBank;
               const cols = (p) => (p && Array.isArray(p.columns) ? p.columns.filter(c => !c.actual) : []);
-              const y2 = selectForwardYears({ inputs: calcInputs, acquirerFwd: cols(fwdPnl.a), targetFwd: cols(fwdPnl.b), acquirerName: tickerA, targetName: tickerB }).slots[0];
+              // Fix 17 Task 6: the year is the verdict's — Year 1 when it computes (the solver checks with dealVerdict's
+              // year1Test), else the forecast slot the verdict picks (verdictForwardSlot), with that year's synergy.
+              const fsel = selectForwardYears({ inputs: calcInputs, acquirerFwd: cols(fwdPnl.a), targetFwd: cols(fwdPnl.b), acquirerName: tickerA, targetName: tickerB });
+              const y2 = verdictForwardSlot(fsel) || fsel.slots[0];
+              const schedule = synergySchedule(inputs).years;
               return highestAccretivePremium({
                 calcInputs, spot: refB,
-                synergyY1: synergySchedule(inputs).years[0].ebitda,   // what the build will use
+                synergyY1: schedule[0].ebitda,   // what the build will use
                 acquirerFwd: y2.epsOk ? y2.a : null, targetFwd: y2.epsOk ? y2.b : null, forwardReason: y2.epsOk ? null : y2.reason, pnlLoading: fwdPnl.loading,
                 acquirerName: tickerA, targetName: tickerB,
+                forwardYear: `Year ${y2.year}`, forwardSynergy: schedule[y2.synYr - 1] ? schedule[y2.synYr - 1].ebitda : null,
               });
             })()} onUse={setOfferFromPremium} />
           <PriceTiles spot={spotB} quoteAsOf={priceStatusB.quoteAsOf} retrievedAt={priceStatusB.retrievedAt} offer={inputs.offerPricePerShare}

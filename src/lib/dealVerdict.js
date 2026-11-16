@@ -60,6 +60,18 @@ function epsTest(offer, synergy, inputs) {
   return { verdict: v, pct, standaloneEPS: base, proFormaEPS: pf, breakeven: epsBreakeven(offer, base, inputs) };
 }
 
+// Fix 17 Task 6: the verdict's two year choices, exported so the input page's "Highest premium still accretive" box
+// solves and names the same year the verdict uses. Year 1's EPS test (null when Year 1 doesn't compute) …
+export function year1Test(offer, synergy, inputs) {
+  const base = acquirerStandaloneEPS(inputs);
+  if (!(base > 0)) return null;
+  return epsTest(offer, synergy, inputs);
+}
+// … and, when it doesn't, the first forecast slot whose acquirer consensus EPS is positive (null when none).
+export function verdictForwardSlot(sel) {
+  return (sel?.slots || []).filter(s => s.epsOk).find(s => s.a.eps > 0) || null;
+}
+
 const VERDICT_TEXT = { accretive: 'Accretive', dilutive: 'Dilutive', neutral: 'Neutral' };
 const fmtSigned = (p) => (p == null ? null : `${p >= 0 ? '+' : '−'}${Math.abs(p).toFixed(1)}%`);
 const fmtEps = (v) => `${v < 0 ? '−' : ''}$${Math.abs(v).toFixed(2)}`;
@@ -85,7 +97,7 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   // ── 1. Year 1 ──
   const y1Base = acquirerStandaloneEPS(inputs);
   if (y1Base > 0) {
-    const t = epsTest(offer, deal?.synergiesY1 ?? results.synergiesY1, inputs);
+    const t = year1Test(offer, deal?.synergiesY1 ?? results.synergiesY1, inputs);
     if (t) {
       const y1 = deal?.synergies?.years?.[0];
       return {
@@ -105,7 +117,7 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   if (fwdLoading) return { step: null, verdict: null, text: '—', tag: null, line: 'Forward estimates are still loading.' };
   const sel = selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerName: A, targetName: T, privateTarget: privateConsideration(inputs) != null });
   const usable = sel.slots.filter(s => s.epsOk);
-  const pick = usable.find(s => s.a.eps > 0);
+  const pick = verdictForwardSlot(sel);
   if (pick && acquirerDilutedShares(inputs).shares > 0) {
     const fwd = forwardYearInputs(inputs, pick.a.eps, pick.b.eps);
     const syn = parseFloat(synY[pick.synYr - 1]) || 0;   // slide 9's forward row reads the same figure, with nothing entered as none

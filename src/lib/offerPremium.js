@@ -1,4 +1,5 @@
 import { acquisitionNewDebt, acquirerSharePrice, acquirerDilutedShares, epsAccretionPct, forwardYearInputs } from '../utils/dealCalc';
+import { year1Test } from './dealVerdict';   // Fix 17 Task 6: the verdict's own Year 1 test
 
 // Offer price and premium on the input page. The stored offer (inputs.offerPricePerShare) is the only source
 // of truth. The premium is always derived from it, so the slider and the offer field cannot disagree.
@@ -56,37 +57,48 @@ export function formatOfferInput(v) {
 // Year 2 on slide 8 is the first forward year: that year's consensus EPS with Year 1 synergies.
 export const firstForwardColumn = (pnl) => (pnl && Array.isArray(pnl.columns)) ? (pnl.columns.filter(c => !c.actual)[0] ?? null) : null;
 
-// The highest whole-percent premium on the slider that is still accretive in Year 2, solved by running the deal's
-// own accretion function at every step. Returns { premium, offer, accretionPct, atLimit } or { premium: null, reason }.
-// Never estimates: any missing input ends in a reason.
-export function highestAccretivePremium({ calcInputs, spot, synergyY1, acquirerFwd, targetFwd, forwardReason, pnlLoading, acquirerName, targetName }) {
-  const none = (reason) => ({ premium: null, reason });
+// The highest whole-percent premium on the slider that is still accretive in the verdict's year, solved by running the
+// deal's own accretion function at every step. Returns { premium, offer, accretionPct, atLimit, year } or
+// { premium: null, reason, year }. Never estimates: any missing input ends in a reason.
+// Fix 17 Task 6: the year is the verdict's (src/lib/dealVerdict.js): Year 1 when Year 1's EPS test computes (year1Test, the
+// verdict's step 1), otherwise the forecast year the caller picked with verdictForwardSlot (`forwardYear`, e.g. "Year 2",
+// with that year's synergy). It used to be Year 2 always, while the verdict used Year 1.
+export function highestAccretivePremium({ calcInputs, spot, synergyY1, acquirerFwd, targetFwd, forwardReason, pnlLoading, acquirerName, targetName, forwardYear = 'Year 2', forwardSynergy }) {
   const A = acquirerName || 'The acquirer';
   const T = targetName || 'The target';
-  if (liveSpot(spot) == null) return none(`There is no live price for ${T}.`);
+  if (liveSpot(spot) == null) return { premium: null, reason: `There is no live price for ${T}.`, year: null };
+  // Year 1, exactly when the verdict uses it.
+  if (synergyY1 != null && year1Test(offerFromPremium(spot, DEFAULT_PREMIUM_PCT), synergyY1, calcInputs)) {
+    return solveOn('Year 1', calcInputs, synergyY1);
+  }
+  const Y = forwardYear;
+  const none = (reason) => ({ premium: null, reason, year: Y });
   if (pnlLoading) return none('Forward estimates are still loading.');
-  if (forwardReason) return none(`Year 2 is “—”: ${forwardReason}.`);
+  if (forwardReason) return none(`${Y} is “—”: ${forwardReason}.`);
   const aEps = acquirerFwd?.eps ?? null;
   const tEps = targetFwd?.eps ?? null;
-  if (aEps == null) return none(`There is no Year 2 consensus EPS for ${A}.`);
-  if (tEps == null) return none(`There is no Year 2 consensus EPS for ${T}.`);
-  if (!(aEps > 0)) return none(`${A}'s Year 2 consensus EPS is ${aEps < 0 ? '−' : ''}$${Math.abs(aEps).toFixed(2)}. Accretion can't be measured from an EPS that isn't positive.`);
+  if (aEps == null) return none(`There is no ${Y} consensus EPS for ${A}.`);
+  if (tEps == null) return none(`There is no ${Y} consensus EPS for ${T}.`);
+  if (!(aEps > 0)) return none(`${A}'s ${Y} consensus EPS is ${aEps < 0 ? '−' : ''}$${Math.abs(aEps).toFixed(2)}. Accretion can't be measured from an EPS that isn't positive.`);
   if (acquirerSharePrice(calcInputs) == null) return none(`There is no live price for ${A}, so the new shares can't be counted.`);
   if (!(acquirerDilutedShares(calcInputs).shares > 0)) return none(`${A}'s diluted share count is missing.`);
   if (!(parseFloat(calcInputs.companyBShares) > 0)) return none(`${T}'s share count is missing.`);
-  if (synergyY1 == null) return none('There is no Year 1 synergy figure.');
+  const syn = forwardSynergy !== undefined ? forwardSynergy : synergyY1;
+  if (syn == null) return none('There is no Year 1 synergy figure.');
   if (acquisitionNewDebt(calcInputs, spot).newDebt == null) return none(`${T}'s total debt is unavailable, so the new debt and its interest can't be calculated.`);
+  return solveOn(Y, forwardYearInputs(calcInputs, aEps, tEps), syn);
 
-  const fwd = forwardYearInputs(calcInputs, aEps, tEps);
-  const accretionAt = (p) => epsAccretionPct(offerFromPremium(spot, p), synergyY1, fwd);
-  for (let p = PREMIUM_MAX; p >= PREMIUM_MIN; p--) {
-    const pct = accretionAt(p);
-    if (pct != null && pct > 0) {
-      return { premium: p, offer: offerFromPremium(spot, p), accretionPct: pct, atLimit: p === PREMIUM_MAX };
+  function solveOn(year, yInputs, synergy) {
+    const accretionAt = (p) => epsAccretionPct(offerFromPremium(spot, p), synergy, yInputs);
+    for (let p = PREMIUM_MAX; p >= PREMIUM_MIN; p--) {
+      const pct = accretionAt(p);
+      if (pct != null && pct > 0) {
+        return { premium: p, offer: offerFromPremium(spot, p), accretionPct: pct, atLimit: p === PREMIUM_MAX, year };
+      }
     }
+    const atZero = accretionAt(PREMIUM_MIN);
+    const mix = `${parseFloat(calcInputs.cashPercent)}% cash`;
+    if (atZero == null) return { premium: null, year, reason: `At ${mix}, pro forma ${year} EPS is not positive at any premium on the slider.` };
+    return { premium: null, year, reason: `At ${mix}, the deal is dilutive in ${year} even at a 0% premium (${atZero.toFixed(1)}%).` };
   }
-  const atZero = accretionAt(PREMIUM_MIN);
-  const mix = `${parseFloat(calcInputs.cashPercent)}% cash`;
-  if (atZero == null) return none(`At ${mix}, pro forma Year 2 EPS is not positive at any premium on the slider.`);
-  return none(`At ${mix}, the deal is dilutive in Year 2 even at a 0% premium (${atZero.toFixed(1)}%).`);
 }
