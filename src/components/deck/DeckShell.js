@@ -25,7 +25,7 @@ import { SectionCreditStats } from './sections/SectionCreditStats';
 import { SectionPrivateValuation } from './sections/SectionPrivateValuation';
 import { SectionSources }          from './sections/SectionSources';
 import { SectionDataVerificationA, SectionDataVerificationB } from './sections/SectionDataVerification';
-import { DECK_ORDER, exhibitLabelOf, setActiveSections, pdfOrder } from './deckRegistry';
+import { DECK_ORDER, exhibitLabelOf, setActiveSections, pdfOrder, screenPageNumbers } from './deckRegistry';
 
 // Order: §10 Trading Profile dropped; old §12 Football Field + §14 Valuation Matrix were merged into one
 // Valuation Summary (Exhibit N), which has since been REMOVED — the app-built DCF and sector-median
@@ -51,10 +51,10 @@ const SECTIONS = DECK_ORDER.map(s => ({ ...s, Component: COMPONENTS[s.id] }));
 // pageNum for each showInPdf section (1-indexed)
 const PDF_SECTIONS = pdfOrder(SECTIONS.filter(s => s.showInPdf));
 const PAGE_NUM_MAP = Object.fromEntries(PDF_SECTIONS.map((s, i) => [s.id, i + 1]));
-// Fix 17 Task 8: the sidebar lists the slides in page order (deckRegistry.pdfOrder: Title, then Deal Summary), so its
-// numbers read 1, 2, 3 …; the deck still opens on the Deal Summary. pdfOrder puts it right after the Title on public
-// and private decks alike, so this index holds for both.
-const LANDING_INDEX = Math.max(0, pdfOrder(SECTIONS).findIndex(s => s.id === 'dashboard'));
+// Fix 19 Task 1: on screen the sidebar and Previous/Next follow registry order (Deal Summary, Title, then the rest) and
+// the deck opens on the Deal Summary; only the PDF uses pdfOrder (Title first). Registry order holds on public and
+// private decks alike (the private promotions sit after the Title), so this index holds for both.
+const LANDING_INDEX = Math.max(0, SECTIONS.findIndex(s => s.id === 'dashboard'));
 
 export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, onNewAnalysis, onSaveAnalysis }) {
   const [activeIndex, setActiveIndex] = useState(LANDING_INDEX);
@@ -89,11 +89,10 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
       activeSections = rest;
     } else activeSections = kept;
   }
-  // Fix 17 Task 8: the screen rail in the same order as the pages.
-  activeSections = pdfOrder(activeSections);
+  // Fix 19 Task 1: the screen rail keeps registry order (Deal Summary 1, Title 2); its numbers count in that order.
+  const screenPageNumMap = screenPageNumbers(activeSections);
   // PDF page order (Fix 14 Task 7): the Deal Summary is the first page after the Title (deckRegistry.pdfOrder).
   const activePdfSections = pdfOrder(activeSections.filter(s => s.showInPdf));
-  const activePageNumMap = Object.fromEntries(activePdfSections.map((s, i) => [s.id, i + 1]));
   setActiveSections(activePdfSections.map(s => s.id));   // renumber labels over the visible set (synchronous, before children render)
 
   // Keyboard navigation — plain one-step advance/retreat, clamped to the active set.
@@ -153,7 +152,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
 
   const activeSection = activeSections[Math.min(activeIndex, activeSections.length - 1)];
   const ActiveComponent = activeSection.Component;
-  const activePdfPageNum = activePageNumMap[activeSection.id] ?? null;
+  const activePdfPageNum = screenPageNumMap[activeSection.id] ?? null;   // the on-screen slide's number, in screen order
   const isDash = activeSection.id === 'dashboard';
 
   // Option-B on-screen enlargement: the VISIBLE PageFrame slide is scaled up ~1.15× for readability. The
@@ -199,7 +198,7 @@ export function DeckShell({ target, acquirer, deal, comparables, onEditInputs, o
             // `dashboard` was the single non-PDF section at index 0 (title i=1 = page 1 ... i=17 =
             // page 17); inserting another non-PDF slide ahead of it breaks that, so read the page
             // map directly. Non-PDF sections have no page and render the bullet.
-            const badge = activePageNumMap[section.id];
+            const badge = screenPageNumMap[section.id];
             return (
               <button
                 key={section.id}

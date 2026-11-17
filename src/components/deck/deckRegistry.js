@@ -50,6 +50,13 @@ export function pdfOrder(sections) {
   return [...rest.slice(0, at + 1), dash, ...rest.slice(at + 1)];
 }
 
+// Fix 19 Task 1: on screen the slides keep registry order (Deal Summary 1, Title 2, then the rest), and the on-screen
+// page numbers count the printable slides in that order. The PDF keeps pdfOrder (Title is page 1). Screen-only slides
+// (Executive Summary) get no number.
+export function screenPageNumbers(sections) {
+  return Object.fromEntries(sections.filter((s) => s.showInPdf).map((s, i) => [s.id, i + 1]));
+}
+
 function computeMaps(order) {
   const LABEL = {}, PAGE = {};
   let ex = 0, ap = 0, pg = 0;
