@@ -231,7 +231,21 @@ export function reportedEpsReference(h, deal) {
       ? (inputs.companyAEpsLabel || 'diluted, filed')   // ltmEps's own label: "sum of 4 filed quarters: quarter to … $0.37 + 9 months to … $1.58"
       : `diluted, ${inputs.companyAPeriodLabel || 'fiscal year'} 10-K`;
   }
-  return { value: v, text: `Reported: ${fmtEps(v)} (${src})` };
+  return { value: v, src, text: `Reported: ${fmtEps(v)} (${src})` };
+}
+
+// Fix 19 Task 5: the EPS the deal itself uses, in words — the acquirer's net income on the deal's basis ÷ the one diluted
+// share count (acquirerDilutedShares, the count the pro forma divides by) = acquirerStandaloneEPS, with the
+// company-reported figure named as a reference (reportedEpsReference). null when any figure is missing.
+export function dealEpsMethodText(deal, ticker) {
+  const inputs = deal?._inputs || {};
+  const ni = num(inputs.companyANetIncome);
+  const sh = acquirerDilutedShares(inputs).shares;
+  const eps = acquirerStandaloneEPS(inputs);
+  if (ni == null || !(sh > 0) || eps == null || !Number.isFinite(eps)) return null;
+  const basis = inputs.reportingBasis === NON_GAAP ? 'non-GAAP' : 'GAAP';
+  const ref = reportedEpsReference({ year: 'Year 1', standaloneEPS: eps }, deal);
+  return `the deal uses ${ticker || 'the acquirer'} ${basis} net income ÷ ${sh.toFixed(1)}M diluted shares (${fmtEps(eps)})${ref ? `, with ${fmtEps(ref.value)} shown as the company-reported reference (${ref.src})` : ''}`;
 }
 
 // The breakeven line plus which years the verdict and breakeven used, and why any earlier year did not compute.

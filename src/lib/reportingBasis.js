@@ -259,11 +259,13 @@ export function epsBasisLabel(plan) {
 export const computedSides = (plan) => (plan && plan.eps && plan.eps.nonGaap ? ['A', 'B'].filter((P) => plan.eps[P] && plan.eps[P].computed) : []);
 
 // "HNGE company reported; OMDA Computed by EasyM&A: …" — the source of each company's Year 1 non-GAAP EPS.
-export function epsSourceText(plan, tickers = {}) {
+// Fix 19 Task 5: `sideText` replaces one company's text (the Deal Summary passes the deal's own EPS method for the acquirer).
+export function epsSourceText(plan, tickers = {}, sideText = {}) {
   if (!plan || !plan.eps || !plan.eps.nonGaap) return null;
   return ['A', 'B'].map((P) => {
     const e = plan.eps[P];
     const t = tickers[P] || plan.tickers?.[P] || (P === 'A' ? 'acquirer' : 'target');
+    if (sideText[P]) return `${t}: ${sideText[P]}`;
     return e.computed ? `${t}: ${e.label}` : e.ltmReported ? `${t}: ${LTM_REPORTED}` : `${t}: company reported`;
   }).join('; ');
 }

@@ -25,7 +25,7 @@ import { multipleNumber } from '../../../lib/multiples';
 import { isNonGaapDeal, FY_ONLY, computedSides, epsSourceText, combinedEbitdaShort } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
-import { verdictFlags, headlineEps, reportedEpsReference } from '../../../lib/dealVerdict';
+import { verdictFlags, headlineEps, reportedEpsReference, dealEpsMethodText } from '../../../lib/dealVerdict';
 import {
   explainEvEbitda, explainPeRatio, explainDebtEbitda,
   explainPTBV, explainCombinedCET1,
@@ -60,6 +60,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
 
   // GAAP | Non-GAAP plan (src/lib/reportingBasis.js) — null on a GAAP deal, which leaves every label below as it was.
   const ngPlan = isNonGaapDeal(deal) ? deal.reportingBasis : null;
+  const epsMethod = dealEpsMethodText(deal, ngPlan?.tickers?.A || acquirer?.ticker || nameA);   // Fix 19 Task 5
   const ebB = ngPlan ? ngPlan.ebitda.B : null;
   const ebitdaBasisText = (e) => (e.nonGaap ? (e.computed ? `${e.name} (non-GAAP, computed by EasyM&A)` : `${e.name} (non-GAAP)`) : 'computed EBITDA');
   const ebDiffer = !!(ngPlan && results.ebitdaBasesDiffer);
@@ -296,7 +297,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             },
           ] : [
             {
-              label: 'EV / EBITDA',
+              label: 'EV / EBITDA at offer price',   // Fix 19 Task 5: EV = offer equity value − net cash, like the P/E tile
               // "n/m" (not meaningful): a multiple off a negative EBITDA has no economic meaning.
               value: results.evEBITDA === 'N/A' ? 'n/m' : `${multipleNumber(results.evEBITDA)}x`,
               note:  results.evEBITDA === 'N/A'
@@ -355,9 +356,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 {(deal.basis || 'GAAP')} basis
               </span>
             </h3>
-            {ngPlan && (
+            {(ngPlan || epsMethod) && (
               <div data-testid="eps-basis-note" style={{ fontSize: 11, color: '#6B7280', marginTop: -8, marginBottom: 12, fontStyle: 'italic' }}>
-                {!ngPlan.eps.nonGaap ? `${ngPlan.eps.note}.` : computedSides(ngPlan).length ? `Non-GAAP EPS — ${epsSourceText(ngPlan)}.` : 'Non-GAAP EPS, company reported by both companies (fiscal-year earnings releases).'}
+                {/* Fix 19 Task 5: the acquirer's part says which EPS the deal uses (net income ÷ the one share count), the reported figure as a reference. */}
+                {!ngPlan ? `GAAP EPS — ${epsMethod}.`
+                  : !ngPlan.eps.nonGaap ? `${ngPlan.eps.note}.`
+                  : computedSides(ngPlan).length ? `Non-GAAP EPS — ${epsSourceText(ngPlan, {}, ngPlan.eps.A && !ngPlan.eps.A.computed && epsMethod ? { A: epsMethod } : {})}.`
+                  : 'Non-GAAP EPS, company reported by both companies (fiscal-year earnings releases).'}
               </div>
             )}
             <div data-testid="eps-analysis-label" style={{ fontSize: 11, color: '#374151', fontWeight: 600, marginTop: -6, marginBottom: 10 }}>{hEps.label}</div>
