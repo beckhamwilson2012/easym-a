@@ -9,7 +9,7 @@ import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST } from '../../../
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence, fmtSynergy } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { isNonGaapDeal, computedSides, epsSourceText } from '../../../lib/reportingBasis';
-import { SGA_LABEL, TOTAL_COSTS_LABEL, forwardSga, forwardSgaReason, forwardTotalCosts, sumBoth } from '../../../lib/forwardCosts';
+import { TOTAL_COSTS_LABEL, forwardTotalCosts, sumBoth } from '../../../lib/forwardCosts';
 
 // ── §6 — Pro Forma & Accretion (one logical exhibit, split across two pages) ─────────────────────────────
 // §6a "Pro Forma Combined" (Exhibit E): the detailed per-forward-year tables (Revenue, growth %, Gross
@@ -184,9 +184,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
             synText: yr.revenue == null ? NONE_ENTERED : (yr.revenueEbitda == null ? 'not in EBITDA' : null), pf: null, synRow: true },
           { label: 'Total synergies (EBITDA impact)', syn: yr.ebitda, synText: yr.entered ? null : NONE_ENTERED, pf: null, synRow: true },
           { label: 'Operating Expense', a: null,             b: null,             c: null,   syn: null,    pf: null, dash: true },
-          // Fix 17 Task 2: FMP's SG&A consensus (its own row, never Operating Expense: it excludes R&D) and total costs =
-          // consensus revenue − consensus operating income. Combined and PF Tot. = acquirer + target where both exist.
-          { label: SGA_LABEL, a: forwardSga(slot.a), b: forwardSga(slot.b), c: sumBoth(forwardSga(slot.a), forwardSga(slot.b)), syn: null, pf: sumBoth(forwardSga(slot.a), forwardSga(slot.b)), sgaReasons: [forwardSgaReason(slot.a) && `${aTk}: ${forwardSgaReason(slot.a)}`, forwardSgaReason(slot.b) && `${bTk}: ${forwardSgaReason(slot.b)}`].filter(Boolean) },
+          // Fix 17 Task 2: total costs = consensus revenue − consensus operating income (FMP's SG&A consensus is not shown). Combined and PF Tot. = acquirer + target where both exist.
           { label: TOTAL_COSTS_LABEL, a: forwardTotalCosts(slot.a), b: forwardTotalCosts(slot.b), c: sumBoth(forwardTotalCosts(slot.a), forwardTotalCosts(slot.b)), syn: null, pf: sumBoth(forwardTotalCosts(slot.a), forwardTotalCosts(slot.b)) },
           { label: 'EBIT (Op Income)',  a: a.operatingIncome,b: b.operatingIncome,c: cEbit,  syn: syn,     pf: cEbit != null ? cEbit + syn : null, bold: true },
           { label: 'Operating margin %',a: margin(a.operatingIncome, a.revenue), b: margin(b.operatingIncome, b.revenue), c: margin(cEbit, cRev), pct: true },
@@ -280,8 +278,6 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
     return `Year 1 is the CURRENT-ACTUALS accretion — identical to the deck's headline (reconciled SEC actuals; the number every other slide leads with). ${fwdNote}${date ? ` Deal terms as of ${date}.` : ''}`;
   })();
 
-  // Fix 17 Task 2: why an SG&A cell is "—" (FMP returned no SG&A estimate for that company and year), once per year.
-  const pfSgaMissing = years.flatMap((y) => (y.rows.find((r) => r.label === SGA_LABEL)?.sgaReasons || []).map((t) => `${t}`));
 
   // ══════════════════════════ RENDER ════════════════════════════════════════════════════════════════════
   if (isA) {
@@ -408,7 +404,6 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           Acquirer &amp; target forward legs are <strong>{CONSENSUS_BASIS}</strong> (FMP analyst-estimates; FMP does not label the basis, and its EPS consensus matches the companies' own non-GAAP guidance where they give one); the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each forward year is the first fiscal year that begins after Year 1's period ends, for each company, and is labeled by the acquirer's fiscal year{fyeMonth(acquirer?.fiscalYearEnd) && fyeMonth(target?.fiscalYearEnd) && fyeMonth(acquirer?.fiscalYearEnd) !== fyeMonth(target?.fiscalYearEnd) ? ` (the two companies' fiscal calendars are offset: ${aTk} ends ${fyeMonth(acquirer?.fiscalYearEnd)}, ${bTk} ends ${fyeMonth(target?.fiscalYearEnd)})` : ''}. Combined = Acquirer + Target.
           <strong> Synergies are the deal's entered assumptions</strong> (total EBITDA impact {synergyYears.slice(0, sel.slots.length).map((y, k) => { const cr = sum(sel.slots[k]?.a?.revenue, sel.slots[k]?.b?.revenue); const pc = cr > 0 ? (y.ebitda / cr * 100) : null; return y.entered ? `${fmtM(y.ebitda)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}` : `${NONE_ENTERED} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. Cost synergies add to EBIT dollar for dollar — <strong>without asserting whether they arise in cost of revenue or operating expense</strong>. Revenue synergies add to PF revenue{deal?.synergies?.anyRevenue ? <> and {synergyMargin?.pct != null ? 'reach EBIT at the combined gross margin' : 'do not reach EBIT'}: {marginSentence(synergyMargin)}{deal.synergies.revenueOnly ? <> <strong style={{ color: '#92400E' }}>⚠ {REVENUE_ONLY_FLAG}</strong></> : null}</> : '.'} <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtFin(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page) <strong>and of the after-tax interest the cash used stops earning</strong> ({fmtFin(lostInt)}/yr, the <em>"Less: lost interest"</em> line: excess cash used × {deal?._results?.cashYield?.label ?? '—'} × (1 − {Math.round(TAX_RATE * 100)}%)); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on {(acquirer?.basis === 'ltm' && target?.basis === 'ltm') ? 'the LTM actuals selected for Year 1' : 'latest-FY actuals'} + forward consensus</strong>; forward growth is always measured against fiscal-year figures, never LTM; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
           <sup style={{ fontSize: 9.5 }}>n</sup> No consensus available: FMP publishes no forward gross profit, so forward cost of revenue, gross profit and gross margin are "—". Forward Operating Expense is "—" — consensus supplies operating income but not gross profit (same treatment as the Standalone P&amp;L slides).
-          {pfSgaMissing.length ? <> SG&amp;A is "—" where FMP has no estimate: {pfSgaMissing.join('; ')}.</> : null}
         </div>
       </PageFrame>
     );

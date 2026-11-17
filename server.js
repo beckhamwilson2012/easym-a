@@ -1895,10 +1895,8 @@ app.get('/api/pnl/:ticker', async (req, res) => {
           // is real — Gross − OpInc on reported GAAP = us-gaap `OperatingExpenses` exactly where tagged (CRM, TEAM)
           // / `CostsAndExpenses`−COGS where not (GOOGL/AMZN). Do not re-add a forward value.
           operatingExpense: null, operatingExpenseEst: true,
-          // Fix 17 Task 2: FMP's SG&A consensus, passed through as its OWN line (src/lib/forwardCosts.js), never as
-          // Operating Expense (it excludes R&D), and never used to build gross profit or a margin. null → "—" with why.
-          sga: e.sgaExpenseAvg != null ? inM(e.sgaExpenseAvg) : null,
-          sgaReason: e.sgaExpenseAvg != null ? null : `FMP returns no SG&A estimate for FY${e.date.slice(0, 4)}`,
+          // Fix 17 addendum: FMP's SG&A consensus is not passed through. For HNGE it exceeds revenue − operating income in
+          // every year (FY2027E $897M vs $806M), so it is not on the same basis as the consensus operating income.
           operatingIncome: opInc,
           nonOperatingIncome: null,   // no forward consensus for this line → "—"
           netIncome: e.netIncomeAvg != null ? inM(e.netIncomeAvg) : null,

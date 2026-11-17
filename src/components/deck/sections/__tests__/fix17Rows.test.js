@@ -34,8 +34,8 @@ describe('Pro Forma rows', () => {
     expect(rowAllDash(r)).toBe(false);
   });
 
-  test('SG&A and revenue rows with values stay', () => {
-    expect(rowAllDash({ label: 'SG&A', a: 897, b: 311, c: 1208, syn: null, pf: 1208 })).toBe(false);
+  test('total-cost and revenue rows with values stay', () => {
+    expect(rowAllDash({ label: 'Total costs (derived: revenue − operating income)', a: 806, b: 364, c: 1170, syn: null, pf: 1170 })).toBe(false);
   });
 });
 
