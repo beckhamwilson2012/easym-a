@@ -7,6 +7,7 @@ import { BasisNote } from '../shared/BasisNote';
 import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, isGrossNm, grossNmNote, fmtAsOf } from '../shared/deckTokens';
 import { getCompanyProfile, PROFILES_AS_OF } from '../../../lib/companyProfiles';
 import { enterpriseValue, evClaimsNote, claimsOf, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { fcfAndEquity } from '../../../lib/fcfYield';
 
 // US state full-name → 2-letter abbreviation for HQ display ("San Francisco, California" → "…, CA").
 const US_STATE_ABBR = { 'California':'CA','New York':'NY','Texas':'TX','Washington':'WA','Massachusetts':'MA','Illinois':'IL','Georgia':'GA','Florida':'FL','Virginia':'VA','Colorado':'CO','Pennsylvania':'PA','New Jersey':'NJ','Ohio':'OH','North Carolina':'NC','Michigan':'MI','Minnesota':'MN','Oregon':'OR','Arizona':'AZ','Tennessee':'TN','Maryland':'MD','Connecticut':'CT','Missouri':'MO','Indiana':'IN','Wisconsin':'WI','Utah':'UT','Nevada':'NV','Delaware':'DE','District of Columbia':'DC' };
@@ -79,14 +80,15 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
   // ── Key Financials (real data from the deck's company objects + forward growth from /api/pnl) ──
   const buildKeyFin = (co, pnl, ltmRaw, assets) => {
     const num = (x) => x != null && x !== '' ? parseFloat(x) : null;
-    const rev = num(co.revenue), gp = num(co.grossProfit), oi = num(co.operatingIncome), fcf = num(co.freeCashFlow);
+    const rev = num(co.revenue), gp = num(co.grossProfit), oi = num(co.operatingIncome);
     const cash = num(co.cash), debt = num(co.debt), sti = num(co.sti);
     // Two market-cap bases, deliberately split (Stage 11-D). The "Equity value (mkt cap)" / EV / EV-Rev
     // rows are a TRADING equity value (live price × shares) — they must never fall back to the
     // acquisition-price/proxy `marketCap` (App.js:749), so they read currentMarketCap ONLY.
     // The bank P/TBV row keeps its documented acquisition basis (comment App.js:746), so it retains the
     // `?? num(co.marketCap)` fallback — byte-identical to pre-split behavior.
-    const tradingMcap = num(co.currentMarketCap);
+    const fe = fcfAndEquity(co, ltmRaw);   // Fix 19 Task 4: the one FCF / equity value pick, shared with the Target Profile's FCF yield
+    const tradingMcap = fe.equity;
     const ptbvMcap    = num(co.currentMarketCap) ?? num(co.marketCap);
     const ev = enterpriseValue(tradingMcap, debt, cash, sti, co.claims); // shared helper: cash bucket = cash + short-term marketable securities (b); null-aware
     const cols = pnl && Array.isArray(pnl.columns) ? pnl.columns : null;
@@ -100,7 +102,6 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     const revL = T && T.revenue != null ? num(T.revenue) : null;
     const gpL  = T && T.grossProfit != null ? num(T.grossProfit) : null;
     const oiL  = T && T.operatingIncome != null ? num(T.operatingIncome) : null;
-    const fcfL = T && T.freeCashFlow != null ? num(T.freeCashFlow) : null;
     const revA = revL != null ? revL : (rev && rev > 0 ? rev : null);   // LTM if trusted, else FY annual
     const revBasis = revL != null ? 'LTM' : 'FY';
     // Bank metrics (from the SAME bank-facts fields §4/§5 render — single source of truth). Null-safe:
@@ -119,7 +120,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
       grossNm: isGrossNm(co),
       grossMargin: (gpL != null && revL > 0) ? gpL / revL * 100 : ((gp != null && rev) ? gp / rev * 100 : null),
       opMargin:    (oiL != null && revL > 0) ? oiL / revL * 100 : ((oi != null && rev) ? oi / rev * 100 : null),
-      fcf: fcfL != null ? fcfL : fcf,
+      fcf: fe.fcf,
       marketCap: tradingMcap,   // trading cap only (Stage 11-D split) — never the acquisition-price/proxy field
       debt, cash,        // point-in-time balance-sheet items — shown as separate lines (EV bridge)
       assets: assets != null ? Number(assets) : null,   // total assets at the balance-sheet anchor (7A Item 2) — from /quote, same instant as cash/debt
