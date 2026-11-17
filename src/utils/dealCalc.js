@@ -285,8 +285,10 @@ export function calculate(inputs) {
   // deals are unchanged.
   // A company-reported (non-GAAP) EBITDA is never added to a computed one: different EBITDA bases → null.
   const differentEbitdaBases = ebitdaBasesDiffer(inputs);
-  const combinedEBITDA   = (!differentBases && !differentEbitdaBases && companyAEBITDA != null && companyBEBITDA != null)
-    ? companyAEBITDA + companyBEBITDA + synergiesY1 : null; // synergies pre-tax
+  // Fix 19 Task 3: the two companies' own EBITDA, before synergies (the pre-deal leverage denominator); same guard.
+  const combinedEBITDAExSynergies = (!differentBases && !differentEbitdaBases && companyAEBITDA != null && companyBEBITDA != null)
+    ? companyAEBITDA + companyBEBITDA : null;
+  const combinedEBITDA   = combinedEBITDAExSynergies != null ? combinedEBITDAExSynergies + synergiesY1 : null; // synergies pre-tax
 
   // Pro-forma RECURRING net income: combine both companies, add after-tax synergies, subtract the
   // after-tax interest cost of debt-funding the cash portion.
@@ -417,6 +419,7 @@ export function calculate(inputs) {
     combinedRevenue:    combinedRevenue === null ? null : combinedRevenue.toFixed(0),
     proFormaRevenue:    proFormaRevenue === null ? null : proFormaRevenue.toFixed(0),
     combinedEBITDA:     combinedEBITDA === null ? null : combinedEBITDA.toFixed(0),
+    combinedEBITDAExSynergies: combinedEBITDAExSynergies === null ? null : combinedEBITDAExSynergies.toFixed(1),   // Fix 19 Task 3
     // combinedNetIncome reflects the pro-forma recurring net income used for EPS (consistent).
     combinedNetIncome:  proFormaNetIncome === null ? null : proFormaNetIncome.toFixed(0),
     // Total pre-tax EBITDA impact per year. The cost and revenue lines are in synergies.years.

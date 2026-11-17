@@ -124,6 +124,11 @@ describe('deal model', () => {
     expect(cost.combinedEBITDA).toBe('88');
     expect(parseFloat(cost.proFormaNetIncome) - parseFloat(none.proFormaNetIncome)).toBeCloseTo(100 * (1 - TAX_RATE), 0);
   });
+  test('Fix 19 Task 3: combined EBITDA without synergies is the two companies\' own sum; null when a side is null', () => {
+    expect(calculate({ ...deal, synergiesY1: 100 }).combinedEBITDAExSynergies).toBe('-12.0');
+    expect(calculate({ ...deal, synergiesY1: 100 }).combinedEBITDA).toBe('88');
+    expect(calculate({ ...deal, companyBEBITDA: null }).combinedEBITDAExSynergies).toBeNull();
+  });
   test('revenue synergy: pro forma revenue up by the dollars, EBITDA by dollars × margin', () => {
     const r = calculate({ ...deal, revenueSynergiesY1: 100 });
     expect(r.combinedRevenue).toBe('5595');
