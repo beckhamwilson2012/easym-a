@@ -1,5 +1,6 @@
 import { NON_GAAP } from './reportingBasis';
 import { BASIS_LTM } from './companyBasis';
+import { SYNERGY_YEARS } from './synergies';
 
 // The forward accretion years (Years 2–4), chosen once for slide 9's tables and strip, the deal verdict and the input
 // page's premium solve (Fix 10 Tasks 2 and 3). Nothing here computes a figure; it only decides which /api/pnl forward
@@ -16,6 +17,15 @@ import { BASIS_LTM } from './companyBasis';
 export const CONSENSUS_BASIS = 'FMP consensus (non-GAAP)';
 export const NO_GAAP_FORECAST = 'consensus is non-GAAP; no GAAP forecast';
 export const FORWARD_SLOTS = 3;
+
+// Fix 19 Task 2: the one synergy-year rule. Accretion Year N carries synergy Year N for N = 1–3 (the deal's synergy
+// schedule, SYNERGY_YEARS), whatever period Year 1 is (LTM or FY) and whether or not Year 1 computes. A year past the
+// schedule (Year 4) carries none: null, and its row says BEYOND_SYNERGY_SCHEDULE.
+export const synergyYearFor = (year) => (SYNERGY_YEARS.includes(year) ? year : null);
+export const BEYOND_SYNERGY_SCHEDULE = `no synergies (beyond the Year ${SYNERGY_YEARS[0]}–${SYNERGY_YEARS[SYNERGY_YEARS.length - 1]} synergy schedule)`;
+// That year's figure from a per-year list (synergiesY1..Y3, or deal.synergies.years). A year past the schedule has no
+// synergy by the rule above, so the caller gets undefined, never the neighbouring year's figure.
+export const synergyForSlot = (list, slot) => (slot && slot.synYr != null && Array.isArray(list) ? list[slot.synYr - 1] : undefined);
 
 const isoDate = (s) => (typeof s === 'string' && /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : null);
 
@@ -36,7 +46,7 @@ export function firstFiscalYearAfter(end, fyeIso) {
 }
 
 // slots[k] is Year k+2. a / b are the companies' /api/pnl forward columns for that year (or null), epsOk says whether the
-// EPS test can run, reason says why not. synYr is the synergy year it carries (Year 2 → Year-1 synergies, as before).
+// EPS test can run, reason says why not. synYr is the synergy year it carries (synergyYearFor: Year 2 → Year-2 synergies, Year 4 → null).
 export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerName, targetName, privateTarget }) {
   const A = acquirerName || 'the acquirer';
   const T = targetName || 'the target';
@@ -67,7 +77,7 @@ export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerNam
     else if (fyB == null) reason = `${T}'s Year 1 period or fiscal year end is not known`;
     else if (!b || b.eps == null) reason = beyond(targetFwd, fyB) || `no FMP consensus EPS for ${T} FY${fyB}`;
     slots.push({
-      year: k + 2, synYr: k + 1, fyA, fyB,
+      year: k + 2, synYr: synergyYearFor(k + 2), fyA, fyB,
       label: fyA != null ? `FY${fyA}E` : null,
       a, b, epsOk: reason == null, reason,
       // Why the column itself (revenue, EBIT, net income) is missing, for the slide 9 tables.

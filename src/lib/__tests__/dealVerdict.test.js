@@ -46,10 +46,10 @@ describe('deal verdict ladder', () => {
     expect(v.step).toBe(2);
     expect(v.tag).toBe('EPS test, FY2027E (first profitable year) · FMP consensus (non-GAAP)');
     expect(v.line).toMatch(/Verdict and breakeven use Year 3 \(FY2027E\); Year 1 —: the acquirer's standalone EPS is not positive; Year 2 \(FY2026E\) —: the acquirer's consensus EPS is not positive\./);
-    // FY2027E: NI 300 + 100 + 20 × 0.79 = 415.8 over 137.5 = 3.024 > 3; slide 8 pairs FY2027E with Year 2 synergies
-    expect(v.proFormaEPS).toBeCloseTo(415.8 / 137.5, 12);
+    // FY2027E is Year 3: NI 300 + 100 + 30 × 0.79 = 423.7 over 137.5 = 3.0815 > 3; Fix 19 Task 2 pairs Year 3 with Year 3 synergies
+    expect(v.proFormaEPS).toBeCloseTo(423.7 / 137.5, 12);
     expect(v.verdict).toBe('accretive');
-    expect(v.entered).toBe(20);
+    expect(v.entered).toBe(30);
   });
 
   test('step 3 at EV/EBITDA capitalizes PRE-tax Year 3 synergies; the breakeven is on the same basis', () => {

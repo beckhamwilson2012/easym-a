@@ -5,7 +5,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote, fmtInterest } from '../shared/deckTokens';
 import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, acquirerSharePrice, forwardYearInputs, TAX_RATE, privateConsideration } from '../../../utils/dealCalc';
-import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST } from '../../../lib/forwardYears';
+import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST, synergyForSlot, BEYOND_SYNERGY_SCHEDULE } from '../../../lib/forwardYears';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence, fmtSynergy } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { isNonGaapDeal, computedSides, epsSourceText } from '../../../lib/reportingBasis';
@@ -76,10 +76,12 @@ export function rowCells(r) {
 }
 // Fix 17 Task 3: a forecast year past the consensus years FMP returned is one line, not a table of "—". X is that year's
 // synergy from the deal's one synergy schedule (deal.synergies.years). null when the year is within the consensus years.
+// Fix 19 Task 2: a year past the synergy schedule (synYr null, Year 4) says it carries none.
 export function beyondConsensusLine(slot, yr, fwdFys) {
   if (!slot || slot.a || slot.fyA == null || !fwdFys || !fwdFys.length) return null;
   const lo = Math.min(...fwdFys), hi = Math.max(...fwdFys);
   if (!(slot.fyA > hi)) return null;
+  if (slot.synYr == null) return `Year ${slot.year} (FY${slot.fyA}) is beyond the consensus years (FY${lo}–FY${hi}); ${BEYOND_SYNERGY_SCHEDULE}`;
   return `Year ${slot.synYr} synergies (${yr && yr.entered ? fmtSynergy(yr.ebitda) : NONE_ENTERED}) fall in FY${slot.fyA}, beyond the consensus years (FY${lo}–FY${hi})`;
 }
 // A row that prints "—" in every column is not shown (Fix 17 Task 3).
@@ -145,13 +147,14 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const years = [];
   if (isA) {
     for (const slot of sel.slots) {
-      const k = slot.synYr - 1;
       const a = slot.a || {}, b = slot.b || {};
       const aPrev = prevCol(aPnl, slot.fyA);
       const bPrev = prevCol(bPnl, slot.fyB);
-      const yr = synergyYears[k] || { ebitda: 0, entered: false };
+      const yr = synergyForSlot(synergyYears, slot) || { ebitda: 0, entered: false };   // Fix 19 Task 2: Year N → synergy Year N
       const syn = yr.ebitda, atSyn = syn * (1 - TAX_RATE);
-      const none = (v) => (v == null ? NONE_ENTERED : null);
+      // A year past the synergy schedule (Year 4) has no synergy by rule, not "none entered" (Fix 19 Task 2).
+      const noneText = slot.synYr == null ? 'beyond schedule' : NONE_ENTERED;
+      const none = (v) => (v == null ? noneText : null);
       const margin = (num, rev) => (num != null && rev) ? num / rev * 100 : null;
       const growth = (cur, base) => (cur != null && base) ? (cur - base) / base * 100 : null;
       const cRev = sum(a.revenue, b.revenue), cGross = sum(a.grossProfit, b.grossProfit);
@@ -181,8 +184,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           // no base figure. The total is what EBIT carries, so nothing double-counts.
           { label: 'Cost synergies', syn: yr.cost, synText: none(yr.cost), pf: null, synRow: true },
           { label: synergyMargin?.pct != null ? `Revenue synergies at ${synergyMargin.pct.toFixed(1)}% margin` : 'Revenue synergies (revenue only)', syn: yr.revenueEbitda,
-            synText: yr.revenue == null ? NONE_ENTERED : (yr.revenueEbitda == null ? 'not in EBITDA' : null), pf: null, synRow: true },
-          { label: 'Total synergies (EBITDA impact)', syn: yr.ebitda, synText: yr.entered ? null : NONE_ENTERED, pf: null, synRow: true },
+            synText: yr.revenue == null ? noneText : (yr.revenueEbitda == null ? 'not in EBITDA' : null), pf: null, synRow: true },
+          { label: 'Total synergies (EBITDA impact)', syn: yr.ebitda, synText: yr.entered ? null : noneText, pf: null, synRow: true },
           { label: 'Operating Expense', a: null,             b: null,             c: null,   syn: null,    pf: null, dash: true },
           // Fix 17 Task 2: total costs = consensus revenue − consensus operating income (FMP's SG&A consensus is not shown). Combined and PF Tot. = acquirer + target where both exist.
           { label: TOTAL_COSTS_LABEL, a: forwardTotalCosts(slot.a), b: forwardTotalCosts(slot.b), c: sumBoth(forwardTotalCosts(slot.a), forwardTotalCosts(slot.b)), syn: null, pf: sumBoth(forwardTotalCosts(slot.a), forwardTotalCosts(slot.b)) },
@@ -217,7 +220,6 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const forwardRows = [];
   { // 7E: computed for §8 too (§9 folded on) — the accretion strip lives on §8 now.
     for (const slot of (loaded ? sel.slots : [])) {
-      const k = slot.synYr - 1;
       const a = slot.a, b = slot.b;                         // forward EPS from /api/pnl (== /api/estimates epsAvg)
       // A year that can't compute is a "—" row with its reason, never dropped and never filled.
       if (!slot.epsOk || !(acqDilSh > 0)) {
@@ -225,14 +227,14 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
         continue;
       }
       const fwdInputs = forwardYearInputs(inputs, a.eps, b.eps);
-      // Synergy re-index (matches §6a's synRamp[k]): first forward year = synergiesY1. NO off-by-one.
+      // Fix 19 Task 2: Year N carries synergy Year N (synergyForSlot, the same read as §6a and the verdict); Year 4 none.
       const synYr = slot.synYr;
-      const syn   = parseFloat(synY[k]) || 0;
+      const syn   = parseFloat(synergyForSlot(synY, slot)) || 0;
       const ea = (aEst || []).find(e => e && e.fy === a.fy);
       const eb = (bEst || []).find(e => e && e.fy === b.fy);
       const analysts = (ea?.numAnalysts != null && eb?.numAnalysts != null) ? Math.min(ea.numAnalysts, eb.numAnalysts) : null;
       forwardRows.push({
-        year: k + 2, synYr, acqFY: a.fy, tgtFY: b.fy,
+        year: slot.year, synYr, acqFY: a.fy, tgtFY: b.fy,
         standaloneEPS: a.eps,
         pfEPS: calcProFormaEPS(offer, syn, fwdInputs),
         pct: epsAccretionPct(offer, syn, fwdInputs),
@@ -261,7 +263,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
     { label: 'Year 1', tag: y1Fy, basis: 'verified', na: !!inputs.year1Reason, standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
     ...forwardRows.map(r => r.na
       ? { label: `Year ${r.year}`, tag: `${r.acqFY != null ? `FY${r.acqFY}e` : ''} — ${r.reason}`, basis: 'forward', na: true }
-      : { label: `Year ${r.year}`, tag: `${CONSENSUS_BASIS}, FY${r.acqFY}e + Yr${r.synYr} synergies`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pfExSyn: r.pfEPSExSyn, pct: r.pct, pctExSyn: r.pctExSyn, analysts: r.analysts }),
+      : { label: `Year ${r.year}`, tag: `${CONSENSUS_BASIS}, FY${r.acqFY}e ${r.synYr != null ? `+ Yr${r.synYr} synergies` : `— ${BEYOND_SYNERGY_SCHEDULE}`}`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pfExSyn: r.pfEPSExSyn, pct: r.pct, pctExSyn: r.pctExSyn, analysts: r.analysts }),
   ];
 
   const accretionSource = (() => {
@@ -402,7 +404,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           <strong style={{ color: NAVY }}>Basis: </strong>
           {grossNmNote(acquirer, target) ? <>{grossNmNote(acquirer, target)} </> : null}
           Acquirer &amp; target forward legs are <strong>{CONSENSUS_BASIS}</strong> (FMP analyst-estimates; FMP does not label the basis, and its EPS consensus matches the companies' own non-GAAP guidance where they give one); the same source as the forward columns on the Standalone P&amp;L slides, so the figures tie per-value. Each forward year is the first fiscal year that begins after Year 1's period ends, for each company, and is labeled by the acquirer's fiscal year{fyeMonth(acquirer?.fiscalYearEnd) && fyeMonth(target?.fiscalYearEnd) && fyeMonth(acquirer?.fiscalYearEnd) !== fyeMonth(target?.fiscalYearEnd) ? ` (the two companies' fiscal calendars are offset: ${aTk} ends ${fyeMonth(acquirer?.fiscalYearEnd)}, ${bTk} ends ${fyeMonth(target?.fiscalYearEnd)})` : ''}. Combined = Acquirer + Target.
-          <strong> Synergies are the deal's entered assumptions</strong> (total EBITDA impact {synergyYears.slice(0, sel.slots.length).map((y, k) => { const cr = sum(sel.slots[k]?.a?.revenue, sel.slots[k]?.b?.revenue); const pc = cr > 0 ? (y.ebitda / cr * 100) : null; return y.entered ? `${fmtM(y.ebitda)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}` : `${NONE_ENTERED} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. Cost synergies add to EBIT dollar for dollar — <strong>without asserting whether they arise in cost of revenue or operating expense</strong>. Revenue synergies add to PF revenue{deal?.synergies?.anyRevenue ? <> and {synergyMargin?.pct != null ? 'reach EBIT at the combined gross margin' : 'do not reach EBIT'}: {marginSentence(synergyMargin)}{deal.synergies.revenueOnly ? <> <strong style={{ color: '#92400E' }}>⚠ {REVENUE_ONLY_FLAG}</strong></> : null}</> : '.'} <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtFin(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page) <strong>and of the after-tax interest the cash used stops earning</strong> ({fmtFin(lostInt)}/yr, the <em>"Less: lost interest"</em> line: excess cash used × {deal?._results?.cashYield?.label ?? '—'} × (1 − {Math.round(TAX_RATE * 100)}%)); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on {(acquirer?.basis === 'ltm' && target?.basis === 'ltm') ? 'the LTM actuals selected for Year 1' : 'latest-FY actuals'} + forward consensus</strong>; forward growth is always measured against fiscal-year figures, never LTM; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
+          <strong> Synergies are the deal's entered assumptions</strong> (total EBITDA impact {synergyYears.slice(0, sel.slots.length).map((y, k) => { const sl = sel.slots.find((s) => s.synYr === k + 1); const cr = sum(sl?.a?.revenue, sl?.b?.revenue); const pc = cr > 0 ? (y.ebitda / cr * 100) : null; return y.entered ? `${fmtM(y.ebitda)}${pc != null ? ` (${pc.toFixed(1)}% of comb. rev)` : ''} Yr ${k + 1}` : `${NONE_ENTERED} Yr ${k + 1}`; }).join(', ')}), NOT an analyst estimate. Cost synergies add to EBIT dollar for dollar — <strong>without asserting whether they arise in cost of revenue or operating expense</strong>. Revenue synergies add to PF revenue{deal?.synergies?.anyRevenue ? <> and {synergyMargin?.pct != null ? 'reach EBIT at the combined gross margin' : 'do not reach EBIT'}: {marginSentence(synergyMargin)}{deal.synergies.revenueOnly ? <> <strong style={{ color: '#92400E' }}>⚠ {REVENUE_ONLY_FLAG}</strong></> : null}</> : '.'} <strong>PF Net Income is net of the deal's after-tax acquisition-financing cost</strong> ({fmtFin(finDrag)}/yr — shown as the <em>"Less: financing"</em> line so the net-income build foots on the page) <strong>and of the after-tax interest the cash used stops earning</strong> ({fmtFin(lostInt)}/yr, the <em>"Less: lost interest"</em> line: excess cash used × {deal?._results?.cashYield?.label ?? '—'} × (1 − {Math.round(TAX_RATE * 100)}%)); operating-line PF Total = Combined + Synergies. The pro forma EPS &amp; accretion — with and without synergies — are in the strip below. <strong>This model is built on {(acquirer?.basis === 'ltm' && target?.basis === 'ltm') ? 'the LTM actuals selected for Year 1' : 'latest-FY actuals'} + forward consensus</strong>; forward growth is always measured against fiscal-year figures, never LTM; the screening comps &amp; profile (Exhibits A / B) use an LTM basis — a deliberate split.
           <sup style={{ fontSize: 9.5 }}>n</sup> No consensus available: FMP publishes no forward gross profit, so forward cost of revenue, gross profit and gross margin are "—". Forward Operating Expense is "—" — consensus supplies operating income but not gross profit (same treatment as the Standalone P&amp;L slides).
         </div>
       </PageFrame>

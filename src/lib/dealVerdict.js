@@ -1,7 +1,7 @@
 import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerReportedEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration } from '../utils/dealCalc';
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
 import { NON_GAAP, computedSides } from './reportingBasis';
-import { selectForwardYears, slotName, CONSENSUS_BASIS } from './forwardYears';
+import { selectForwardYears, slotName, CONSENSUS_BASIS, synergyForSlot } from './forwardYears';
 
 // The deal verdict ladder. Deal Summary and Executive Summary both render this one result. It uses the first test
 // that this deal's own data can compute, and names the missing input when none can:
@@ -120,10 +120,10 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   const pick = verdictForwardSlot(sel);
   if (pick && acquirerDilutedShares(inputs).shares > 0) {
     const fwd = forwardYearInputs(inputs, pick.a.eps, pick.b.eps);
-    const syn = parseFloat(synY[pick.synYr - 1]) || 0;   // slide 9's forward row reads the same figure, with nothing entered as none
+    const syn = parseFloat(synergyForSlot(synY, pick)) || 0;   // slide 9's forward row reads the same figure (synergyForSlot), with nothing entered — or a year past the schedule — as none
     const t = epsTest(offer, syn, fwd);
     if (t) {
-      const yr = deal?.synergies?.years?.[pick.synYr - 1];
+      const yr = synergyForSlot(deal?.synergies?.years, pick);
       const yearLabel = pick.label;
       const skipped = [y1SkipReason(), ...sel.slots.filter(s => s !== pick && s.year < pick.year).map(s => `${slotName(s)} —: ${s.reason || `${A}'s consensus EPS is not positive`}`)].filter(Boolean);
       return {

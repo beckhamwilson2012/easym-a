@@ -54,7 +54,7 @@ export function formatOfferInput(v) {
   return Number.isFinite(n) && n !== 0 ? String(Number(n.toFixed(4))) : '';
 }
 
-// Year 2 on slide 8 is the first forward year: that year's consensus EPS with Year 1 synergies.
+// Year 2 on slide 8 is the first forward year: that year's consensus EPS with Year 2 synergies (Fix 19 Task 2).
 export const firstForwardColumn = (pnl) => (pnl && Array.isArray(pnl.columns)) ? (pnl.columns.filter(c => !c.actual)[0] ?? null) : null;
 
 // The highest whole-percent premium on the slider that is still accretive in the verdict's year, solved by running the
