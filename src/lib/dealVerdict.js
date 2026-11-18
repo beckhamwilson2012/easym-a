@@ -146,6 +146,16 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   }
 
   // ── 3. Synergies vs premium ──
+  // Fix 20 Task 4: this test and its breakeven use the verdict's year and basis. When Year 1 combines companies on
+  // different bases (one LTM, one fiscal year) there is no one year or basis for it: the acquirer multiple it would use
+  // follows the GAAP | Non-GAAP toggle instead (DIS/WBD read "Synergies cover the premium" at GAAP P/E 20.78x, after tax,
+  // and "Synergies don't cover the premium" at EV/adjusted EBITDA 8.80x, pre-tax). So the line is blank, with the
+  // verdict's own reason, on both bases.
+  if (results.basesDiffer) {
+    const why = 'Year 1 combines companies on different bases';
+    const reasons = missing.includes(why) ? missing : [why, ...missing];
+    return { step: null, verdict: null, text: '—', tag: null, line: `No test can be computed: ${reasons.join('; ')}.`, missing: reasons };
+  }
   const d = (model && model.derived) || {};
   const AV = (model && model.verifiedData && model.verifiedData.acquirer) || {};
   const ref = pos(targetMarketPrice(inputs));   // the one premium reference price
