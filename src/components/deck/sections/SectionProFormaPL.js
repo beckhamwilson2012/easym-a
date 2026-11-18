@@ -264,7 +264,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
         pctExSyn:   epsAccretionPct(offer, 0, fwdInputs),
         // The table's PF net income for this year and the share count it is divided by (Fix 10 Task 7): the tie the
         // footnote prints, PF net income ÷ (diluted + new shares) = this row's PF EPS.
-        tieNi: (totalDrag != null) ? fwdInputs.companyANetIncome + fwdInputs.companyBNetIncome + syn * (1 - TAX_RATE) - totalDrag : null,
+        tieNi: (totalDrag != null && fwdInputs.companyANetIncome != null && fwdInputs.companyBNetIncome != null) ? fwdInputs.companyANetIncome + fwdInputs.companyBNetIncome + syn * (1 - TAX_RATE) - totalDrag : null,
         tieSh: (() => { const px = acquirerSharePrice(inputs); const sp = parseFloat(deal?._results?.stockPortion); return (px > 0 && Number.isFinite(sp)) ? acqDilSh + sp / px : null; })(),
         analysts,
       });

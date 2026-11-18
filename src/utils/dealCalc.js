@@ -143,6 +143,13 @@ export function privateConsideration(inputs) {
   return Number.isFinite(v) && v > 0 ? v : null;
 }
 
+// ── Target share count (Fix 21 Task 5) ─────────────────────────────────────────
+// A public target's purchase price is offer × shares, so with no share count there is no price, no funding and no pro
+// forma EPS. Every one of those is null with this reason; the count is never read as 0 (it priced the target at $0 and
+// added its earnings for free). A private target's price is its total consideration, so it needs no count.
+export const TARGET_SHARES_MISSING = 'target share count not available';
+export const targetSharesKnown = (inputs) => privateConsideration(inputs) != null || parseFloat(inputs.companyBShares) > 0;
+
 // ── Minimum-cash revenue basis, one company ───────────────────────────────────
 // The retained minimum scales with each company's LTM revenue. A company with no LTM revenue (a private company has
 // none here) uses its fiscal-year revenue instead, labeled FY_NO_LTM. A company with neither has no basis: the
@@ -176,6 +183,10 @@ export function acquisitionNewDebt(inputs, offerOverride) {
   const shares = num(inputs.companyBShares) || 0;
   const cashPct = num(inputs.cashPercent) || 0;
   const privateTotal = privateConsideration(inputs);
+  if (!targetSharesKnown(inputs)) {
+    return { newDebt: null, cashConsideration: null, targetDebtRepaid: num(inputs.companyBDebt), combinedCash: null, minCash: null,
+             excessCashAvail: null, excessCashUsed: null, pfLtmRevenue: null, minCashPct: null, bank: !!inputs.bankDeal, fundingGap: 'targetShares' };
+  }
   const purchasePrice = privateTotal != null ? privateTotal : offer * shares;
   const cashConsideration = purchasePrice * (cashPct / 100);
   // Opt-in + Guard 1. Only the MAIN deal threads combined cash / target debt / pro-forma LTM revenue and sets
@@ -259,14 +270,15 @@ export function calculate(inputs) {
   // Purchase price: a PRIVATE target's total consideration (privateConsideration, the same read acquisitionNewDebt
   // uses); a public target uses offer price × shares.
   const _privateTotal      = privateConsideration(inputs);
-  const totalPurchasePrice = _privateTotal != null ? _privateTotal : offerPricePerShare * companyBShares;
-  const cashPortion        = totalPurchasePrice * (cashPercent / 100);
-  const stockPortion       = totalPurchasePrice * (stockPercent / 100);
+  const sharesKnown        = targetSharesKnown(inputs);   // Fix 21 Task 5: no count, no purchase price (null, never $0)
+  const totalPurchasePrice = _privateTotal != null ? _privateTotal : sharesKnown ? offerPricePerShare * companyBShares : null;
+  const cashPortion        = totalPurchasePrice != null ? totalPurchasePrice * (cashPercent / 100) : null;
+  const stockPortion       = totalPurchasePrice != null ? totalPurchasePrice * (stockPercent / 100) : null;
 
   // New shares issued = stock consideration ÷ REAL acquirer price (non-zero whenever there is a
   // stock portion and we have a price). This is the bug that previously produced "0M new shares".
   const acqPrice         = acquirerSharePrice(inputs);
-  const newSharesIssued  = acqPrice > 0 ? stockPortion / acqPrice : null;
+  const newSharesIssued  = (acqPrice > 0 && stockPortion != null) ? stockPortion / acqPrice : null;
   // EPS math uses the weighted-average DILUTED share base (falls back to companyAShares if absent),
   // so pro-forma EPS sits on the same basis as the standalone EPS (NI ÷ this count). Ownership and
   // market cap read companyAShares (point-in-time) directly elsewhere and are unaffected by this.
@@ -305,12 +317,12 @@ export function calculate(inputs) {
   // Bank deals repay no target debt and draw no excess cash (a genuine 0). Otherwise an unavailable leg stays null.
   const debtRepaidInUses   = sources.bank ? 0 : sources.targetDebtRepaid;
   const excessCashInSources = sources.bank ? 0 : sources.excessCashUsed;
-  const totalUses    = debtRepaidInUses != null ? totalPurchasePrice + debtRepaidInUses : null;
+  const totalUses    = (debtRepaidInUses != null && totalPurchasePrice != null) ? totalPurchasePrice + debtRepaidInUses : null;
   const totalSources = (sources.newDebt != null && excessCashInSources != null) ? sources.newDebt + stockPortion + excessCashInSources : null;
   // BOTH net incomes required — a null side must NOT coerce to 0 and understate the pro-forma net income
   // that drives EPS and the headline accretion. Null → EPS null → accretion not meaningful → '—' / n/m.
   // Same for an unknown financing drag.
-  const proFormaNetIncome   = (!differentBases && companyANetIncome != null && companyBNetIncome != null && fin.total != null)
+  const proFormaNetIncome   = (sharesKnown && !differentBases && companyANetIncome != null && companyBNetIncome != null && fin.total != null)
     ? companyANetIncome + companyBNetIncome + afterTaxSynergies - fin.total : null;
   const proFormaEPS         = (proFormaNetIncome != null && totalShares > 0) ? proFormaNetIncome / totalShares : null;
 
@@ -381,7 +393,7 @@ export function calculate(inputs) {
     cashUsedInDeal:      fin.cashUsed,
     // ── Sources of funds (Stage 2E) — the drag above is charged on newDebt; §10 renders the build ──
     newDebt:           sources.newDebt == null ? null : sources.newDebt.toFixed(0),
-    cashConsideration: sources.cashConsideration.toFixed(0),
+    cashConsideration: sources.cashConsideration == null ? null : sources.cashConsideration.toFixed(0),
     excessCashUsed:    sources.excessCashUsed  == null ? null : sources.excessCashUsed.toFixed(0),
     excessCashAvail:   sources.excessCashAvail == null ? null : sources.excessCashAvail.toFixed(0),
     minCashRetained:   sources.minCash       == null ? null : sources.minCash.toFixed(0),
@@ -412,9 +424,10 @@ export function calculate(inputs) {
     // Full precision, so each slide rounds once at display: { preDebt, proFormaDebt, preCash, proFormaCash, cashUsed,
     // preNetDebt, proFormaNetDebt }, each null when a leg is unavailable.
     capitalization:    cap,
-    totalPurchasePrice: totalPurchasePrice.toFixed(0),
-    cashPortion:        cashPortion.toFixed(0),
-    stockPortion:       stockPortion.toFixed(0),
+    totalPurchasePrice: totalPurchasePrice == null ? null : totalPurchasePrice.toFixed(0),
+    cashPortion:        cashPortion == null ? null : cashPortion.toFixed(0),
+    stockPortion:       stockPortion == null ? null : stockPortion.toFixed(0),
+    targetSharesMissing: !sharesKnown,
     newSharesIssued:    newSharesIssued === null ? null : newSharesIssued.toFixed(0),
     purchasePremium:    purchasePremium === null ? null : purchasePremium.toFixed(1),
     combinedRevenue:    combinedRevenue === null ? null : combinedRevenue.toFixed(0),
@@ -492,17 +505,18 @@ export function epsAccretionPct(offerPrice, synergiesY1, inputs) {
 // accretion table and the input page's premium solve both read this, so they cannot diverge.
 // Fix 20 Task 2: the share count a forward year's net income is built on, per side: the acquirer's one diluted count
 // (acquirerDilutedShares, the count every pro forma EPS divides by) and the target's diluted count, else its shares.
-// The target's `|| 0` is the pre-Fix-20 behavior of forwardYearInputs, kept unchanged here (a missing target count
-// gives a forward target net income of 0 inside the accretion math: a known Pattern B, not fixed in this commit).
+// Fix 21 Task 5: no count is null, never 0. `|| 0` made a target's forward net income $0 inside the accretion math.
 export function forwardShareCount(inputs, side) {
-  return side === 'A'
+  const n = side === 'A'
     ? acquirerDilutedShares(inputs).shares
-    : (parseFloat(inputs.companyBDilutedShares) || parseFloat(inputs.companyBShares) || 0);
+    : (parseFloat(inputs.companyBDilutedShares) || parseFloat(inputs.companyBShares));
+  return n > 0 ? n : null;
 }
-// The one forward-year net income per company: consensus EPS × forwardShareCount. forwardYearInputs (the Pro Forma
-// tables, the accretion strip, the verdict, the premium solve) and the Standalone P&L forward columns all read this.
+// The one forward-year net income per company: consensus EPS × forwardShareCount, null without a count. forwardYearInputs
+// (the Pro Forma tables, the accretion strip, the verdict, the premium solve) and the Standalone P&L forward columns read it.
 export function forwardNetIncome(inputs, side, eps) {
-  return eps * forwardShareCount(inputs, side);
+  const count = forwardShareCount(inputs, side);
+  return count != null ? eps * count : null;
 }
 
 export function forwardYearInputs(inputs, acquirerEps, targetEps) {
@@ -551,6 +565,7 @@ export function formatDollars(m) {
 // New Shares Issued, as the Deal Summary prints it. No stock part → "— (all-cash deal)"; a stock part with no acquirer
 // share price → "— (no acquirer share price)"; never "nullM" (the private fixture printed that).
 export function newSharesLabel(results) {
+  if (results.targetSharesMissing) return `— (${TARGET_SHARES_MISSING})`;
   if (parseFloat(results.stockPortion) === 0) return '— (all-cash deal)';
   if (results.newSharesIssued == null) return '— (no acquirer share price)';
   return `${results.newSharesIssued}M`;

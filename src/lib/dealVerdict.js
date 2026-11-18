@@ -1,4 +1,4 @@
-import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerReportedEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration } from '../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerReportedEPS, acquirerDilutedShares, forwardYearInputs, targetMarketPrice, TAX_RATE, privateConsideration, targetSharesKnown, TARGET_SHARES_MISSING } from '../utils/dealCalc';
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
 import { NON_GAAP, computedSides } from './reportingBasis';
 import { selectForwardYears, slotName, CONSENSUS_BASIS, synergyForSlot } from './forwardYears';
@@ -96,6 +96,9 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   const offer = num(deal?.offerPrice) || num(inputs.offerPricePerShare) || 0;   // slide 8's own offer read
   const synY = [deal?.synergiesY1, deal?.synergiesY2, deal?.synergiesY3];
   const missing = [];
+
+  // Fix 21 Task 5: with no target share count there is no purchase price, so no test on any year can run.
+  if (!targetSharesKnown(inputs)) return { step: null, verdict: null, text: '—', tag: null, line: `No test can be computed: ${TARGET_SHARES_MISSING}.`, missing: [TARGET_SHARES_MISSING] };
 
   // ── 1. Year 1 ──
   const y1Base = acquirerStandaloneEPS(inputs);
@@ -215,7 +218,8 @@ export function headlineEps(verdict, deal) {
   const per = inputs.companyABasis === 'ltm' ? 'LTM' : (inputs.companyAPeriodLabel || 'fiscal year');
   const basis = inputs.reportingBasis === NON_GAAP ? 'non-GAAP' : 'GAAP';   // a Non-GAAP deck's Year 1 is company-reported non-GAAP, or "—"
   const sa = num(results.companyAEPS), pf = num(results.proFormaEPS), pct = results.accretionMeaningful ? num(results.epsChangePct) : null;
-  const reason = results.basesDiffer ? 'companies on different bases'
+  const reason = results.targetSharesMissing ? TARGET_SHARES_MISSING
+    : results.basesDiffer ? 'companies on different bases'
     : (sa == null || pf == null) ? (inputs.year1Reason || 'Year 1 EPS not available')
     : pct == null ? 'not meaningful: acquirer or pro forma EPS is not positive' : null;
   return {
