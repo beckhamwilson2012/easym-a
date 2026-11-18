@@ -77,10 +77,11 @@ describe('Fix 10 Task 3 — no overlapping years', () => {
     const s = selectForwardYears({ inputs: { ...fy, ...ng }, acquirerFwd: hngeFwd, targetFwd: tdocFwd });
     expect(s.slots.map(x => x.label)).toEqual(['FY2026E', 'FY2027E', 'FY2028E']);
   });
-  test('each company is shifted on its own Year 1: a FY target beside an LTM acquirer keeps its own first year', () => {
+  // Fix 21 Task 6: this pair read FY2027 against FY2026. On mixed bases both years now start after the later Year 1.
+  test('a FY target beside an LTM acquirer: both start after the later Year 1 period', () => {
     const inputs = { ...ng, companyABasis: 'ltm', companyALtmAsOf: '2026-09-30', companyAFiscalYearEnd: '2025-12-31', companyBBasis: 'fy', companyBFiscalYearEnd: '2025-12-31' };
     const s = selectForwardYears({ inputs, acquirerFwd: hngeFwd, targetFwd: tdocFwd });
-    expect([s.slots[0].a.fy, s.slots[0].b.fy]).toEqual([2027, 2026]);
+    expect([s.slots[0].a.fy, s.slots[0].b.fy]).toEqual([2027, 2027]);
   });
 });
 

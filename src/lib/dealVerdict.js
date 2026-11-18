@@ -2,6 +2,7 @@ import { calcProFormaEPS, epsAccretionPct, acquirerStandaloneEPS, acquirerReport
 import { accretionVerdict } from '../components/deck/shared/deckTokens';
 import { NON_GAAP, computedSides } from './reportingBasis';
 import { selectForwardYears, slotName, CONSENSUS_BASIS, synergyForSlot } from './forwardYears';
+import { DIFFERENT_BASES } from './companyBasis';
 
 // The deal verdict ladder. Deal Summary and Executive Summary both render this one result. It uses the first test
 // that this deal's own data can compute, and names the missing input when none can:
@@ -115,6 +116,9 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
       };
     }
     missing.push(results.basesDiffer ? `Year 1 combines companies on different bases` : `Year 1 pro forma EPS can't be computed`);
+  } else if (results.basesDiffer) {
+    // Fix 21 Task 6: on different bases Year 1 has one reason on both toggles, so the two read the same.
+    missing.push(`Year 1 combines companies on different bases`);
   } else {
     missing.push(inputs.year1Reason ? `Year 1 —: ${inputs.year1Reason}` : `${A}'s standalone EPS is not positive`);
   }
@@ -130,7 +134,8 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
     const t = epsTest(offer, syn, fwd);
     if (t) {
       const yr = synergyForSlot(deal?.synergies?.years, pick);
-      const yearLabel = pick.label;
+      // Fix 21 Task 6: on a mixed-basis deal the two companies' fiscal years can differ, so the label names both.
+      const yearLabel = sel.mixed && pick.fyB !== pick.fyA ? `${pick.label} (${T} FY${pick.fyB}E)` : pick.label;
       const pickAt = sel.slots.indexOf(pick);
       const priorEps = pickAt > 0 ? num(sel.slots[pickAt - 1].a?.eps) : y1Base;
       const skipped = [y1SkipReason(), ...sel.slots.filter(s => s !== pick && s.year < pick.year).map(s => `${slotName(s)} —: ${s.reason || `${A}'s consensus EPS is not positive`}`)].filter(Boolean);
@@ -149,6 +154,8 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
     missing.push(`forward years —: ${sel.slots[0].reason}`);
   } else if (usable.length) {
     missing.push(`${A}'s consensus EPS is not positive in any forecast year`);
+  } else if (sel.mixed && new Set(sel.slots.map(s => s.reason)).size === 1) {
+    missing.push(`no forward year has consensus for both companies: ${sel.slots[0].reason}`);
   } else {
     missing.push(...sel.slots.map(s => `${slotName(s)} —: ${s.reason}`));
   }
@@ -198,7 +205,7 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
   }
   return { step: null, verdict: null, text: '—', tag: null, line: `No test can be computed: ${missing.join('; ')}.`, missing };
 
-  function y1SkipReason() { return y1Base > 0 ? null : `Year 1 —: ${inputs.year1Reason || `${A}'s standalone EPS is not positive`}`; }
+  function y1SkipReason() { if (results.basesDiffer) return `Year 1 —: ${DIFFERENT_BASES}`; return y1Base > 0 ? null : `Year 1 —: ${inputs.year1Reason || `${A}'s standalone EPS is not positive`}`; }
 }
 
 // ── One EPS story (Fix 14 Task 3) ──

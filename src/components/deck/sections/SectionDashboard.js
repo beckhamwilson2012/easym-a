@@ -101,6 +101,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
     ? buildBankNarrative(results, inputs, target, acquirer, nameA, nameB)
     : buildNarrative(results, inputs, acquirer?.name || nameA, target?.name || nameB, flags, hEps);   // the names every other slide uses
   const epsRef      = results.basesDiffer ? null : reportedEpsReference(hEps, deal);   // Fix 17 Task 1: the company's own figure, a labeled reference
+  // Fix 21 Task 6: companies on different bases have no Year 1 figure, but a forward-year verdict has its own.
+  const y1Blocked   = results.basesDiffer && !(hEps.fromVerdict && hEps.year !== 'Year 1');
   const accOK       = hEps.pct != null;
   const accUp       = hEps.verdict === 'accretive';
   const accColor    = !accOK ? '#6B7280' : accUp ? '#16A34A' : hEps.verdict === 'neutral' ? '#374151' : '#DC2626'; // dark green / red
@@ -143,7 +145,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const vYear = verdict && verdict.step === 2 && verdict.inputs ? verdict : null;
   const sInputs = vYear ? vYear.inputs : inputs;
   const sSyn = vYear ? vYear.synergy : results.synergiesY1;
-  const vYearNote = vYear ? `Year 1 is "—" (${inputs.year1Reason || 'Year 1 EPS not available'}), so this uses ${hEps.label}, the verdict's year.` : null;
+  const vYearNote = vYear ? `Year 1 is "—" (${results.basesDiffer ? DIFFERENT_BASES : inputs.year1Reason || 'Year 1 EPS not available'}), so this uses ${hEps.label}, the verdict's year.` : null;
 
   // Cash sensitivity strip: pro forma EPS at 100/80/60/40/20% cash
   const cashSensitivity = [100, 80, 60, 40, 20].map(cp => ({
@@ -192,7 +194,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const breakevenEPS = acquirerStandaloneEPS(sInputs); // net income ÷ shares (matches calculate())
   const currentRowData = sensitivityData[sensitivityCurrentRow] || [];
   let sensitivityFooter = null;
-  if (results.basesDiffer) {
+  if (y1Blocked) {
     sensitivityFooter = `Pro forma EPS is not shown: ${DIFFERENT_BASES}.`;
   } else if (!synergyY1Entered) {
     sensitivityFooter = `No Year 1 synergies entered, so every column shows EPS with no synergies assumed.`;
@@ -378,20 +380,20 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Before</div>
-                <div style={{ fontSize: 24, fontWeight: 'bold' }}>{results.basesDiffer ? '—' : fmtPerShare(hEps.standaloneEPS)}</div>
+                <div style={{ fontSize: 24, fontWeight: 'bold' }}>{y1Blocked ? '—' : fmtPerShare(hEps.standaloneEPS)}</div>
                 {epsRef && <div data-testid="eps-reported-ref" style={{ fontSize: 10, color: '#6B7280', maxWidth: 170, lineHeight: 1.3 }}>{epsRef.text}</div>}
               </div>
               <div style={{ fontSize: 24, color: '#6B7280', alignSelf: 'center' }}>→</div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>After</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {results.basesDiffer ? '—' : fmtPerShare(hEps.proFormaEPS)}
+                  {y1Blocked ? '—' : fmtPerShare(hEps.proFormaEPS)}
                 </div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Change</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {results.basesDiffer ? '—' : (accOK ? fmtPctSigned(hEps.pct) : 'n/m')}
+                  {y1Blocked ? '—' : (accOK ? fmtPctSigned(hEps.pct) : 'n/m')}
                 </div>
               </div>
             </div>
@@ -452,8 +454,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtInterest(results.newInterestAfterTax)})`, red: true }] : []),
               ...lostInterestRows,
-              { label: vYear ? `Pro Forma Net Income (${vYear.year})` : 'Pro Forma Net Income', value: results.basesDiffer ? '—' : vYear ? (vYearPF ? fmtMoneyAccounting(vYearPF.netIncome) : '—') : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
-              { label: vYear ? `Pro Forma EPS (${vYear.year})` : 'Pro Forma EPS', value: results.basesDiffer ? '—' : vYear ? (vYearPF ? fmtPerShare(vYearPF.eps) : '—') : fmtPerShare(results.proFormaEPS), bold: true, green: vYear ? hEps.verdict === 'accretive' : results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
+              { label: vYear ? `Pro Forma Net Income (${vYear.year})` : 'Pro Forma Net Income', value: y1Blocked ? '—' : vYear ? (vYearPF ? fmtMoneyAccounting(vYearPF.netIncome) : '—') : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
+              { label: vYear ? `Pro Forma EPS (${vYear.year})` : 'Pro Forma EPS', value: y1Blocked ? '—' : vYear ? (vYearPF ? fmtPerShare(vYearPF.eps) : '—') : fmtPerShare(results.proFormaEPS), bold: true, green: vYear ? hEps.verdict === 'accretive' : results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: rowPad, borderBottom: '1px solid #F3F4F6' }}>
                 <span style={{ fontSize: rowFont, color: '#6B7280', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -555,7 +557,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                               Current
                             </span>
                           )}
-                          {eps === null ? (results.basesDiffer ? '—' : 'N/A') : fmtPerShare(eps)}
+                          {eps === null ? (y1Blocked ? '—' : 'N/A') : fmtPerShare(eps)}
                         </td>
                       );
                     })}
@@ -592,7 +594,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                     {cashPct}% cash
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 700, color }}>
-                    {eps === null ? (results.basesDiffer ? '—' : 'N/A') : fmtPerShare(eps)}
+                    {eps === null ? (y1Blocked ? '—' : 'N/A') : fmtPerShare(eps)}
                   </div>
                 </div>
               );

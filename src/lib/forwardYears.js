@@ -1,5 +1,5 @@
 import { NON_GAAP } from './reportingBasis';
-import { BASIS_LTM } from './companyBasis';
+import { BASIS_LTM, basesDiffer } from './companyBasis';
 import { SYNERGY_YEARS } from './synergies';
 
 // The forward accretion years (Years 2–4), chosen once for slide 9's tables and strip, the deal verdict and the input
@@ -10,6 +10,9 @@ import { SYNERGY_YEARS } from './synergies';
 //   guidance). It is labeled CONSENSUS_BASIS wherever it appears. On a GAAP deal there is no GAAP forecast, so every
 //   forward EPS year is "—" with NO_GAAP_FORECAST; Year 1 GAAP stays. A GAAP figure and a consensus figure are never
 //   put in one year.
+//   Mixed bases (Fix 21 Task 6). With one company on LTM and the other on a fiscal year, Year 1 cannot be combined on either
+//   toggle, so the forward years are the deal's only common basis: consensus for both, on a GAAP deck too, and every
+//   forward year starts after the LATER of the two Year 1 periods, so neither company's year overlaps it.
 //   Period (Task 3). Year 2 is the first fiscal year that begins after Year 1's period ends, so no forward year overlaps
 //   Year 1: HNGE on LTM to 9/30/2026 → Year 2 = FY2027 (FY2026 began 1/1/2026, inside Year 1). On the fiscal-year card
 //   (Year 1 = FY2025) Year 2 = FY2026, as before. A year with no consensus is "—" with the reason.
@@ -50,9 +53,12 @@ export function firstFiscalYearAfter(end, fyeIso) {
 export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerName, targetName, privateTarget }) {
   const A = acquirerName || 'the acquirer';
   const T = targetName || 'the target';
-  const gaap = inputs?.reportingBasis !== NON_GAAP;
-  const fA = firstFiscalYearAfter(year1End(inputs, 'A'), inputs?.companyAFiscalYearEnd);
-  const fB = firstFiscalYearAfter(year1End(inputs, 'B'), inputs?.companyBFiscalYearEnd);
+  const mixed = basesDiffer(inputs);
+  const gaap = inputs?.reportingBasis !== NON_GAAP && !mixed;
+  const endA = year1End(inputs, 'A'), endB = year1End(inputs, 'B');
+  const laterEnd = mixed && endA && endB ? (endA > endB ? endA : endB) : null;
+  const fA = firstFiscalYearAfter(laterEnd || endA, inputs?.companyAFiscalYearEnd);
+  const fB = firstFiscalYearAfter(laterEnd || endB, inputs?.companyBFiscalYearEnd);
   // /api/pnl returns at most three forecast years after the latest 10-K (server.js, `.slice(0, 3)`): a year past them is
   // not "no consensus", it is beyond what the deck loads, and the reason says so.
   const beyond = (cols, fy) => {
@@ -72,6 +78,7 @@ export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerNam
     else if (privateTarget && !Array.isArray(acquirerFwd)) reason = `${T} has no forecast EPS (a private company has no analyst consensus)`;
     else if (!Array.isArray(acquirerFwd) || !acquirerFwd.length) reason = `no forecast EPS for ${A}`;
     else if (privateTarget) reason = `${T} has no forecast EPS (a private company has no analyst consensus)`;
+    else if (mixed && (!Array.isArray(targetFwd) || !targetFwd.length)) reason = `no forecast EPS for ${T}`;
     else if (fyA == null) reason = `${A}'s Year 1 period or fiscal year end is not known`;
     else if (!a || a.eps == null) reason = beyond(acquirerFwd, fyA) || `no FMP consensus EPS for ${A} FY${fyA}`;
     else if (fyB == null) reason = `${T}'s Year 1 period or fiscal year end is not known`;
@@ -84,7 +91,7 @@ export function selectForwardYears({ inputs, acquirerFwd, targetFwd, acquirerNam
       colReason: fyA == null ? `${A}'s fiscal year end is not known` : !a ? (beyond(acquirerFwd, fyA) || `no FMP consensus for ${A} FY${fyA}`) : (!privateTarget && !b) ? `no FMP consensus for ${T} FY${fyB}` : null,
     });
   }
-  return { slots, gaap, firstFy: { A: fA, B: fB } };
+  return { slots, gaap, mixed, firstFy: { A: fA, B: fB } };
 }
 
 // "Year 2 (FY2027E)" for the verdict's "uses" line.

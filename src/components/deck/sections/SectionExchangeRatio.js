@@ -120,7 +120,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
 
   // EPS-impact row: render the ONE accretion result with its explicit basis (no leading '+').
   // Fix 14 Task 4: the one headline EPS figure (headlineEps), with its year and basis; "≤ 0" only when it is really so.
-  const epsImpact = deal?._results?.basesDiffer ? 'n/m (companies on different bases)' : hEps.pct == null
+  const epsImpact = (deal?._results?.basesDiffer && !(hEps.fromVerdict && hEps.year !== 'Year 1')) ? 'n/m (companies on different bases)' : hEps.pct == null
     ? `n/m (${hEps.reason}) · ${hEps.label}`
     : `${Math.abs(hEps.pct).toFixed(1)}% ${hEps.verdict === 'neutral' ? 'neutral' : hEps.pct >= 0 ? 'accretive' : 'dilutive'} · ${hEps.label}`;
   // Fix 14 Task 4: the cash part is labeled by how Sources & Uses actually funds it (cash on hand vs new debt), not

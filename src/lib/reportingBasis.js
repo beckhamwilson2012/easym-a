@@ -224,12 +224,13 @@ export function applyReportingBasis(inputs, plan) {
     // A computed EPS is on the Year 1 diluted count already in the inputs (Fix 13), so the count and its period stay as they are.
     // So is a company-reported LTM EPS (Fix 16): the sum of four quarters' EPS has no single filed share count.
     if (!A.computed && !A.ltmReported) {
+      out.companyADilutedSharesGaap = inputs.companyADilutedShares;   // Fix 21 Task 6: the count a mixed-basis forward year keeps
       out.companyADilutedShares = A.dilutedShares;
       out.companyADilutedSharesPeriod = { basis: 'non-GAAP diluted', end: A.fiscalYearEnd ?? null };
     }
     out.companyBNetIncome = B.netIncome;
     out.companyBEPS = B.value;
-    if (!B.computed && !B.ltmReported) out.companyBDilutedShares = B.dilutedShares;
+    if (!B.computed && !B.ltmReported) { out.companyBDilutedSharesGaap = inputs.companyBDilutedShares; out.companyBDilutedShares = B.dilutedShares; }
   }
   out.companyAEpsBasis = NON_GAAP;   // Year 1 is non-GAAP or "—"; the forward years are consensus (non-GAAP)
   out.companyBEpsBasis = NON_GAAP;

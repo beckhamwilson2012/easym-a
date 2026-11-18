@@ -34,7 +34,9 @@ describe('step 3 follows the verdict year and basis', () => {
     const v = dealVerdict({ deal: deal(inp, { basesDiffer: true }), model, acquirerFwd: [], targetFwd: [] });
     expect(v.step).toBeNull();
     expect(v.text).toBe('—');
-    expect(v.line).toMatch(/^No test can be computed: Year 1 combines companies on different bases; Year 1 —: Year 1 non-GAAP EPS not available/);
+    // Fix 21 Task 6: the reason is the same on both toggles, so the Non-GAAP Year 1 detail is not added here.
+    expect(v.line).toMatch(/^No test can be computed: Year 1 combines companies on different bases; /);
+    expect(v.line).not.toMatch(/Year 1 non-GAAP EPS not available/);
   });
   test('the risk flag names the reason, not a covers/short figure', () => {
     const v = dealVerdict({ deal: deal(inputs(), { basesDiffer: true }), model, acquirerFwd: [], targetFwd: [] });

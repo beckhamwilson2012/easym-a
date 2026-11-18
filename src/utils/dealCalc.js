@@ -506,8 +506,11 @@ export function epsAccretionPct(offerPrice, synergiesY1, inputs) {
 // Fix 20 Task 2: the share count a forward year's net income is built on, per side: the acquirer's one diluted count
 // (acquirerDilutedShares, the count every pro forma EPS divides by) and the target's diluted count, else its shares.
 // Fix 21 Task 5: no count is null, never 0. `|| 0` made a target's forward net income $0 inside the accretion math.
+// Fix 21 Task 6: on a mixed-basis deal both toggles read the same consensus, so both use the filed diluted count. The
+// Non-GAAP plan's earnings-release count would otherwise give the two toggles different answers.
 export function forwardShareCount(inputs, side) {
-  const n = side === 'A'
+  const filed = basesDiffer(inputs) ? parseFloat(inputs[`company${side}DilutedSharesGaap`]) : NaN;
+  const n = filed > 0 ? filed : side === 'A'
     ? acquirerDilutedShares(inputs).shares
     : (parseFloat(inputs.companyBDilutedShares) || parseFloat(inputs.companyBShares));
   return n > 0 ? n : null;
@@ -593,7 +596,8 @@ export function buildNarrative(results, inputs, nameA, nameB, flags, headline) {
   const deal = `${a}'s acquisition of ${b}${priceClause}${totalClause}`;
   const known = (v) => v != null && v !== '' && Number.isFinite(parseFloat(v));
 
-  if (results.basesDiffer) {
+  // Fix 21 Task 6: a mixed-basis deal with a forward-year verdict tells that year's story, below.
+  if (results.basesDiffer && !(headline && headline.fromVerdict && headline.year !== 'Year 1')) {
     return `${deal}: pro forma EPS and accretion are not shown because the companies are on different bases. Put both on the same basis to combine them.`;
   }
   // The EPS story is the headline's (Fix 20 Task 3); with no headline passed, Year 1's results, as before.

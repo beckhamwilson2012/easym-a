@@ -129,7 +129,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   const y1Reason = deal?._inputs?.year1Reason || null;   // Year 1 absent on a Non-GAAP deal (Fix 10 Task 2): say why, not "non-positive"
   // One EPS story (Fix 14 Task 3): the verdict's own year and basis (headlineEps), the figure the Deal Summary tile shows.
   const hEps = headlineEps(verdict, deal);
-  const accText = R.basesDiffer ? `n/m — ${DIFFERENT_BASES}`
+  const accText = (R.basesDiffer && !(hEps.fromVerdict && hEps.year !== 'Year 1')) ? `n/m — ${DIFFERENT_BASES}`
     : hEps.fromVerdict && hEps.year !== 'Year 1' ? (hEps.pct != null ? pcS(hEps.pct) : `n/m — ${hEps.reason}`)
     : y1Reason ? `— (${y1Reason})` : R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
 
