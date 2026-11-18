@@ -1,5 +1,6 @@
 import { calculate, calcProFormaEPS, epsAccretionPct, forwardNetIncome, forwardShareCount, forwardYearInputs, acquisitionNewDebt, newSharesLabel, TARGET_SHARES_MISSING } from '../../utils/dealCalc';
 import { dealVerdict, headlineEps, verdictFlags } from '../dealVerdict';
+import { acquirerVoteTest, majorityStockTest, UNKNOWN } from '../closeCertainty';
 
 // Fix 21 Task 5: no live ticker lacks a share count today, so this is shown on the functions themselves.
 const inputs = (over = {}) => ({
@@ -70,5 +71,18 @@ describe('unchanged when the count is there, and for a private target', () => {
     const r = calculate(inputs({ ...noShares, offerValueTotal: 900, offerPricePerShare: 0 }));
     expect(r.totalPurchasePrice).toBe('900');
     expect(r.targetSharesMissing).toBe(false);
+  });
+});
+
+describe('Fix 21 Task 5: close-certainty tests name the missing target count', () => {
+  test('the stated reason replaces the acquirer wording', () => {
+    for (const t of [acquirerVoteTest(null, 19.9, TARGET_SHARES_MISSING), majorityStockTest(null, 50, TARGET_SHARES_MISSING)]) {
+      expect(t.state).toBe(UNKNOWN);
+      expect(t.reason).toBe(TARGET_SHARES_MISSING);
+    }
+  });
+  test('without a stated reason the wording is unchanged', () => {
+    expect(acquirerVoteTest(null, 19.9).reason).toBe('Acquirer share count or share price unavailable');
+    expect(majorityStockTest(null, 50).reason).toBe('Acquirer share count or share price unavailable');
   });
 });

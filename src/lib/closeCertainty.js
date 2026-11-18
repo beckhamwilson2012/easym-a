@@ -33,14 +33,14 @@ export function issuancePct({ newShares, preDealShares }) {
 }
 
 // Acquirer shareholder vote — NYSE Listed Company Manual §312.03 / Nasdaq Rule 5635.
-export function acquirerVoteTest(pct, voteThreshold) {
-  if (pct == null) return unknown('Acquirer share count or share price unavailable');
+export function acquirerVoteTest(pct, voteThreshold, whyUnknown) {
+  if (pct == null) return unknown(whyUnknown || 'Acquirer share count or share price unavailable');
   return decide(pct >= voteThreshold, `Stock issuance ${pct.toFixed(1)}% of pre-deal shares`);
 }
 
 // Majority-stock structure — heightened board / rating-agency scrutiny.
-export function majorityStockTest(pct, majorityThreshold) {
-  if (pct == null) return unknown('Acquirer share count or share price unavailable');
+export function majorityStockTest(pct, majorityThreshold, whyUnknown) {
+  if (pct == null) return unknown(whyUnknown || 'Acquirer share count or share price unavailable');
   return decide(pct >= majorityThreshold, `Stock issuance ${pct.toFixed(1)}% of pre-deal shares`);
 }
 

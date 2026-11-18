@@ -4,7 +4,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtPerShare, accretionVerdict, isGrossNm, grossNmNote, fmtInterest } from '../shared/deckTokens';
-import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, acquirerSharePrice, forwardYearInputs, TAX_RATE, privateConsideration } from '../../../utils/dealCalc';
+import { calcProFormaEPS, epsAccretionPct, acquirerDilutedShares, acquirerSharePrice, forwardYearInputs, TAX_RATE, privateConsideration, TARGET_SHARES_MISSING } from '../../../utils/dealCalc';
 import { selectForwardYears, CONSENSUS_BASIS, NO_GAAP_FORECAST, synergyForSlot, BEYOND_SYNERGY_SCHEDULE } from '../../../lib/forwardYears';
 import { NONE_ENTERED, REVENUE_ONLY_FLAG, marginSentence, fmtSynergy } from '../../../lib/synergies';
 import { formatDeckDate, forwardNetIncomeLabel, accretionShareCountLabel } from '../../../lib/composeSourceLine';
@@ -236,6 +236,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const inputs   = deal?._inputs || {};
   const offer    = parseFloat(deal?.offerPrice) || parseFloat(inputs.offerPricePerShare) || 0;
   const acqDilSh = acquirerDilutedShares(inputs).shares;
+  const noTargetShares = !!deal?._results?.targetSharesMissing;   // Fix 21 Task 5: every year is "—" with this reason
   const synY = [deal?.synergiesY1, deal?.synergiesY2, deal?.synergiesY3];
 
   const forwardRows = [];
@@ -243,8 +244,8 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
     for (const slot of (loaded ? sel.slots : [])) {
       const a = slot.a, b = slot.b;                         // forward EPS from /api/pnl (== /api/estimates epsAvg)
       // A year that can't compute is a "—" row with its reason, never dropped and never filled.
-      if (!slot.epsOk || !(acqDilSh > 0)) {
-        forwardRows.push({ year: slot.year, synYr: slot.synYr, acqFY: slot.fyA, na: true, reason: slot.epsOk ? 'the acquirer diluted share count is missing' : slot.reason });
+      if (noTargetShares || !slot.epsOk || !(acqDilSh > 0)) {
+        forwardRows.push({ year: slot.year, synYr: slot.synYr, acqFY: slot.fyA, na: true, reason: noTargetShares ? TARGET_SHARES_MISSING : slot.epsOk ? 'the acquirer diluted share count is missing' : slot.reason });
         continue;
       }
       const fwdInputs = forwardYearInputs(inputs, a.eps, b.eps);
@@ -281,7 +282,7 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
   const y1Src = y1Computed.length === 2 ? 'computed by EasyM&A' : y1Computed.length ? `${ngPlan.tickers?.[y1Computed[0]] || 'one side'} computed by EasyM&A` : 'company reported';
   const y1Fy = ngPlan ? (ngPlan.eps.nonGaap ? `${y1Period}, non-GAAP (${y1Src})` : `— ${ngPlan.eps.note}`) : `${y1Period}, GAAP`;
   const accRows = [
-    { label: 'Year 1', tag: y1Fy, basis: 'verified', na: !!inputs.year1Reason, standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
+    { label: 'Year 1', tag: noTargetShares ? `${y1Fy} — ${TARGET_SHARES_MISSING}` : y1Fy, basis: 'verified', na: !!inputs.year1Reason || noTargetShares, standalone: standaloneY1, pf: pfEPSY1, pfExSyn: pfEPSY1ExSyn, pct: headlinePct, pctExSyn: pctY1ExSyn },
     ...forwardRows.map(r => r.na
       ? { label: `Year ${r.year}`, tag: `${r.acqFY != null ? `FY${r.acqFY}e` : ''} — ${r.reason}`, basis: 'forward', na: true }
       : { label: `Year ${r.year}`, tag: `${CONSENSUS_BASIS}, FY${r.acqFY}e ${r.synYr != null ? `+ Yr${r.synYr} synergies` : `— ${BEYOND_SYNERGY_SCHEDULE}`}`, basis: 'forward', standalone: r.standaloneEPS, pf: r.pfEPS, pfExSyn: r.pfEPSExSyn, pct: r.pct, pctExSyn: r.pctExSyn, analysts: r.analysts }),

@@ -6,6 +6,7 @@ import { evClaimsNote, balanceSheetGap } from '../../../lib/netDebt';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
+import { TARGET_SHARES_MISSING } from '../../../utils/dealCalc';
 import { isNonGaapDeal, combinedEbitdaLabel } from '../../../lib/reportingBasis';
 import { headlineEps } from '../../../lib/dealVerdict';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
@@ -129,7 +130,9 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
   const y1Reason = deal?._inputs?.year1Reason || null;   // Year 1 absent on a Non-GAAP deal (Fix 10 Task 2): say why, not "non-positive"
   // One EPS story (Fix 14 Task 3): the verdict's own year and basis (headlineEps), the figure the Deal Summary tile shows.
   const hEps = headlineEps(verdict, deal);
-  const accText = (R.basesDiffer && !(hEps.fromVerdict && hEps.year !== 'Year 1')) ? `n/m — ${DIFFERENT_BASES}`
+  // Fix 21 Task 5: no target share count is its own reason, never "non-positive EPS base".
+  const accText = R.targetSharesMissing ? `— (${TARGET_SHARES_MISSING})`
+    : (R.basesDiffer && !(hEps.fromVerdict && hEps.year !== 'Year 1')) ? `n/m — ${DIFFERENT_BASES}`
     : hEps.fromVerdict && hEps.year !== 'Year 1' ? (hEps.pct != null ? pcS(hEps.pct) : `n/m — ${hEps.reason}`)
     : y1Reason ? `— (${y1Reason})` : R.accretionMeaningful === false ? 'n/m — non-positive EPS base' : pcS(accPct);
 
@@ -178,7 +181,9 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
       ? `Price: the ${ps(d.offerPrice)} offer is a ${pc(d.premiumPct)} premium to the target's ${ps(refPx)} close${deal._inputs.premiumReferenceDate ? ` on ${deal._inputs.premiumReferenceDate}` : ' on the chosen date'}; it trades at ${ps(d.currentPriceTarget)} today.`
       : `Price: the ${ps(d.offerPrice)} offer is a ${pc(d.premiumPct)} premium to the target's ${ps(d.currentPriceTarget)} market price.`);
   }
-  rationale.push(R.basesDiffer
+  rationale.push(R.targetSharesMissing
+    ? `Earnings: Year-1 accretion / (dilution) is not shown — ${TARGET_SHARES_MISSING}.`
+    : R.basesDiffer
     ? `Earnings: Year-1 accretion / (dilution) is not shown — ${DIFFERENT_BASES}.`
     : y1Reason
     ? `Earnings: Year-1 accretion / (dilution) is not shown — ${y1Reason}.`
@@ -187,11 +192,12 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     : `Earnings: Year-1 pro forma EPS moves ${pcS(accPct)} against the acquirer's standalone EPS (its net income ÷ the same diluted share count the pro forma uses).`);
 
   // ── Certainty of close — three-state, every item ──────────────────────────
+  const issuanceWhy = R.targetSharesMissing ? TARGET_SHARES_MISSING : undefined;   // Fix 21 Task 5: the acquirer's count is not what is missing
   const checklist = [
     { label: `Acquirer shareholder vote (NYSE §312.03 / Nasdaq 5635, ${ISSUANCE_VOTE_THRESHOLD}%)`,
-      t: acquirerVoteTest(pct, ISSUANCE_VOTE_THRESHOLD), metLabel: 'Required', notMetLabel: 'Not required' },
+      t: acquirerVoteTest(pct, ISSUANCE_VOTE_THRESHOLD, issuanceWhy), metLabel: 'Required', notMetLabel: 'Not required' },
     { label: `Majority-stock structure (≥${ISSUANCE_MAJORITY_THRESHOLD}% of pre-deal shares)`,
-      t: majorityStockTest(pct, ISSUANCE_MAJORITY_THRESHOLD), metLabel: 'Yes', notMetLabel: 'No' },
+      t: majorityStockTest(pct, ISSUANCE_MAJORITY_THRESHOLD, issuanceWhy), metLabel: 'Yes', notMetLabel: 'No' },
     { label: 'HSR size-of-transaction (on equity value)',
       t: hsrSizeOfTransactionTest(d.totalConsideration), metLabel: 'Test met', notMetLabel: 'Below threshold' },
     { label: 'Horizontal overlap — same SIC classification',

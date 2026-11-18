@@ -273,7 +273,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 <ExplainButton explain={() => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA })} />
               </div>
               <div data-testid="eps-impact-tile" style={{ color: accColorL, fontSize: 22, fontWeight: 'bold' }}>
-                {accOK ? fmtPctSigned(hEps.pct) : 'n/m'}
+                {results.targetSharesMissing ? '—' : accOK ? fmtPctSigned(hEps.pct) : 'n/m'}
               </div>
               <div data-testid="eps-impact-label" style={{ color: '#A8C4DC', fontSize: 10, marginTop: 2 }}>{hEps.label}{!accOK && hEps.reason ? ` — ${hEps.reason}` : ''}</div>
             </div>
@@ -317,7 +317,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // `companyBEBITDA <= 0` read a missing EBITDA as negative (null <= 0 is true): OXY "Target EBITDA is negative".
               value: results.evEBITDA === 'N/A' ? (results.evEBITDAReason ? 'n/m' : '—') : `${multipleNumber(results.evEBITDA)}x`,
               note:  results.evEBITDA === 'N/A'
-                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || [absentFigure(inputs.companyBEBITDA) && 'Target EBITDA not reported', results.enterpriseValue == null && tgtBsGap].filter(Boolean).join('; ') || 'not available'))
+                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || [results.targetSharesMissing && TARGET_SHARES_MISSING, absentFigure(inputs.companyBEBITDA) && 'Target EBITDA not reported', results.enterpriseValue == null && tgtBsGap].filter(Boolean).join('; ') || 'not available'))
                 : (ebB ? `on ${ebitdaBasisText(ebB)}` : null),
               explain: () => explainEvEbitda({ ev, ebitda: inputs.companyBEBITDA, multiple: results.evEBITDA }),
             },
@@ -340,7 +340,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               note:  results.debtEBITDA === 'N/A'
                 ? ((results.basesDiffer || ebDiffer) ? withBsGap(DIFFERENT_BASES) : results.debtEBITDAAboveCap ? results.debtEBITDAReason : results.combinedEBITDA == null ? withBsGap('Combined EBITDA not available')
                   : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
-                  : (dealBsGap || 'Combined debt not available'))
+                  : ([results.targetSharesMissing && TARGET_SHARES_MISSING, dealBsGap].filter(Boolean).join('; ') || 'Combined debt not available'))
                 : (combinedEbitdaBasis ? `on ${combinedEbitdaBasis} combined EBITDA${ebSources ? ` (${ebSources})` : ''}` : null),
               explain: () => explainDebtEbitda({ combinedDebt: combinedDebtForExplain, combinedEbitda: results.combinedEBITDA, multiple: results.debtEBITDA }),
             },

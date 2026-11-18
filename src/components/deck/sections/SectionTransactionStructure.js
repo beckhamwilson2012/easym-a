@@ -4,7 +4,7 @@ import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf, fmtInterest } from '../shared/deckTokens';
 import { evClaimsNote, NET_DEBT_BASIS, dealBalanceSheetGap } from '../../../lib/netDebt';
-import { epsAccretionPct, privateConsideration, DEBT_INTEREST_RATE, TAX_RATE } from '../../../utils/dealCalc';
+import { epsAccretionPct, privateConsideration, DEBT_INTEREST_RATE, TAX_RATE, TARGET_SHARES_MISSING } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
 import { SynergyLines } from '../shared/SynergyLines';
@@ -157,7 +157,9 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
         </div>
         {foots == null ? (
           <div style={{ marginTop: 5, fontSize: 8.5, color: '#6B7280', fontWeight: 600 }}>
-            — Sources &amp; Uses not footed: {r.fundingGap === 'minCash'
+            — Sources &amp; Uses not footed: {r.fundingGap === 'targetShares'
+              ? `${TARGET_SHARES_MISSING}, so the purchase price and the funding it drives are unknown.`
+              : r.fundingGap === 'minCash'
               ? `the minimum cash kept can't be set (${minCashBasisText || 'no revenue basis'}), so the excess cash used and the new debt it drives are unknown.`
               : r.fundingGap === 'cash'
               ? `combined cash is unavailable${capGap ? ` (${capGap})` : ''}, so the excess cash used and the new debt it drives are unknown.`
