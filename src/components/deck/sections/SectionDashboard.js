@@ -75,6 +75,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const tgtTk = target?.ticker || nameB, acqTk = acquirer?.ticker || nameA;
   const tgtBsGap = balanceSheetGap(tgtTk, target);   // Fix 21 Task 4: why EV, net debt and leverage are "—"
   const dealBsGap = dealBalanceSheetGap(acqTk, acquirer, tgtTk, target);
+  // Leverage needs the debt too: when it is missing as well, the tile names that reason beside any other.
+  const withBsGap = (t) => (results.combinedDebt == null && dealBsGap ? `${t}; ${dealBsGap}` : t);
   const cet1Why = (c, tk) => ((c?.totalAssets != null || c?.tangibleBookValue != null || c?.netInterestIncome != null)
     ? `${tk}: no CET1 ratio tagged in its XBRL filings` : `${tk}: bank filing data not available`);
   const cet1Tile = (() => {
@@ -333,7 +335,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // Branch on WHY the ratio is N/A (dealCalc: combinedEBITDA > 0 && combinedDebt != null) — a null
               // combined debt with positive EBITDA is "debt not available", never "EBITDA is non-positive".
               note:  results.debtEBITDA === 'N/A'
-                ? ((results.basesDiffer || ebDiffer) ? DIFFERENT_BASES : results.debtEBITDAAboveCap ? results.debtEBITDAReason : results.combinedEBITDA == null ? 'Combined EBITDA not available'
+                ? ((results.basesDiffer || ebDiffer) ? withBsGap(DIFFERENT_BASES) : results.debtEBITDAAboveCap ? results.debtEBITDAReason : results.combinedEBITDA == null ? withBsGap('Combined EBITDA not available')
                   : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
                   : (dealBsGap || 'Combined debt not available'))
                 : (combinedEbitdaBasis ? `on ${combinedEbitdaBasis} combined EBITDA${ebSources ? ` (${ebSources})` : ''}` : null),
