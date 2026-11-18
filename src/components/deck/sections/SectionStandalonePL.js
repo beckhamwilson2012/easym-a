@@ -34,6 +34,27 @@ const fmtUSDmAcct = (m) => {
   return `$${Math.round(v).toLocaleString('en-US')}M`;
 };
 
+// 2c — LTM non-operating disclosure (fallback ii): name ONLY the sourced NonoperatingIncomeExpense total and its interim
+// legs; attribute nothing beyond the concept (composition varies by filer). Per-company, from real values; null when there
+// is no total. Period label derives from the actual span (H1@180, Q1@89, 9M@272), so AMZN reads "Q1" and a 9M filer "9M".
+// Fix 21 Task 3: when the latest 10-K is the LTM period (a September year-end just after its 10-K) the block carries only
+// the total: no concept name and no interim legs. Those printed as "undefined" and "$NaNM" (AAPL, V, DIS).
+export function ltmNonOperatingNote(L) {
+  const noi = L && L.nonOperatingIncome;
+  if (!noi || !Number.isFinite(noi.ltmM)) return null;
+  const spanLbl = (span, end) => `${span <= 135 ? 'Q1' : span <= 225 ? 'H1' : span <= 315 ? '9M' : 'FY'}'${(end || '').slice(2, 4)}`;
+  const pl = L.audit?.periods?.latestInterim, pp = L.audit?.periods?.priorInterim;
+  const latLbl = pl ? spanLbl(pl.span, pl.end) : 'latest interim', prLbl = pp ? spanLbl(pp.span, pp.end) : 'prior-year';
+  const inc = noi.ltmM >= 0 ? 'income' : 'expense';
+  const $ = (v) => `$${Math.abs(v).toLocaleString('en-US')}M`;
+  const haveLegs = Number.isFinite(noi.latestYtdM) && Number.isFinite(noi.priorYtdM);
+  const legs = haveLegs ? `${latLbl} ${$(noi.latestYtdM)} vs ${prLbl} ${$(noi.priorYtdM)}`
+    : L.basis === 'latest-10-K' ? 'interim figures —: the LTM period is the latest fiscal year'
+    : 'interim figures —: not reported';
+  const detail = [noi.conceptName, legs].filter(Boolean).join('; ');
+  return `LTM net income includes non-operating ${inc} of ${$(noi.ltmM)} (${detail})${pl?.filed ? `, per the 10-Q filed ${pl.filed}` : ''}. LTM margins are not comparable to operating margins.`;
+}
+
 function buildBankCommentary(target, deal, { nii, nonIntInc, nonIntExp, bankTotalRev, bankNiMargin }) {
   const lines = [];
   if (deal.purchasePremium !== undefined)
@@ -157,19 +178,7 @@ function MultiYearPL({ pnl, fwdNiNote, restaurantMode, grossNmMode, grossNote, n
     _growthBase: lastActual ? `vs ${lastActual.label}` : null,
   } : null;
 
-  // 2c — LTM non-operating disclosure (fallback ii): name ONLY the sourced NonoperatingIncomeExpense total
-  // and its interim legs; attribute nothing beyond the concept (composition varies by filer). Per-company,
-  // from real values; renders only if non-null. Period label derives from the actual span (H1@180, Q1@89,
-  // 9M@272) — never hardcoded, so AMZN reads "Q1" and a future 9M filer reads "9M".
-  const noiF = (showLtm && L.nonOperatingIncome && L.nonOperatingIncome.ltmM != null) ? L.nonOperatingIncome : null;
-  const spanLbl = (span, end) => `${span <= 135 ? 'Q1' : span <= 225 ? 'H1' : span <= 315 ? '9M' : 'FY'}'${(end || '').slice(2, 4)}`;
-  const noiText = noiF ? (() => {
-    const pl = L.audit?.periods?.latestInterim, pp = L.audit?.periods?.priorInterim;
-    const latLbl = pl ? spanLbl(pl.span, pl.end) : 'latest interim', prLbl = pp ? spanLbl(pp.span, pp.end) : 'prior-year';
-    const inc = noiF.ltmM >= 0 ? 'income' : 'expense';
-    const $ = (v) => `$${Math.abs(v).toLocaleString('en-US')}M`;
-    return `LTM net income includes non-operating ${inc} of ${$(noiF.ltmM)} (${noiF.conceptName}; ${latLbl} ${$(noiF.latestYtdM)} vs ${prLbl} ${$(noiF.priorYtdM)})${pl?.filed ? `, per the 10-Q filed ${pl.filed}` : ''}. LTM margins are not comparable to operating margins.`;
-  })() : null;
+  const noiText = showLtm ? ltmNonOperatingNote(L) : null;
 
   // 2d — forward net-margin inversion: only where the consensus data shows it (GOOGL FY26E>FY27E; AMZN won't).
   const _fwd = cols.filter(c => !c.actual);
