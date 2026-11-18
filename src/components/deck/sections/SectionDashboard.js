@@ -72,15 +72,16 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const flags     = bankMode
     ? computeBankFlags(results, inputs, target, acquirer)
     : computeFlags(results, inputs);
-  const narrative  = bankMode
-    ? buildBankNarrative(results, inputs, target, acquirer, nameA, nameB)
-    : buildNarrative(results, inputs, acquirer?.name || nameA, target?.name || nameB, flags);   // the names every other slide uses
   // Third state for undefined accretion: a non-positive EPS base makes accretive/(dilutive) meaningless.
   // Drive the verdict off accretionMeaningful (NOT isAccretive being falsy) so an EPS IMPROVEMENT off a
   // negative base (e.g. -$0.37 → -$0.18) never reads "Dilutive". Positive-base deals are unchanged.
   // One EPS story (Fix 14 Task 3): the tile and EPS Analysis show the verdict's own year (headlineEps), each labeled with
   // its year and basis. When Year 1 is "—" that is the forecast year the verdict used, never a bare "n/m".
   const hEps        = headlineEps(verdict, deal);
+  // Fix 20 Task 3: the sentence under the headline reads the same headline object (year, basis, EPS), never Year 1 beside it.
+  const narrative  = bankMode
+    ? buildBankNarrative(results, inputs, target, acquirer, nameA, nameB)
+    : buildNarrative(results, inputs, acquirer?.name || nameA, target?.name || nameB, flags, hEps);   // the names every other slide uses
   const epsRef      = results.basesDiffer ? null : reportedEpsReference(hEps, deal);   // Fix 17 Task 1: the company's own figure, a labeled reference
   const accOK       = hEps.pct != null;
   const accUp       = hEps.verdict === 'accretive';

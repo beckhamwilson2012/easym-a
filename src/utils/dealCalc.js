@@ -557,7 +557,11 @@ export function newSharesLabel(results) {
 
 // ── Narrative ─────────────────────────────────────────────────────────────────
 
-export function buildNarrative(results, inputs, nameA, nameB, flags) {
+// Fix 20 Task 3: `headline` is the Deal Summary's headline EPS object (dealVerdict.js headlineEps): the sentence prints
+// its standalone EPS, pro forma EPS, % and year, so it can never describe a different year than the tile above it
+// (RKLB/IRDM Non-GAAP printed Year 1's −$0.11 → −$0.14 under an FY2028E $0.19 → $0.13 headline). Year 1 headlines carry
+// the same figures as `results`, so their sentence is unchanged. Without a headline (older callers) it reads Year 1.
+export function buildNarrative(results, inputs, nameA, nameB, flags, headline) {
   // Names are the ones the slides use (SectionDashboard passes the acquirer/target objects' names), never "Company B".
   // A value that is unknown drops its clause: no "$null", no "$0.00/share" for a private target with no per-share price.
   // Known values print exactly as before.
@@ -571,25 +575,30 @@ export function buildNarrative(results, inputs, nameA, nameB, flags) {
     : (privateConsideration(inputs) != null && !(offer > 0)) ? ` for ${formatDollars(total)}`
     : ` (${formatDollars(total)} total)`;
   const deal = `${a}'s acquisition of ${b}${priceClause}${totalClause}`;
-  const direction = results.isAccretive ? 'accretive' : 'dilutive';
   const known = (v) => v != null && v !== '' && Number.isFinite(parseFloat(v));
-  const haveEps = known(results.companyAEPS) && known(results.proFormaEPS);
 
   if (results.basesDiffer) {
     return `${deal}: pro forma EPS and accretion are not shown because the companies are on different bases. Put both on the same basis to combine them.`;
   }
+  // The EPS story is the headline's (Fix 20 Task 3); with no headline passed, Year 1's results, as before.
+  const h = headline || { year: 'Year 1', standaloneEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, pct: results.epsChangePct };
+  const sa = h.standaloneEPS, pf = h.proFormaEPS;
+  const haveEps = known(sa) && known(pf);
+  // A forecast-year headline names its year and basis in the sentence, as the tile does ("FY2028E · FMP consensus …").
+  const yearClause = h.year && h.year !== 'Year 1' && h.label ? ` in ${h.label.replace(' · ', ' on ')}` : '';
   // When the acquirer is loss-making (standalone EPS ≤ 0) a percentage change from a negative base
   // is not meaningful — describe the absolute EPS move instead of reporting a misleading percentage.
-  const pct = results.epsChangePct === null ? null : parseFloat(results.epsChangePct);
+  const pct = h.pct == null ? null : parseFloat(h.pct);
   let text;
   if (!haveEps) {
     text = `${deal}.`;
   } else if (pct === null || isNaN(pct)) {
-    const nonPositive = parseFloat(results.companyAEPS) <= 0 || parseFloat(results.proFormaEPS) <= 0;
-    text = `${deal} moves pro forma EPS from ${usd2(results.companyAEPS)} to ${usd2(results.proFormaEPS)}${nonPositive ? ' — accretion/(dilution) is not meaningful from a non-positive EPS base' : ''}.`;
+    const nonPositive = parseFloat(sa) <= 0 || parseFloat(pf) <= 0;
+    text = `${deal} moves pro forma EPS from ${usd2(sa)} to ${usd2(pf)}${yearClause}${nonPositive ? ' — accretion/(dilution) is not meaningful from a non-positive EPS base' : ''}.`;
   } else {
-    const epsDir = results.isAccretive ? 'increasing' : 'decreasing';
-    text = `${deal} would be ${direction}, ${epsDir} EPS by ${Math.abs(pct).toFixed(1)}% from ${usd2(results.companyAEPS)} to ${usd2(results.proFormaEPS)}.`;
+    // Accretive when pro forma EPS exceeds standalone EPS: the same test as results.isAccretive, on the headline's figures.
+    const up = parseFloat(pf) > parseFloat(sa);
+    text = `${deal} would be ${up ? 'accretive' : 'dilutive'}${yearClause}, ${up ? 'increasing' : 'decreasing'} EPS by ${Math.abs(pct).toFixed(1)}% from ${usd2(sa)} to ${usd2(pf)}.`;
   }
   if (flags.length > 0) {
     // Fix 16 Task 6: a flag whose text is a clause names its risk as a noun phrase ("High combined leverage").
