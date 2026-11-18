@@ -39,6 +39,34 @@ function deregistration(submissions, symbol) {
   return { name: submissions.name || String(symbol).toUpperCase(), date: pick.date, form: pick.form };
 }
 
+const REGISTRATION_UNAVAILABLE = 'registration check unavailable';
+
+function withDeadline(work, ms) {
+  let timer;
+  const expired = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`no answer within ${ms}ms`)), ms);
+  });
+  return Promise.race([work, expired]).finally(() => clearTimeout(timer));
+}
+
+// Never rejects. `block` is set only by a successful EDGAR answer that shows the company deregistered. Any failure (HTTP
+// 429 or 5xx, timeout, no network, an answer with no filing history) gives { checked: false, block: null } and one log line.
+async function checkRegistration(symbol, { resolveCik, fetchSubmissions, deadlineMs, warn = console.warn }) {
+  const ask = async () => {
+    const cik = await resolveCik(symbol);
+    if (!cik) return null;
+    const submissions = await fetchSubmissions(cik);
+    if (!recentFilings(submissions).length) throw new Error('EDGAR answer has no filing history');
+    return deregistration(submissions, symbol);
+  };
+  try {
+    return { checked: true, block: await withDeadline(ask(), deadlineMs) };
+  } catch (e) {
+    warn(`[${symbol}] ${REGISTRATION_UNAVAILABLE}: ${e.message}`);
+    return { checked: false, block: null };
+  }
+}
+
 const deregisteredMessage = (d) => `${d.name} deregistered with the SEC on ${d.date} (Form ${d.form}); no current filings`;
 
-module.exports = { deregistration, deregisteredMessage, PERIODIC_FORMS, FORM_15, DELISTING_FORM };
+module.exports = { deregistration, deregisteredMessage, checkRegistration, withDeadline, REGISTRATION_UNAVAILABLE, PERIODIC_FORMS, FORM_15, DELISTING_FORM };

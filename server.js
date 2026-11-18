@@ -16,7 +16,7 @@ const { grossNotMeaningfulReason } = require('./src/lib/insuranceSic'); // utili
 const { resolveDepreciationAt, resolveCapexAt, resolveOperatingCashFlowAt, computeEbitda, computeFreeCashFlow, traceOf } = require('./server/services/cashFlowConcepts'); // shared D&A, capex, EBITDA and FCF (/quote, /api/pnl, LTM, §16 identical)
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
-const { deregistration, deregisteredMessage } = require('./server/services/registrationStatus'); // Fix 21: EDGAR says whether a ticker is still a registrant
+const { checkRegistration, deregisteredMessage, withDeadline, REGISTRATION_UNAVAILABLE } = require('./server/services/registrationStatus'); // Fix 21: EDGAR says whether a ticker is still a registrant
 const { computeLTM, scaleShares, fyCashYield } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
 const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod, grossProfitAbsentReason } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
@@ -105,10 +105,14 @@ const CACHE_TTL_MS = 300_000; // 5 min — longer TTL reduces Yahoo call frequen
 const nonGaapCache       = new Map();
 const NONGAAP_CACHE_TTL_MS = 86_400_000; // 24h
 
+// Fix 21: a host that accepts the connection and then goes silent is an error, not a request that waits forever.
+// Idle time only, so a long download that keeps sending is untouched.
+const HTTP_IDLE_TIMEOUT_MS = 30_000;
+
 function get(url, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
-    https.get(
+    const req = https.get(
       {
         hostname: parsed.hostname,
         path: parsed.pathname + parsed.search,
@@ -133,9 +137,12 @@ function get(url, extraHeaders = {}) {
           try { resolve(JSON.parse(data)); }
           catch (e) { reject(new Error('JSON parse error')); }
         });
+        res.on('error', reject);   // the connection dropped mid-body: a gzip pipe would otherwise never end
         stream.on('error', reject);
       }
-    ).on('error', reject);
+    );
+    req.on('error', reject);
+    req.setTimeout(HTTP_IDLE_TIMEOUT_MS, () => req.destroy(new Error(`no response from ${parsed.hostname} for ${HTTP_IDLE_TIMEOUT_MS / 1000}s`)));
   });
 }
 
@@ -271,7 +278,7 @@ async function fetchSubmissions(cik) {
 function tickerMatches(raw) {
   const upper = raw.toUpperCase();
   const lower = raw.toLowerCase();
-  return tickerCache
+  return (tickerCache || [])
     .filter(
       (e) => e.symbol.startsWith(upper) || e.name.toLowerCase().includes(lower)
     )
@@ -293,7 +300,7 @@ const NO_EXACT_TICKER_ROW = 'no exact ticker match: pick a company below';
 app.get('/search', async (req, res) => {
   const raw = (req.query.q || '').trim();
   try {
-    await loadTickers();
+    await tickersReady();
     const upper = raw.toUpperCase();
     const results = tickerMatches(raw);
     if (upper && results.length && results[0].symbol !== upper) results.unshift({ symbol: upper, name: NO_EXACT_TICKER_ROW });
@@ -307,10 +314,31 @@ app.get('/search', async (req, res) => {
 // ── Company resolution (Fix 21 Task 1) ────────────────────────────────────────
 // The company-picker's /quote and /api/price calls pass through here. Deck slides read peers and the two deal companies
 // with scope=deck and are not refused: those two were resolved here already, and peers are the peer screen's business.
+//
+// THE RULE: a failed check never blocks a company. Only a successful EDGAR answer showing a Form 15 or 25-NSE after the
+// last periodic report refuses one. HTTP 429, 5xx, a timeout or no network logs "registration check unavailable" and the
+// company loads normally. A failure is not cached, so the next request checks again.
 const REGISTRATION_TTL_MS = 6 * 60 * 60 * 1000;
 const TICKER_LIST_FRESH_MS = 24 * 60 * 60 * 1000;
-const registrationCache = new Map();   // symbol → { ts, status: Promise<{name,date,form} | {unverified:true} | null> }
+const REGISTRATION_CHECK_MS = 10_000;     // the most a company load waits on this check
+const TICKER_LIST_RETRY_MS = 30_000;      // after a failed list read, requests go on without it for this long
+const registrationCache = new Map();      // symbol → { ts, status: Promise<{name,date,form} | null> }
+let tickerListRetryAt = 0;
 const isTickerShaped = (s) => /^[A-Z0-9][A-Z0-9.\-]{0,9}$/.test(s);
+
+// The SEC ticker list, if it can be had. Never throws: without it a company resolves through FMP.
+async function tickersReady() {
+  if (tickerCache) return true;
+  if (Date.now() < tickerListRetryAt) return false;
+  try {
+    await withDeadline(loadTickers(), REGISTRATION_CHECK_MS);
+    return true;
+  } catch (e) {
+    tickerListRetryAt = Date.now() + TICKER_LIST_RETRY_MS;
+    console.warn(`${REGISTRATION_UNAVAILABLE}: SEC ticker list: ${e.message}`);
+    return false;
+  }
+}
 
 async function fetchSubmissionsOnceMore(cik) {
   const url = `https://data.sec.gov/submissions/CIK${cik}.json`;
@@ -318,8 +346,9 @@ async function fetchSubmissionsOnceMore(cik) {
   catch (_) { await new Promise((r) => setTimeout(r, 1500)); return get(url); }
 }
 
-async function lookupRegistration(symbol) {
-  await loadTickers();
+// The CIK to ask EDGAR about, or null when there is nothing to ask. Throws when that cannot be known yet.
+async function registrationCik(symbol) {
+  const listReady = await tickersReady();
   const listedCik = cikBySymbol[symbol] || null;
   // In a current SEC ticker list means EDGAR still lists it: no filing can make it deregistered, and no request is spent.
   if (listedCik && Date.now() - tickerListLoadedAt < TICKER_LIST_FRESH_MS) return null;
@@ -330,28 +359,25 @@ async function lookupRegistration(symbol) {
     const p = Array.isArray(r) ? r[0] : null;
     if (p && String(p.symbol || '').toUpperCase() === symbol && p.cik) cik = String(p.cik).padStart(10, '0');
   }
-  if (!cik) return null;
-  return deregistration(await fetchSubmissionsOnceMore(cik), symbol);
+  if (!cik && !listReady) throw new Error('SEC ticker list unavailable and no CIK from FMP');
+  return cik;
 }
 
-// EDGAR unreachable: a ticker on the SEC list resolves as before. One that is NOT on the list has only FMP behind it, which
-// is exactly how a deregistered company got a deck, so it is refused for now with that reason. Failures are not cached.
 function registrationBlock(symbol) {
   if (!isTickerShaped(symbol)) return Promise.resolve(null);
   const hit = registrationCache.get(symbol);
   if (hit && Date.now() - hit.ts < REGISTRATION_TTL_MS) return hit.status;
-  const status = lookupRegistration(symbol).catch((e) => {
-    console.warn(`[${symbol}] registration check unavailable: ${e.message}`);
-    registrationCache.delete(symbol);
-    return cikBySymbol[symbol] ? null : { unverified: true };
+  const status = checkRegistration(symbol, {
+    resolveCik: registrationCik, fetchSubmissions: fetchSubmissionsOnceMore, deadlineMs: REGISTRATION_CHECK_MS,
+  }).then(({ checked, block }) => {
+    if (!checked) registrationCache.delete(symbol);
+    return block;
   });
   registrationCache.set(symbol, { ts: Date.now(), status });
   return status;
 }
 
-const refusalOf = (symbol, block) => (block.unverified
-  ? { error: `Could not confirm with SEC EDGAR that ${symbol} is still registered. Try again in a minute.`, code: 'registration_unverified' }
-  : { error: deregisteredMessage(block), code: 'deregistered', deregistered: block });
+const refusalOf = (block) => ({ error: deregisteredMessage(block), code: 'deregistered', deregistered: block });
 
 function noExactMatch(symbol, candidates) {
   const list = candidates.filter((c) => c.symbol !== symbol);
@@ -1168,7 +1194,7 @@ async function tryAlphaVantage(ticker) {
 // The /quote payload for one ticker. Shared by the /quote route and the peer picker (target market cap,
 // candidate revenue), so both read the SAME fundamentals pipeline. Throws on an unexpected error.
 async function quotePayload(symbol) {
-    await loadTickers();
+    await tickersReady();   // Fix 21: no SEC list is no CIK, so FMP answers; it does not fail the company
 
     let result = null;
     const cik = cikBySymbol[symbol];
@@ -1265,11 +1291,14 @@ app.get('/quote', async (req, res) => {
   const symbol = (req.query.symbol || '').toUpperCase();
   try {
     if (req.query.scope === 'deck') return res.json(await quotePayload(symbol));
-    await loadTickers();
+    const listReady = await tickersReady();
     const block = await registrationBlock(symbol);
-    if (block) return res.json(refusalOf(symbol, block));
+    if (block) return res.json(refusalOf(block));
     const exact = !!cikBySymbol[symbol];
-    if (!exact && !isTickerShaped(symbol)) return res.json(noExactMatch(symbol, tickerMatches(symbol)));
+    if (!exact && !isTickerShaped(symbol)) {
+      return res.json(listReady ? noExactMatch(symbol, tickerMatches(symbol))
+        : { error: `The SEC company list is unavailable, so "${symbol}" can't be matched. Enter an exact ticker.`, code: 'no_exact_match', candidates: [] });
+    }
     const payload = await quotePayload(symbol);
     // Nothing resolved this ticker. If the text matches other companies, offer them; it is never one of them silently.
     if (!exact && payload.dataSource === 'none') {
@@ -1397,7 +1426,7 @@ app.get('/api/price/:ticker', async (req, res) => {
   const ticker = req.params.ticker.toUpperCase();
   // The picker loads the price beside /quote: a refused company's last price must not land on the card already showing.
   const block = req.query.scope === 'deck' ? null : await registrationBlock(ticker);
-  if (block) return res.json({ error: refusalOf(ticker, block).error, attempts: [] });
+  if (block) return res.json({ error: refusalOf(block).error, attempts: [] });
   res.json(await livePricePayload(ticker));
 });
 
@@ -3251,4 +3280,4 @@ if (require.main === module) {
 
 // Stage 14 — export the pure Yahoo transform so the wrap→null path is unit-testable against a mocked
 // payload, without the network fetch. The require.main guard above keeps `node server.js` unchanged.
-module.exports = { buildYahooCompany, buildFmpCompany, toMillions };
+module.exports = { buildYahooCompany, buildFmpCompany, toMillions, app };
