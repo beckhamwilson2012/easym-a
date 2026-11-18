@@ -412,8 +412,10 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
       : `Target net income = consensus EPS × ${fwdShares.toFixed(1)}M ${parseFloat(fwdInputs.companyBDilutedShares) > 0 ? 'diluted shares' : 'shares outstanding'}: the figure the Pro Forma slide and the accretion use.`;
 
   const rev    = parseFloat(target.revenue)   || 0;
-  const ebitda = parseFloat(target.ebitda)    || 0;
-  const ni     = parseFloat(target.netIncome) || 0;
+  // Fix 21 Task 2: absent stays null ("N/A"); `|| 0` printed a missing EBITDA or net income as $0M and a 0.0% margin.
+  const figureOrNull = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+  const ebitda = figureOrNull(target.ebitda);
+  const ni     = figureOrNull(target.netIncome);
   // null-PRESERVING (Fix A): a stale-rejected cash/debt tag arrives as null → render "N/A", never $0.
   const cash   = target.cash != null ? (parseFloat(target.cash) || 0) : null;
   const debt   = target.debt != null ? (parseFloat(target.debt) || 0) : null;
@@ -421,10 +423,10 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
   const shares = parseFloat(target.shares)    || 0;
   // Single deck-wide EPS basis: net income ÷ shares (matches dashboard/§7 and the accretion math),
   // so this slide no longer diverges from the dashboard for profitable filers (Fix 6).
-  const eps    = standaloneEPS(target) ?? 0;
+  const eps    = standaloneEPS(target) ?? null;
 
-  const ebitdaMargin = rev > 0 && ebitda > 0 ? (ebitda / rev * 100) : 0;
-  const niMargin     = rev > 0 && ni     > 0 ? (ni     / rev * 100) : 0;
+  const ebitdaMargin = rev > 0 && ebitda != null ? (ebitda / rev * 100) : null;
+  const niMargin     = rev > 0 && ni     != null ? (ni     / rev * 100) : null;
 
   // Gross profit — from the filing, or null ("N/A"). Operating expenses = gross profit − operating income,
   // so they are null with it.
@@ -436,7 +438,8 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
   // D&A is a POSITIVE expense (subtracted in the P&L). The prior estimate (ebitda × 0.15) went
   // negative for loss-making firms with EBITDA ≤ 0, so -estDA rendered as a positive addition rather
   // than a subtraction (Fix 10d). Fall back to a revenue-based proxy when EBITDA ≤ 0 so it stays ≥ 0.
-  const estDA   = ebitda > 0 && ni > 0 && ni < ebitda
+  const estDA   = ebitda == null ? null
+    : ebitda > 0 && ni > 0 && ni < ebitda
     ? (ebitda - ni) * 0.5
     : ebitda > 0 ? ebitda * 0.15 : rev * 0.04;
   // Net debt needs BOTH components; if either was stale-rejected (null) it is unavailable → null → "N/A"
@@ -454,9 +457,9 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
   const opIncGaap    = Number.isFinite(realOI) ? realOI : null;
   const opIncVal     = opIncGaap;
   const opIncNonGaap = false;
-  const niVal        = ng?.netIncome ?? (ni || null);
+  const niVal        = ng?.netIncome ?? ni;
   const niNonGaap    = ng?.netIncome != null;
-  const epsVal       = ng?.dilutedEPS ?? (eps || null);
+  const epsVal       = ng?.dilutedEPS ?? eps;
   const epsNonGaap   = ng?.dilutedEPS != null;
   const opMarginPct  = (opIncVal != null && rev > 0) ? (opIncVal / rev * 100) : null;
   const niMarginVal  = (niVal   != null && rev > 0) ? (niVal   / rev * 100) : null;
@@ -561,7 +564,7 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
                 <PLRow label="EBITDA (computed)"          value={fmtUSDmAcct(ebitda)}    bold />
                 {ngEbitda && <PLRow label={`${ngEbitda.name} (non-GAAP)`} value={ngEbitda.value != null ? fmtUSDmAcct(ngEbitda.value) : '—'} indent />}
                 <PLRow label="EBITDA Margin (computed)"   value={fmtPct(ebitdaMargin)}          indent alt />
-                <PLRow label="D&A (est.)"                 value={fmtUSDmAcct(-estDA)}    indent />
+                <PLRow label="D&A (est.)"                 value={estDA != null ? fmtUSDmAcct(-estDA) : 'N/A'}    indent />
                 <PLRow label={`Net Income (${basisTag(niNonGaap)})`}  value={niVal != null ? fmtUSDmAcct(niVal) : 'N/A'} bold />
                 <PLRow label={`Net Margin (${basisTag(niNonGaap)})`}  value={niMarginVal != null ? fmtPct(niMarginVal) : 'N/A'} indent alt />
                 <PLRow label={`Diluted EPS (${basisTag(epsNonGaap)})`} value={epsVal != null ? fmtPerShare(epsVal) : 'N/A'} />

@@ -164,20 +164,20 @@ export function explainEpsChange({ acquirerEPS, proFormaEPS, changePct, acquirer
 }
 
 export function explainProFormaEPS({ combinedNetIncome, synergiesY1, totalShares, acquirerShares, newShares }) {
-  const ni = parseFloat(combinedNetIncome) || 0;
-  const syn = parseFloat(synergiesY1) || 0;
-  const ts = parseFloat(totalShares) || 0;
-  // After-tax financing interest is netted into pro-forma net income (matches dealCalc).
-  const pf = ts > 0 ? (ni + syn) / ts : 0;
+  const ni = parseFloat(combinedNetIncome);
+  const syn = parseFloat(synergiesY1) || 0;   // none entered is no synergy
+  const ts = parseFloat(totalShares);
+  // After-tax financing interest is netted into pro-forma net income (matches dealCalc). Absent inputs give no EPS, not $0.00.
+  const pf = Number.isFinite(ni) && ts > 0 ? (ni + syn) / ts : null;
   return {
     formula: 'Pro Forma EPS = (Combined Net Income + After-Tax Synergies − After-Tax Financing Cost) ÷ (Diluted Acquirer Shares + New Shares Issued)',
     inputs: [
-      { label: 'Combined net income', value: fmtMoney(ni) },
+      { label: 'Combined net income', value: Number.isFinite(ni) ? fmtMoney(ni) : '—' },
       { label: '+ After-tax synergies', value: fmtMoney(syn) },
       { label: 'Diluted acquirer shares', value: `${(parseFloat(acquirerShares) || 0).toFixed(1)}M` },
       { label: '+ New shares issued', value: `${(parseFloat(newShares) || 0).toFixed(1)}M` },
     ],
-    result: fmtPerShare(pf),
+    result: pf != null ? fmtPerShare(pf) : 'N/A',
     notes: 'New shares are issued at the acquirer\'s live market price (primary); a 15× EPS proxy is used only as a fallback when no live price is available. After-tax financing interest on the cash portion is netted into pro-forma net income. More shares issued = more dilution = lower pro forma EPS.',
   };
 }
@@ -217,14 +217,16 @@ export function explainCET1({ cet1Ratio, rwa, companyName }) {
 export function explainCombinedCET1({ targetCET1, acquirerCET1, targetRWA, acquirerRWA }) {
   const tRWA = parseFloat(targetRWA) || 0;
   const aRWA = parseFloat(acquirerRWA) || 0;
-  const tC = parseFloat(targetCET1) || 0;
-  const aC = parseFloat(acquirerCET1) || 0;
-  const combined = tRWA + aRWA > 0 ? (tC * tRWA + aC * aRWA) / (tRWA + aRWA) : null;
+  const tC = parseFloat(targetCET1);
+  const aC = parseFloat(acquirerCET1);
+  // Both ratios or no combined ratio: a missing one weighted in as 0 would understate the result.
+  const both = Number.isFinite(tC) && Number.isFinite(aC);
+  const combined = both && tRWA + aRWA > 0 ? (tC * tRWA + aC * aRWA) / (tRWA + aRWA) : null;
   return {
     formula: 'Combined CET1 = (Target CET1 × Target RWA + Acquirer CET1 × Acquirer RWA) ÷ Combined RWA',
     inputs: [
-      { label: 'Target CET1 × RWA', value: fmtMoney(tC * tRWA) },
-      { label: 'Acquirer CET1 × RWA', value: fmtMoney(aC * aRWA) },
+      { label: 'Target CET1 × RWA', value: Number.isFinite(tC) ? fmtMoney(tC * tRWA) : '—' },
+      { label: 'Acquirer CET1 × RWA', value: Number.isFinite(aC) ? fmtMoney(aC * aRWA) : '—' },
       { label: 'Combined RWA', value: fmtMoney(tRWA + aRWA) },
     ],
     result: combined !== null ? fmtPct(combined * 100) : 'N/A',

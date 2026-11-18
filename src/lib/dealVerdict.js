@@ -21,7 +21,10 @@ export const TAG_YEAR1 = 'EPS test, Year 1';
 export const TAG_PREMIUM = 'Premium vs synergies';
 // The tag names the synergy basis and the multiple, e.g. "Premium vs synergies (pre-tax, EV/EBITDA 8.41x)".
 export const tagPremium = (basis, multiple) => `${TAG_PREMIUM} (${basis}, ${multiple.name} ${multiple.value.toFixed(2)}x)`;
-export const tagForwardYear = (label) => `EPS test, ${label} (first profitable year)`;
+// Fix 21 Task 2: "first profitable year" is a claim about the year before, so it needs that year's EPS to exist and be
+// at or below zero. WMT, MCD and KO fall to a forecast year because a Year 1 figure is missing or the bases differ, not
+// because they were losing money.
+export const tagForwardYear = (label, afterLoss = false) => `EPS test, ${label}${afterLoss ? ' (first profitable year)' : ''}`;
 
 // $M, the deck's convention: $636M, $1.2B; negatives in parentheses.
 export function fmtVerdictMoney(v) {
@@ -125,9 +128,11 @@ export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, a
     if (t) {
       const yr = synergyForSlot(deal?.synergies?.years, pick);
       const yearLabel = pick.label;
+      const pickAt = sel.slots.indexOf(pick);
+      const priorEps = pickAt > 0 ? num(sel.slots[pickAt - 1].a?.eps) : y1Base;
       const skipped = [y1SkipReason(), ...sel.slots.filter(s => s !== pick && s.year < pick.year).map(s => `${slotName(s)} —: ${s.reason || `${A}'s consensus EPS is not positive`}`)].filter(Boolean);
       return {
-        step: 2, tag: `${tagForwardYear(yearLabel)} · ${CONSENSUS_BASIS}`, verdict: t.verdict, year: yearLabel,
+        step: 2, tag: `${tagForwardYear(yearLabel, priorEps != null && priorEps <= 0)} · ${CONSENSUS_BASIS}`, verdict: t.verdict, year: yearLabel,
         text: verdictText(t),
         pct: t.pct, standaloneEPS: t.standaloneEPS, proFormaEPS: t.proFormaEPS, breakeven: t.breakeven,
         entered: yr?.entered ? yr.ebitda : null, yearsUsed: [slotName(pick)],

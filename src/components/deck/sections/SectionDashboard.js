@@ -69,6 +69,21 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const ebSources = ngPlan && !ebDiffer && (ngPlan.ebitda.A.computed || ngPlan.ebitda.B.computed) ? combinedEbitdaShort(ngPlan) : null;
 
   const bankMode = isBankDeal(target, acquirer);
+  // Fix 21 Task 2: a missing figure is neither loading nor negative. The tiles below print "—" and say what is absent.
+  const absentFigure = (v) => !Number.isFinite(parseFloat(v));
+  const tgtTk = target?.ticker || nameB, acqTk = acquirer?.ticker || nameA;
+  const cet1Why = (c, tk) => ((c?.totalAssets != null || c?.tangibleBookValue != null || c?.netInterestIncome != null)
+    ? `${tk}: no CET1 ratio tagged in its XBRL filings` : `${tk}: bank filing data not available`);
+  const cet1Tile = (() => {
+    const tC = target?.cet1Ratio ?? null, aC = acquirer?.cet1Ratio ?? null;
+    if (tC != null && aC != null) {
+      const combined = combinedCET1(target, acquirer);
+      return combined != null ? { value: fmtPct(combined * 100) } : { value: '—', note: 'risk-weighted assets not tagged, so the two ratios cannot be weighted' };
+    }
+    if (tC != null) return { value: `Target: ${fmtPct(tC * 100)} · Acquirer: —`, note: cet1Why(acquirer, acqTk) };
+    if (aC != null) return { value: `Acquirer: ${fmtPct(aC * 100)} · Target: —`, note: cet1Why(target, tgtTk) };
+    return { value: '—', note: `${cet1Why(acquirer, acqTk)}; ${cet1Why(target, tgtTk)}` };
+  })();
   const flags     = bankMode
     ? computeBankFlags(results, inputs, target, acquirer)
     : computeFlags(results, inputs);
@@ -266,43 +281,33 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
           {(bankMode ? [
             {
               label: 'P / TBV',
-              value: (() => {
-                const v = calcPTBV(target);
-                if (v != null) return fmtRatio(v);
-                if (target?.tangibleBookValue) return 'Equity value unavailable';
-                if (target?.marketCap) return 'Loading TBV…';
-                return 'N/A';
-              })(),
+              value: calcPTBV(target) != null ? fmtRatio(calcPTBV(target)) : '—',
+              // Fix 21 Task 2: the deck is built, so nothing here is still loading. Say which input is absent.
+              note: calcPTBV(target) != null ? null
+                : target?.tangibleBookValue ? `${tgtTk}: equity value not available`
+                : `${tgtTk}: tangible book value not available`,
               explain: () => explainPTBV({ marketCap: target?.marketCap, tangibleBookValue: target?.tangibleBookValue, ratio: calcPTBV(target), companyName: nameB }),
             },
             {
               label: 'P / E at offer price',   // Fix 14 Task 4: dealCalc's P/E is the offer (not the market price) ÷ target EPS
-              value: results.peRatio === 'N/A' ? 'n/m' : `${multipleNumber(results.peRatio)}x`,
+              value: results.peRatio === 'N/A' ? (results.peAbsent ? '—' : 'n/m') : `${multipleNumber(results.peRatio)}x`,
               note:  results.peRatio === 'N/A' ? results.peReason : null,   // dealCalc names the real reason
               explain: () => explainPeRatio(peExplainArgs),
             },
             {
               label: 'CET1 (Combined)',
-              value: (() => {
-                const combined = combinedCET1(target, acquirer);
-                if (combined != null) return fmtPct(combined * 100);
-                const tC = target?.cet1Ratio;
-                const aC = acquirer?.cet1Ratio;
-                if (tC && !aC) return `Target: ${fmtPct(tC * 100)} · Acquirer: loading`;
-                if (!tC && aC) return `Acquirer: ${fmtPct(aC * 100)} · Target: loading`;
-                if (!tC && !aC && (target?.riskWeightedAssets || acquirer?.riskWeightedAssets))
-                  return 'CET1 not in XBRL filing';
-                return 'Loading…';
-              })(),
+              ...cet1Tile,
               explain: () => explainCombinedCET1({ targetCET1: target?.cet1Ratio, acquirerCET1: acquirer?.cet1Ratio, targetRWA: target?.riskWeightedAssets, acquirerRWA: acquirer?.riskWeightedAssets }),
             },
           ] : [
             {
               label: 'EV / EBITDA at offer price',   // Fix 19 Task 5: EV = offer equity value − net cash, like the P/E tile
               // "n/m" (not meaningful): a multiple off a negative EBITDA has no economic meaning.
-              value: results.evEBITDA === 'N/A' ? 'n/m' : `${multipleNumber(results.evEBITDA)}x`,
+              // Fix 21 Task 2: "n/m" is a real zero or negative figure (or above the cap), with dealCalc's reason. No figure is "—".
+              // `companyBEBITDA <= 0` read a missing EBITDA as negative (null <= 0 is true): OXY "Target EBITDA is negative".
+              value: results.evEBITDA === 'N/A' ? (results.evEBITDAReason ? 'n/m' : '—') : `${multipleNumber(results.evEBITDA)}x`,
               note:  results.evEBITDA === 'N/A'
-                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || (inputs.companyBEBITDA <= 0 ? 'Target EBITDA is negative' : 'not available')))
+                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || (absentFigure(inputs.companyBEBITDA) ? 'Target EBITDA not reported' : 'not available')))
                 : (ebB ? `on ${ebitdaBasisText(ebB)}` : null),
               explain: () => explainEvEbitda({ ev, ebitda: inputs.companyBEBITDA, multiple: results.evEBITDA }),
             },
@@ -310,7 +315,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // Fix 14 Task 4: dealCalc's P/E is the offer price ÷ target EPS (a private target: purchase equity value ÷
               // net income), never the market price; the label says so.
               label: 'P / E at offer price',
-              value: results.peRatio === 'N/A' ? 'n/m' : `${multipleNumber(results.peRatio)}x`,
+              value: results.peRatio === 'N/A' ? (results.peAbsent ? '—' : 'n/m') : `${multipleNumber(results.peRatio)}x`,
               // The reason is dealCalc's (peReason): `companyBEPS <= 0` read a private target's default 0 EPS as negative earnings.
               note:  results.peRatio === 'N/A' ? results.peReason
                 : results.peBasis ? results.peBasis
@@ -319,7 +324,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             },
             {
               label: 'Debt / EBITDA',
-              value: (results.basesDiffer || ebDiffer) ? '—' : results.debtEBITDA === 'N/A' ? 'n/m' : `${multipleNumber(results.debtEBITDA)}x`,
+              value: (results.basesDiffer || ebDiffer) ? '—' : results.debtEBITDA === 'N/A' ? (results.debtEBITDAReason ? 'n/m' : '—') : `${multipleNumber(results.debtEBITDA)}x`,
               // Branch on WHY the ratio is N/A (dealCalc: combinedEBITDA > 0 && combinedDebt != null) — a null
               // combined debt with positive EBITDA is "debt not available", never "EBITDA is non-positive".
               note:  results.debtEBITDA === 'N/A'
@@ -335,7 +340,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                 {m.label}
                 <ExplainButton explain={m.explain} />
               </div>
-              <div style={{ fontSize: m.value === 'n/m' ? 22 : 28, fontWeight: 'bold', color: m.value === 'n/m' ? '#9CA3AF' : '#0F2244' }}>{m.value}</div>
+              <div style={{ fontSize: (m.value === 'n/m' || m.value === '—') ? 22 : 28, fontWeight: 'bold', color: (m.value === 'n/m' || m.value === '—') ? '#9CA3AF' : '#0F2244' }}>{m.value}</div>
               {m.note && <div style={{ fontSize: 11, color: '#9CA3AF', marginTop: 3, fontStyle: 'italic' }}>{m.note}</div>}
             </div>
           ))}

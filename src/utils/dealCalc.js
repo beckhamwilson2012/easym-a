@@ -400,7 +400,8 @@ export function calculate(inputs) {
     debtEBITDAReason:  debtM.reason || null,
     debtEBITDAAboveCap: debtM.raw != null,               // n/m because above 100x: leverage is still extreme (flag)
     peRatio:           peRatio    === null ? 'N/A' : peRatio.toFixed(1),
-    peReason,                                            // why P/E is n/m, or null
+    peReason,                                            // why P/E is n/m or absent, or null
+    peAbsent:          peRatio == null && !peM.nm,        // no EPS (or net income) to divide by: "—", not "n/m" (Fix 21 Task 2)
     peBasis:           _privateTotal != null ? 'equity value ÷ net income' : null,   // a private target's P/E is on totals
     debtEBITDA:        debtEBITDA === null ? 'N/A' : debtEBITDA.toFixed(1),
     // The numerators of the two multiples above, exposed so explainers show the SAME figure the multiple

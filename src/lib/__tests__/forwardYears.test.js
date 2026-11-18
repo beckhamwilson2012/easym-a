@@ -42,7 +42,8 @@ describe('Fix 10 Task 2 — forward EPS follows the toggle', () => {
     const v = dealVerdict({ deal, model: { derived: {}, verifiedData: { acquirer: {} } }, acquirerFwd: hngeFwd, targetFwd: tdocFwd, acquirerName: 'HNGE', targetName: 'TDOC' });
     expect(v.step).toBe(2);
     expect(v.year).toBe('FY2026E');
-    expect(v.tag).toBe('EPS test, FY2026E (first profitable year) · FMP consensus (non-GAAP)');
+    // Fix 21 Task 2: Year 1 is missing here, not a loss, so the tag makes no "first profitable year" claim.
+    expect(v.tag).toBe('EPS test, FY2026E · FMP consensus (non-GAAP)');
     expect(v.line).toMatch(/Verdict and breakeven use Year 2 \(FY2026E\); Year 1 —: Year 1 non-GAAP EPS not available: TDOC doesn’t report adjusted EPS\./);
   });
   test('premium solve: a forward reason ends the solve with it', () => {
