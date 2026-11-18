@@ -71,7 +71,8 @@ export function rowCells(r) {
   const base = (v, nm) => ({ v, nm, kind: isPct ? 'pct' : isDash ? 'dash' : 'm' });
   const syn = { v: isPct || isDash ? null : r.syn, text: r.synText, kind: isPct || isDash ? 'dash' : 'syn' };
   const synShown = r.synRow && !r.synText && cellText(syn) !== '—';
-  const pf = { v: isPct ? r.c : (isDash ? null : r.pf), nm: r.nmC, kind: isPct ? 'pct' : isDash ? 'dash' : r.fin ? 'int' : 'm', text: synShown ? 'in EBIT' : undefined };
+  // Fix 20 Task 1: a % row's PF Tot. is its own value (r.pf), never the Combined % copied across.
+  const pf = { v: isDash ? null : r.pf, nm: r.nmC, kind: isPct ? 'pct' : isDash ? 'dash' : r.fin ? 'int' : 'm', text: synShown ? 'in EBIT' : undefined };
   return { a: base(r.a, r.nmA), b: base(r.b, r.nmB), c: base(r.c, r.nmC), syn, pf };
 }
 // Fix 17 Task 3: a forecast year past the consensus years FMP returned is one line, not a table of "—". X is that year's
@@ -83,6 +84,18 @@ export function beyondConsensusLine(slot, yr, fwdFys) {
   if (!(slot.fyA > hi)) return null;
   if (slot.synYr == null) return `Year ${slot.year} (FY${slot.fyA}) is beyond the consensus years (FY${lo}–FY${hi}); ${BEYOND_SYNERGY_SCHEDULE}`;
   return `Year ${slot.synYr} synergies (${yr && yr.entered ? fmtSynergy(yr.ebitda) : NONE_ENTERED}) fall in FY${slot.fyA}, beyond the consensus years (FY${lo}–FY${hi})`;
+}
+// Fix 20 Task 1: one forward year's PF Tot. totals from its Combined totals and its synergy year (synergyForSlot):
+// revenue + revenue synergies; gross profit + revenue synergies at the combined gross margin (yr.revenueEbitda, the
+// figure already inside yr.ebitda); EBIT + total synergies (yr.ebitda). null in → null out; a revenue synergy with no
+// margin to carry it leaves gross profit null.
+export function pfTotals({ cRev, cGross, cEbit }, yr) {
+  const y = yr || { ebitda: 0 };
+  const pfRev = cRev != null ? cRev + (y.revenue ?? 0) : null;
+  const revSynGross = y.revenue ? y.revenueEbitda : 0;
+  const pfGross = (cGross != null && revSynGross != null) ? cGross + revSynGross : null;
+  const pfEbit = cEbit != null ? cEbit + y.ebitda : null;
+  return { pfRev, pfGross, pfEbit };
 }
 // A row that prints "—" in every column is not shown (Fix 17 Task 3).
 export const rowAllDash = (r) => Object.values(rowCells(r)).every((x) => cellText(x) === '—');
@@ -163,6 +176,12 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
       const fwdNi = (slot.a?.eps != null && slot.b?.eps != null) ? forwardYearInputs(deal?._inputs || {}, slot.a.eps, slot.b.eps) : null;
       const aNi = fwdNi ? fwdNi.companyANetIncome : null, bNi = fwdNi ? fwdNi.companyBNetIncome : null;
       const cEbit = sum(a.operatingIncome, b.operatingIncome), cNi = sum(aNi, bNi);
+      // Fix 20 Task 1: the PF Tot. column's totals, computed once and read by the rows below — the printed Revenue, Gross
+      // Profit and EBIT cells and every PF Tot. margin, so each margin is its own column's numerator ÷ its own revenue.
+      // Revenue synergies are in PF revenue and reach gross profit at the combined gross margin (yr.revenueEbitda, the
+      // same figure inside yr.ebitda); cost synergies reach EBIT only. A revenue synergy with no margin to carry it
+      // ("not in EBITDA") leaves PF gross profit unknown ("—"), never the combined figure.
+      const { pfRev, pfGross, pfEbit } = pfTotals({ cRev, cGross, cEbit }, yr);
       // Utility or insurer on either side: n/m in its own column and in Combined and PF, which it would otherwise be part of.
       const grossNm = { nmA: isGrossNm(acquirer), nmB: isGrossNm(target), nmC: isGrossNm(acquirer) || isGrossNm(target) };
       years.push({
@@ -170,16 +189,17 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
         // Fix 17 Task 3: a year past the consensus years FMP returns is one line, not a table of "—".
         beyond: beyondConsensusLine(slot, yr, fwdFys),
         rows: [
-          { label: 'Revenue',          a: a.revenue,        b: b.revenue,        c: cRev,   syn: yr.revenue, pf: cRev != null ? cRev + (yr.revenue ?? 0) : null },
-          { label: `Revenue growth % (vs ${aPrev?.label ?? 'prior year'})`,  a: growth(a.revenue, aPrev?.revenue), b: growth(b.revenue, bPrev?.revenue), c: growth(cRev, sum(aPrev?.revenue, bPrev?.revenue)), pct: true },
+          { label: 'Revenue',          a: a.revenue,        b: b.revenue,        c: cRev,   syn: yr.revenue, pf: pfRev },
+          // Growth is not a margin: PF Tot. keeps the combined growth, as before (no pro forma prior-year base exists).
+          { label: `Revenue growth % (vs ${aPrev?.label ?? 'prior year'})`,  a: growth(a.revenue, aPrev?.revenue), b: growth(b.revenue, bPrev?.revenue), c: growth(cRev, sum(aPrev?.revenue, bPrev?.revenue)), pf: growth(cRev, sum(aPrev?.revenue, bPrev?.revenue)), pct: true },
           // COGS breakout (faculty: compare across industries). Informational fundamental line — Combined
           // foots Revenue − Cost of Revenue = Gross Profit; synergies are shown on the Revenue/GP lines, so
           // COGS carries no Syn/PF cell ("—"). Forward years: costOfRevenue present in /api/pnl (else "—").
           { label: 'Cost of Revenue',   a: a.costOfRevenue,  b: b.costOfRevenue,  c: sum(a.costOfRevenue, b.costOfRevenue), syn: null, pf: null, noConsensus: true },
-          // Gross Profit renders COMBINED with NO synergy add (7C-2): the deck cannot source whether a synergy
-          // sits in cost of revenue, so PF gross profit = Combined and agrees with the gross-margin row below.
-          { label: 'Gross Profit',      a: a.grossProfit,    b: b.grossProfit,    c: cGross, syn: null,    pf: cGross, noConsensus: !grossNm.nmC, ...grossNm },
-          { label: 'Gross margin %',    a: margin(a.grossProfit, a.revenue), b: margin(b.grossProfit, b.revenue), c: margin(cGross, cRev), pct: true, noConsensus: !grossNm.nmC, ...grossNm },
+          // Gross Profit: cost synergies are not placed in cost of revenue (7C-2: the deck cannot source where they sit), so
+          // they reach EBIT only. Revenue synergies carry their gross profit at the combined margin (Fix 20 Task 1).
+          { label: 'Gross Profit',      a: a.grossProfit,    b: b.grossProfit,    c: cGross, syn: null,    pf: pfGross, noConsensus: !grossNm.nmC, ...grossNm },
+          { label: 'Gross margin %',    a: margin(a.grossProfit, a.revenue), b: margin(b.grossProfit, b.revenue), c: margin(cGross, cRev), pf: margin(pfGross, pfRev), pct: true, noConsensus: !grossNm.nmC, ...grossNm },
           // Cost, revenue and total synergies, on their own lines in the Synergy column only: Acq/Tgt/Comb have
           // no base figure. The total is what EBIT carries, so nothing double-counts.
           { label: 'Cost synergies', syn: yr.cost, synText: none(yr.cost), pf: null, synRow: true },
@@ -188,9 +208,10 @@ function ProFormaCore({ target, acquirer, deal, pageNum, part, exhibitLabel }) {
           { label: 'Total synergies (EBITDA impact)', syn: yr.ebitda, synText: yr.entered ? null : noneText, pf: null, synRow: true },
           { label: 'Operating Expense', a: null,             b: null,             c: null,   syn: null,    pf: null, dash: true },
           // Fix 17 Task 2: total costs = consensus revenue − consensus operating income (FMP's SG&A consensus is not shown). Combined and PF Tot. = acquirer + target where both exist.
-          { label: TOTAL_COSTS_LABEL, a: forwardTotalCosts(slot.a), b: forwardTotalCosts(slot.b), c: sumBoth(forwardTotalCosts(slot.a), forwardTotalCosts(slot.b)), syn: null, pf: sumBoth(forwardTotalCosts(slot.a), forwardTotalCosts(slot.b)) },
-          { label: 'EBIT (Op Income)',  a: a.operatingIncome,b: b.operatingIncome,c: cEbit,  syn: syn,     pf: cEbit != null ? cEbit + syn : null, bold: true },
-          { label: 'Operating margin %',a: margin(a.operatingIncome, a.revenue), b: margin(b.operatingIncome, b.revenue), c: margin(cEbit, cRev), pct: true },
+          // Fix 20 Task 1: PF Tot. is the same definition on the PF Tot. column's own revenue and EBIT, so it carries the synergies.
+          { label: TOTAL_COSTS_LABEL, a: forwardTotalCosts(slot.a), b: forwardTotalCosts(slot.b), c: sumBoth(forwardTotalCosts(slot.a), forwardTotalCosts(slot.b)), syn: null, pf: forwardTotalCosts({ revenue: pfRev, operatingIncome: pfEbit }) },
+          { label: 'EBIT (Op Income)',  a: a.operatingIncome,b: b.operatingIncome,c: cEbit,  syn: syn,     pf: pfEbit, bold: true },
+          { label: 'Operating margin %',a: margin(a.operatingIncome, a.revenue), b: margin(b.operatingIncome, b.revenue), c: margin(cEbit, cRev), pf: margin(pfEbit, pfRev), pct: true },
           // PF Net Income subtracts the after-tax financing drag (finDrag) — the transaction adjustment §6a
           // previously netted SILENTLY (Comb + Syn ≠ PF Tot with no visible reason — faculty caught it). It
           // is now surfaced as its OWN "Less: financing" line (immediately below) so the page foots visibly:
