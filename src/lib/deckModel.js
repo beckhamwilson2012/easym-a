@@ -76,7 +76,7 @@ export function buildDeckModel({ target = {}, acquirer = {}, deal = {} } = {}) {
   // No acquirer price → share issuance is not derivable. Keep newShares null (→ "—"); do NOT fall to 0,
   // which would render a fabricated "0 shares issued / 100% acquirer" split. Precise recompute and the
   // rounded-fallback both require A.price > 0; absent that, the whole issuance chain is unknown.
-  const newShares      = _newSharesPrecise != null ? _newSharesPrecise : (A.price > 0 ? (num(deal.newSharesIssued) || 0) : null);
+  const newShares      = _newSharesPrecise != null ? _newSharesPrecise : (A.price > 0 ? num(deal.newSharesIssued) : null);   // Fix 21 Task 5: no purchase price, no issuance: null, never 0 shares and 0% ownership
   const preDealShares  = A.shares;   // Stage 16: preserve null (was `|| 0`); a null acquirer share count is unknown, not 0.
   // proFormaShares is null when EITHER leg is unknown. MUST guard preDealShares too (Stage 16): with :79
   // null-honest but this sum unguarded, `null + newShares` = newShares — pre-deal ownership would read 0%

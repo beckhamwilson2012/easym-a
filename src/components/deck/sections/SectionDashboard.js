@@ -21,6 +21,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
+import { TARGET_SHARES_MISSING } from '../../../utils/dealCalc';
 import { balanceSheetGap, dealBalanceSheetGap } from '../../../lib/netDebt';
 import { multipleNumber } from '../../../lib/multiples';
 import { isNonGaapDeal, FY_ONLY, computedSides, epsSourceText, combinedEbitdaShort } from '../../../lib/reportingBasis';
@@ -105,6 +106,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const epsRef      = results.basesDiffer ? null : reportedEpsReference(hEps, deal);   // Fix 17 Task 1: the company's own figure, a labeled reference
   // Fix 21 Task 6: companies on different bases have no Year 1 figure, but a forward-year verdict has its own.
   const y1Blocked   = results.basesDiffer && !(hEps.fromVerdict && hEps.year !== 'Year 1');
+  // Fix 21 Task 5: no target share count, no purchase price: every pro forma figure below is "—".
+  const pfBlocked   = y1Blocked || !!results.targetSharesMissing;
   const accOK       = hEps.pct != null;
   const accUp       = hEps.verdict === 'accretive';
   const accColor    = !accOK ? '#6B7280' : accUp ? '#16A34A' : hEps.verdict === 'neutral' ? '#374151' : '#DC2626'; // dark green / red
@@ -117,7 +120,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
 
   // Stock issuance risk flags
   const acquirerSharePx = acquirerSharePrice(inputs);
-  const stockIssuancePct = calcStockIssuancePct({
+  const stockIssuancePct = results.targetSharesMissing ? null : calcStockIssuancePct({
     dealSize: parseFloat(results.totalPurchasePrice) || 0,
     cashPercent: inputs.cashPercent,
     acquirerSharePrice: acquirerSharePx,
@@ -196,8 +199,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   const breakevenEPS = acquirerStandaloneEPS(sInputs); // net income ÷ shares (matches calculate())
   const currentRowData = sensitivityData[sensitivityCurrentRow] || [];
   let sensitivityFooter = null;
-  if (y1Blocked) {
-    sensitivityFooter = `Pro forma EPS is not shown: ${DIFFERENT_BASES}.`;
+  if (pfBlocked) {
+    sensitivityFooter = `Pro forma EPS is not shown: ${results.targetSharesMissing ? TARGET_SHARES_MISSING : DIFFERENT_BASES}.`;
   } else if (!synergyY1Entered) {
     sensitivityFooter = `No Year 1 synergies entered, so every column shows EPS with no synergies assumed.`;
   } else if (breakevenEPS > 0 && currentRowData.length > 0) {
@@ -378,7 +381,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                   : 'Non-GAAP EPS, company reported by both companies (fiscal-year earnings releases).'}
               </div>
             )}
-            <div data-testid="eps-analysis-label" style={{ fontSize: 11, color: '#374151', fontWeight: 600, marginTop: -6, marginBottom: 10 }}>{hEps.label}</div>
+            <div data-testid="eps-analysis-label" style={{ fontSize: 11, color: '#374151', fontWeight: 600, marginTop: -6, marginBottom: 10 }}>{hEps.label}{results.targetSharesMissing ? ` — ${TARGET_SHARES_MISSING}` : ''}</div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Before</div>
@@ -389,13 +392,13 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>After</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {y1Blocked ? '—' : fmtPerShare(hEps.proFormaEPS)}
+                  {pfBlocked ? '—' : fmtPerShare(hEps.proFormaEPS)}
                 </div>
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 12, color: '#6B7280' }}>Change</div>
                 <div style={{ fontSize: 24, fontWeight: 'bold', color: accColor }}>
-                  {y1Blocked ? '—' : (accOK ? fmtPctSigned(hEps.pct) : 'n/m')}
+                  {pfBlocked ? '—' : (accOK ? fmtPctSigned(hEps.pct) : 'n/m')}
                 </div>
               </div>
             </div>
@@ -456,8 +459,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               ...(results.newInterestAfterTax == null ? [{ label: 'After-Tax Financing Cost', value: '—' }]   // unknown (target debt unavailable) — shown, not dropped
                 : parseFloat(results.newInterestAfterTax) > 0 ? [{ label: 'After-Tax Financing Cost', value: `(${fmtInterest(results.newInterestAfterTax)})`, red: true }] : []),
               ...lostInterestRows,
-              { label: vYear ? `Pro Forma Net Income (${vYear.year})` : 'Pro Forma Net Income', value: y1Blocked ? '—' : vYear ? (vYearPF ? fmtMoneyAccounting(vYearPF.netIncome) : '—') : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
-              { label: vYear ? `Pro Forma EPS (${vYear.year})` : 'Pro Forma EPS', value: y1Blocked ? '—' : vYear ? (vYearPF ? fmtPerShare(vYearPF.eps) : '—') : fmtPerShare(results.proFormaEPS), bold: true, green: vYear ? hEps.verdict === 'accretive' : results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
+              { label: vYear ? `Pro Forma Net Income (${vYear.year})` : 'Pro Forma Net Income', value: pfBlocked ? '—' : vYear ? (vYearPF ? fmtMoneyAccounting(vYearPF.netIncome) : '—') : fmtMoneyAccounting(results.proFormaNetIncome), bold: true },
+              { label: vYear ? `Pro Forma EPS (${vYear.year})` : 'Pro Forma EPS', value: pfBlocked ? '—' : vYear ? (vYearPF ? fmtPerShare(vYearPF.eps) : '—') : fmtPerShare(results.proFormaEPS), bold: true, green: vYear ? hEps.verdict === 'accretive' : results.isAccretive, explain: () => explainEpsChange({ acquirerEPS: results.companyAEPS, proFormaEPS: results.proFormaEPS, changePct: results.epsChangePct, acquirerName: nameA }) },
             ]).map(row => (
               <div key={row.label} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: rowPad, borderBottom: '1px solid #F3F4F6' }}>
                 <span style={{ fontSize: rowFont, color: '#6B7280', display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -469,9 +472,9 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
             ))}
             <h3 style={{ color: '#0F2244' }}>Deal Structure</h3>
             {[
-              { label: 'Total Purchase Price', value: fmtMoneyDual(results.totalPurchasePrice), explain: () => explainDealSize({ offerPrice: inputs.offerPricePerShare, shares: inputs.companyBShares, targetName: nameB }) },
-              { label: 'Cash Portion',         value: fmtMoneyTable(results.cashPortion), explain: () => explainCashPercent({ cashPercent: inputs.cashPercent, dealSize: results.totalPurchasePrice }) },
-              { label: 'Stock Portion',        value: fmtMoneyTable(results.stockPortion)      },
+              { label: 'Total Purchase Price', value: results.targetSharesMissing ? `— (${TARGET_SHARES_MISSING})` : fmtMoneyDual(results.totalPurchasePrice), explain: () => explainDealSize({ offerPrice: inputs.offerPricePerShare, shares: inputs.companyBShares, targetName: nameB }) },
+              { label: 'Cash Portion',         value: results.targetSharesMissing ? '—' : fmtMoneyTable(results.cashPortion), explain: () => explainCashPercent({ cashPercent: inputs.cashPercent, dealSize: results.totalPurchasePrice }) },
+              { label: 'Stock Portion',        value: results.targetSharesMissing ? '—' : fmtMoneyTable(results.stockPortion)      },
               { label: 'New Shares Issued',    value: newSharesText                             },
               { label: 'Purchase Premium',     value: (() => {
                 const pp = parseFloat(results.purchasePremium);
@@ -559,7 +562,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                               Current
                             </span>
                           )}
-                          {eps === null ? (y1Blocked ? '—' : 'N/A') : fmtPerShare(eps)}
+                          {eps === null ? (pfBlocked ? '—' : 'N/A') : fmtPerShare(eps)}
                         </td>
                       );
                     })}
@@ -596,7 +599,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
                     {cashPct}% cash
                   </div>
                   <div style={{ fontSize: 14, fontWeight: 700, color }}>
-                    {eps === null ? (y1Blocked ? '—' : 'N/A') : fmtPerShare(eps)}
+                    {eps === null ? (pfBlocked ? '—' : 'N/A') : fmtPerShare(eps)}
                   </div>
                 </div>
               );
