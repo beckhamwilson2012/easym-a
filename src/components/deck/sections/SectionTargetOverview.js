@@ -143,7 +143,7 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
     Promise.all([
       j(`/api/segments-product/${tk}`), j(`/api/segments-geo/${tk}`), j(`/api/key-metrics/${tk}`),
       j(`/api/pnl/${encodeURIComponent(tk)}`), j(`/api/profile/${encodeURIComponent(tk)}`),
-      j(`/quote?symbol=${encodeURIComponent(tk)}`), j(`/api/price/${encodeURIComponent(tk)}`),
+      j(`/quote?symbol=${encodeURIComponent(tk)}&scope=deck`), j(`/api/price/${encodeURIComponent(tk)}?scope=deck`),
       j(`/api/segments-sec/${encodeURIComponent(tk)}`),
     ]).then(([p, g, k, pn, pf, q, pr, sc]) => {
       if (cancel) return;

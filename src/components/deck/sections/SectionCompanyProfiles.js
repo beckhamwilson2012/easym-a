@@ -65,7 +65,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
     };
     const loadQuote = (ticker, set) => {
       if (!ticker) { set(null); return; }
-      fetch(apiUrl(`/quote?symbol=${encodeURIComponent(ticker)}`))
+      fetch(apiUrl(`/quote?symbol=${encodeURIComponent(ticker)}&scope=deck`))
         .then(r => r.json()).then(j => { if (!cancel) set(j || null); }).catch(() => { if (!cancel) set(null); });
     };
     loadProfile(acquirerObj.ticker, setAcqFmp);

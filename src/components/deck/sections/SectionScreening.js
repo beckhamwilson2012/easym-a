@@ -15,11 +15,11 @@ const SCREEN_CASH_PCT = 100;    // all-cash-equivalent structure (disclosed on t
 
 // Stateless per-company fetch — mirrors SectionComparables.fetchOne's endpoint sequence exactly.
 async function fetchCompanyData(ticker) {
-  const quoteData = await fetch(apiUrl(`/quote?symbol=${ticker}`)).then(r => r.json()).catch(() => null);
+  const quoteData = await fetch(apiUrl(`/quote?symbol=${ticker}&scope=deck`)).then(r => r.json()).catch(() => null);
   if (!quoteData) return null;
   let merged = quoteData;
   try {
-    const pr = await fetch(apiUrl(`/api/price/${ticker}`)).then(r => r.json());
+    const pr = await fetch(apiUrl(`/api/price/${ticker}?scope=deck`)).then(r => r.json());
     merged = { ...merged, livePrice: pr && pr.price != null ? pr.price : null };
   } catch { merged = { ...merged, livePrice: null }; }
   if (quoteData.companyType === 'financial') {

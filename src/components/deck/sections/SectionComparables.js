@@ -313,12 +313,12 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
     if (fetchingRef.current.has(ticker)) return;
     fetchingRef.current.add(ticker);
     setPeerData(prev => ({ ...prev, [ticker]: 'loading' }));
-    fetch(apiUrl(`/quote?symbol=${ticker}`))
+    fetch(apiUrl(`/quote?symbol=${ticker}&scope=deck`))
       .then(r => r.json())
       .then(async (quoteData) => {
         let merged = quoteData || {};
         try {
-          const pr = await (await fetch(apiUrl(`/api/price/${ticker}`))).json();
+          const pr = await (await fetch(apiUrl(`/api/price/${ticker}?scope=deck`))).json();
           merged = { ...merged, livePrice: pr && pr.price != null ? pr.price : null };
         } catch { merged = { ...merged, livePrice: null }; }
         if (quoteData?.companyType === 'financial') {

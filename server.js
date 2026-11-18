@@ -16,6 +16,7 @@ const { grossNotMeaningfulReason } = require('./src/lib/insuranceSic'); // utili
 const { resolveDepreciationAt, resolveCapexAt, resolveOperatingCashFlowAt, computeEbitda, computeFreeCashFlow, traceOf } = require('./server/services/cashFlowConcepts'); // shared D&A, capex, EBITDA and FCF (/quote, /api/pnl, LTM, §16 identical)
 const { resolveFmpRates, getPeriodAverageRate } = require('./server/services/fxRates'); // FX Stage 1 — currency capture + conversion (+ FY-avg for segment revenue)
 const { getShareholderAnalysis } = require('./server/services/def14aParser'); // DEF 14A beneficial-ownership (self-validating + FMP fallback)
+const { deregistration, deregisteredMessage } = require('./server/services/registrationStatus'); // Fix 21: EDGAR says whether a ticker is still a registrant
 const { computeLTM, scaleShares, fyCashYield } = require('./server/services/ltmCalc'); // LTM Stage 1 — trailing-12mo from the SAME companyfacts (additive; NO consumer yet)
 const { annualIncomeLines, resolveGrossProfit, calculateGrossProfit, prepareIncomeFacts, latestAnnualFilingPeriod, grossProfitAbsentReason } = require('./server/services/incomeConcepts'); // shared cost of revenue / gross profit — /quote, /api/pnl, LTM and §16 resolve identically
 const { resolveFilerRevenue, resolveLatestRevenue, revenueSeries, isOlderFiscalYear } = require('./server/services/revenueConcepts'); // shared revenue and fiscal-year floor — /quote, /api/pnl, /api/segments, LTM and §16 resolve identically
@@ -140,6 +141,7 @@ function get(url, extraHeaders = {}) {
 
 // Loaded once on first request, then reused
 let tickerCache = null;
+let tickerListLoadedAt = 0;   // when company_tickers.json was read (it is read once per server start)
 let cikBySymbol = {};
 let titleBySymbol = {};   // EDGAR ticker-registry title (authoritative) — used for the DISPLAY name, since
                           // companyfacts.entityName can be a subsidiary shell (BAC's CIK 70858 entityName
@@ -248,6 +250,7 @@ async function loadTickers() {
     name: e.title,
     cik: String(e.cik_str).padStart(10, '0'),
   }));
+  tickerListLoadedAt = Date.now();
   for (const entry of tickerCache) {
     cikBySymbol[entry.symbol] = entry.cik;
     titleBySymbol[entry.symbol] = entry.name;   // e.title from company_tickers.json (authoritative registry name)
@@ -263,31 +266,101 @@ async function fetchSubmissions(cik) {
   return entry;
 }
 
+// Fix 21 Task 1: the one ticker/name match, for the search box and for the candidates an unresolved ticker returns.
+// Exact ticker first, then ticker prefixes, then names containing the text. A name match is only ever a candidate.
+function tickerMatches(raw) {
+  const upper = raw.toUpperCase();
+  const lower = raw.toLowerCase();
+  return tickerCache
+    .filter(
+      (e) => e.symbol.startsWith(upper) || e.name.toLowerCase().includes(lower)
+    )
+    .sort((a, b) => {
+      const aExact = a.symbol === upper, bExact = b.symbol === upper;
+      if (aExact !== bExact) return aExact ? -1 : 1;
+      const aPrefix = a.symbol.startsWith(upper), bPrefix = b.symbol.startsWith(upper);
+      if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
+      return 0;
+    })
+    .slice(0, 8)
+    .map(({ symbol, name }) => ({ symbol, name }));
+}
+
+// The search box takes its first row on Enter. With no exact ticker that row is the typed text itself, which /quote
+// resolves or refuses, so Enter can never pick "51Talk" for "TALK". The real candidates stay below it to choose from.
+const NO_EXACT_TICKER_ROW = 'no exact ticker match: pick a company below';
+
 app.get('/search', async (req, res) => {
   const raw = (req.query.q || '').trim();
   try {
     await loadTickers();
     const upper = raw.toUpperCase();
-    const lower = raw.toLowerCase();
-    const results = tickerCache
-      .filter(
-        (e) => e.symbol.startsWith(upper) || e.name.toLowerCase().includes(lower)
-      )
-      .sort((a, b) => {
-        const aExact = a.symbol === upper, bExact = b.symbol === upper;
-        if (aExact !== bExact) return aExact ? -1 : 1;
-        const aPrefix = a.symbol.startsWith(upper), bPrefix = b.symbol.startsWith(upper);
-        if (aPrefix !== bPrefix) return aPrefix ? -1 : 1;
-        return 0;
-      })
-      .slice(0, 8)
-      .map(({ symbol, name }) => ({ symbol, name }));
+    const results = tickerMatches(raw);
+    if (upper && results.length && results[0].symbol !== upper) results.unshift({ symbol: upper, name: NO_EXACT_TICKER_ROW });
     res.json(results);
   } catch (err) {
     console.error('Search error:', err);
     res.json([]);
   }
 });
+
+// ── Company resolution (Fix 21 Task 1) ────────────────────────────────────────
+// The company-picker's /quote and /api/price calls pass through here. Deck slides read peers and the two deal companies
+// with scope=deck and are not refused: those two were resolved here already, and peers are the peer screen's business.
+const REGISTRATION_TTL_MS = 6 * 60 * 60 * 1000;
+const TICKER_LIST_FRESH_MS = 24 * 60 * 60 * 1000;
+const registrationCache = new Map();   // symbol → { ts, status: Promise<{name,date,form} | {unverified:true} | null> }
+const isTickerShaped = (s) => /^[A-Z0-9][A-Z0-9.\-]{0,9}$/.test(s);
+
+async function fetchSubmissionsOnceMore(cik) {
+  const url = `https://data.sec.gov/submissions/CIK${cik}.json`;
+  try { return await get(url); }
+  catch (_) { await new Promise((r) => setTimeout(r, 1500)); return get(url); }
+}
+
+async function lookupRegistration(symbol) {
+  await loadTickers();
+  const listedCik = cikBySymbol[symbol] || null;
+  // In a current SEC ticker list means EDGAR still lists it: no filing can make it deregistered, and no request is spent.
+  if (listedCik && Date.now() - tickerListLoadedAt < TICKER_LIST_FRESH_MS) return null;
+  let cik = listedCik;
+  // A deregistered company drops out of the SEC ticker list, so its CIK comes from its FMP profile.
+  if (!cik && FMP_KEY) {
+    const r = await get(`https://financialmodelingprep.com/stable/profile?symbol=${encodeURIComponent(symbol)}&apikey=${FMP_KEY}`);
+    const p = Array.isArray(r) ? r[0] : null;
+    if (p && String(p.symbol || '').toUpperCase() === symbol && p.cik) cik = String(p.cik).padStart(10, '0');
+  }
+  if (!cik) return null;
+  return deregistration(await fetchSubmissionsOnceMore(cik), symbol);
+}
+
+// EDGAR unreachable: a ticker on the SEC list resolves as before. One that is NOT on the list has only FMP behind it, which
+// is exactly how a deregistered company got a deck, so it is refused for now with that reason. Failures are not cached.
+function registrationBlock(symbol) {
+  if (!isTickerShaped(symbol)) return Promise.resolve(null);
+  const hit = registrationCache.get(symbol);
+  if (hit && Date.now() - hit.ts < REGISTRATION_TTL_MS) return hit.status;
+  const status = lookupRegistration(symbol).catch((e) => {
+    console.warn(`[${symbol}] registration check unavailable: ${e.message}`);
+    registrationCache.delete(symbol);
+    return cikBySymbol[symbol] ? null : { unverified: true };
+  });
+  registrationCache.set(symbol, { ts: Date.now(), status });
+  return status;
+}
+
+const refusalOf = (symbol, block) => (block.unverified
+  ? { error: `Could not confirm with SEC EDGAR that ${symbol} is still registered. Try again in a minute.`, code: 'registration_unverified' }
+  : { error: deregisteredMessage(block), code: 'deregistered', deregistered: block });
+
+function noExactMatch(symbol, candidates) {
+  const list = candidates.filter((c) => c.symbol !== symbol);
+  const pick = list.slice(0, 5).map((c) => `${c.symbol} (${c.name})`).join(', ');
+  return {
+    error: `No company has the ticker "${symbol}".${pick ? ` Pick one instead: ${pick}.` : ''}`,
+    code: 'no_exact_match', candidates: list,
+  };
+}
 
 // ── EDGAR helpers ─────────────────────────────────────────────────────────────
 
@@ -1191,7 +1264,19 @@ async function quotePayload(symbol) {
 app.get('/quote', async (req, res) => {
   const symbol = (req.query.symbol || '').toUpperCase();
   try {
-    res.json(await quotePayload(symbol));
+    if (req.query.scope === 'deck') return res.json(await quotePayload(symbol));
+    await loadTickers();
+    const block = await registrationBlock(symbol);
+    if (block) return res.json(refusalOf(symbol, block));
+    const exact = !!cikBySymbol[symbol];
+    if (!exact && !isTickerShaped(symbol)) return res.json(noExactMatch(symbol, tickerMatches(symbol)));
+    const payload = await quotePayload(symbol);
+    // Nothing resolved this ticker. If the text matches other companies, offer them; it is never one of them silently.
+    if (!exact && payload.dataSource === 'none') {
+      const candidates = tickerMatches(symbol);
+      if (candidates.length) return res.json(noExactMatch(symbol, candidates));
+    }
+    res.json(payload);
   } catch (err) {
     console.error('Quote error:', err);
     res.status(500).json({ error: 'Failed to fetch company data' });
@@ -1309,7 +1394,11 @@ async function livePricePayload(ticker) {
 }
 
 app.get('/api/price/:ticker', async (req, res) => {
-  res.json(await livePricePayload(req.params.ticker.toUpperCase()));
+  const ticker = req.params.ticker.toUpperCase();
+  // The picker loads the price beside /quote: a refused company's last price must not land on the card already showing.
+  const block = req.query.scope === 'deck' ? null : await registrationBlock(ticker);
+  if (block) return res.json({ error: refusalOf(ticker, block).error, attempts: [] });
+  res.json(await livePricePayload(ticker));
 });
 
 // ── Segment revenue endpoint ──────────────────────────────────────────────────

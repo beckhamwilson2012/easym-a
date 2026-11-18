@@ -105,7 +105,7 @@ export function SectionExchangeRatio({ target, acquirer, deal, model, pageNum, e
     let cancel = false;
     const t = target?.ticker;
     if (!t) { setLtmRev(null); return; }
-    fetch(apiUrl(`/quote?symbol=${encodeURIComponent(t)}`))
+    fetch(apiUrl(`/quote?symbol=${encodeURIComponent(t)}&scope=deck`))
       .then(r => r.json())
       .then(j => { if (!cancel) setLtmRev(j?.ltm?.trusted && j.ltm.revenue != null ? j.ltm.revenue : null); })
       .catch(() => { if (!cancel) setLtmRev(null); });

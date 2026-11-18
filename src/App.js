@@ -41,7 +41,7 @@ function searchTickers(query) {
 function fetchCompanyData(symbol) {
   return fetch(apiUrl(`/quote?symbol=${symbol}`))
     .then(r => r.json())
-    .then(data => { if (data.error) throw new Error(data.error); return data; });
+    .then(data => { if (data.error) throw Object.assign(new Error(data.error), { fromServer: true }); return data; });
 }
 
 // Company-reported annual NON-GAAP figures (adjusted diluted EPS with its net income and share count;
@@ -777,7 +777,7 @@ function App() {
       if (isFinancial(data)) { // OBJECT → SIC fallback: banks /quote tags 'standard' (JPM/BAC) still get bank facts
         getBankFacts(symbol).then(facts => { if (facts) setBankFactsA(facts); });
       }
-    }).catch(() => { setErrorA('Could not load company. Try another.'); setLoadingA(false); setPriceStatusA(p => ({ ...p, loading: false })); });
+    }).catch((e) => { setErrorA(e.fromServer ? e.message : 'Could not load company. Try another.'); setLoadingA(false); setPriceStatusA(p => ({ ...p, loading: false })); });
 
     // Live price fetch runs in parallel — EDGAR (the acquirer's primary source) does NOT return a
     // share price, so without this the acquirer price is 0 and no new shares can be issued.
@@ -820,7 +820,7 @@ function App() {
       if (isFinancial(data)) { // OBJECT → SIC fallback: banks /quote tags 'standard' (JPM/BAC) still get bank facts
         getBankFacts(symbol).then(facts => { if (facts) setBankFactsB(facts); });
       }
-    }).catch(() => { setErrorB('Could not load company. Try another.'); setLoadingB(false); setPriceStatusB(p => ({ ...p, loading: false })); });
+    }).catch((e) => { setErrorB(e.fromServer ? e.message : 'Could not load company. Try another.'); setLoadingB(false); setPriceStatusB(p => ({ ...p, loading: false })); });
 
     // Live price fetch runs in parallel — updates currentSharePriceB when it resolves
     fetchLivePrice(symbol).then(({ price, source, attempts, quoteAsOf, retrievedAt }) => {
