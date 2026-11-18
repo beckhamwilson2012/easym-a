@@ -4,6 +4,8 @@ import { basesDiffer, combination } from '../lib/companyBasis';
 import { ebitdaBasesDiffer } from '../lib/reportingBasis';
 import { multipleOf } from '../lib/multiples';
 import { TAX_RATE } from '../lib/taxRate';
+import { FINANCIAL_SIC } from '../lib/financialSic';
+import { INSURANCE_SIC } from '../lib/insuranceSic';
 
 // ── Sensitivity table constants ───────────────────────────────────────────────
 export const PRICE_MULTS  = [0.8, 0.9, 1.0, 1.1, 1.2];
@@ -163,14 +165,25 @@ export function minCashRevenue(ltmRevenue, fyRevenue) {
   return { value: null, basis: null, label: null, reason: 'no LTM or FY revenue' };
 }
 
+// ── Which deals keep balance-sheet cash out of the funding ────────────────────
+// Guard 1 below. A bank deal (the deck's isBankDeal, passed in as inputs.bankDeal), and on the main deal any pair where
+// both companies are banks/brokers or insurers (the two shared SIC lists, financialSic and insuranceSic). An insurer's cash
+// backs policyholder obligations exactly as a bank's backs deposits: MET/PRU funded $43.5B of its price from it.
+// Peer-screen impacts (applySourcesOfFunds off) are unchanged: they swap the target and carry no balance sheet.
+const financialOrInsurerSic = (sic) => FINANCIAL_SIC.includes(sic) || INSURANCE_SIC.includes(sic);
+export const insurerFundingDeal = (inputs) => !inputs.bankDeal && !!inputs.applySourcesOfFunds
+  && !inputs.companyAPrivate && !inputs.companyBPrivate
+  && financialOrInsurerSic(inputs.companyASic) && financialOrInsurerSic(inputs.companyBSic);
+export const fundingExempt = (inputs) => !!inputs.bankDeal || insurerFundingDeal(inputs);
+
 // ── Sources of funds: acquisition new debt ────────────────────────────────────
 // Faculty's construction: combined cash is a real funding source (subject to a retained minimum) and target
 // debt is assumed repaid on change of control, so
 //   new debt = max(0, cash consideration + target debt repaid − excess cash),   excess cash = max(0, combined cash − min cash).
 // THREE GUARDS (all required — see the Stage-2E diagnostic):
-//  (1) BANK deals keep today's 100%-debt behavior. Bank cash sits off the standard concept (resolves null) and
+//  (1) BANK and INSURER deals keep today's 100%-debt behavior. Bank cash sits off the standard concept (resolves null) and
 //      bank debt/deposits are NOT repaid on change of control — netting them is category-wrong, not imprecise.
-//      Gate on the deck's isBankDeal, passed in as inputs.bankDeal (single source; not recomputed here).
+//      Gate on fundingExempt: the deck's isBankDeal (inputs.bankDeal, not recomputed here) or an insurer pair.
 //  (2) ZERO FLOOR — combined cash can exceed the funding need; surplus can't create negative debt, it renders
 //      as EXCESS CASH USED in Sources & Uses.
 //  (3) MIN CASH SCALES with pro-forma LTM revenue (never a flat dollar), user-overridable via inputs.minCashPct.
@@ -185,16 +198,16 @@ export function acquisitionNewDebt(inputs, offerOverride) {
   const privateTotal = privateConsideration(inputs);
   if (!targetSharesKnown(inputs)) {
     return { newDebt: null, cashConsideration: null, targetDebtRepaid: num(inputs.companyBDebt), combinedCash: null, minCash: null,
-             excessCashAvail: null, excessCashUsed: null, pfLtmRevenue: null, minCashPct: null, bank: !!inputs.bankDeal, fundingGap: 'targetShares' };
+             excessCashAvail: null, excessCashUsed: null, pfLtmRevenue: null, minCashPct: null, bank: fundingExempt(inputs), fundingGap: 'targetShares' };
   }
   const purchasePrice = privateTotal != null ? privateTotal : offer * shares;
   const cashConsideration = purchasePrice * (cashPct / 100);
   // Opt-in + Guard 1. Only the MAIN deal threads combined cash / target debt / pro-forma LTM revenue and sets
   // applySourcesOfFunds; peer-screen impacts (§2, which carry no per-peer balance sheet) and BANK deals keep
   // today's simple 100%-debt convention — newDebt = full cash consideration (no cash netting, no debt repaid).
-  if (!inputs.applySourcesOfFunds || inputs.bankDeal) {
+  if (!inputs.applySourcesOfFunds || fundingExempt(inputs)) {
     return { newDebt: cashConsideration, cashConsideration, targetDebtRepaid: null, combinedCash: null,
-             minCash: null, excessCashAvail: null, excessCashUsed: null, pfLtmRevenue: null, minCashPct: null, bank: !!inputs.bankDeal };
+             minCash: null, excessCashAvail: null, excessCashUsed: null, pfLtmRevenue: null, minCashPct: null, bank: fundingExempt(inputs) };
   }
   // Combined cash available to fund the deal — convention (b) bucket (cash + short-term marketable), shared helper.
   const aBucket = cashBucket(num(inputs.companyACash), num(inputs.companyASti)).value;
@@ -406,6 +419,7 @@ export function calculate(inputs) {
     minCashBasis:      sources.minCashBasis || null,   // { A, B }: each side's revenue basis (LTM, or FY_NO_LTM), or its reason
     fundingGap:        sources.fundingGap || null,     // why new debt is unknown: 'targetDebt' | 'cash' | 'minCash'; null when known
     bankFinancing:     sources.bank,
+    insurerFinancing:  insurerFundingDeal(inputs),     // the same exemption reached through the insurer list: the slides name it
     acquirerSharePrice: acqPrice === null ? 'N/A' : acqPrice.toFixed(2),
     evEBITDA:          evEBITDA   === null ? 'N/A' : evEBITDA.toFixed(1),
     evEBITDAReason:    evM.reason || null,                // why EV/EBITDA is n/m (multiples rule), or null

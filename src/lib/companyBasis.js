@@ -64,6 +64,7 @@ export function companyInputs(P, data, basis) {
     [`company${P}PeriodLabel`]: basisLabel(data, basis),
     [`company${P}FiscalYearEnd`]: data.fiscalYearEnd ?? null,
     [`company${P}LtmAsOf`]: data.ltm?.trusted ? data.ltm.asOf : null,
+    [`company${P}Sic`]: data.sic ?? null,   // the filer's SIC, for the deal model's funding exemption (dealCalc.fundingExempt)
   };
   Object.entries(figures(data, basis)).forEach(([k, v]) => { out[`company${P}${k}`] = v; });
   return out;
