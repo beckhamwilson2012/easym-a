@@ -1,3 +1,4 @@
+import { balanceSheetGap } from '../../../lib/netDebt';
 import { apiUrl } from '../../../api';
 import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
@@ -175,7 +176,8 @@ export function SectionTargetOverview({ target, acquirer, deal, pageNum, exhibit
   // Key operating metrics (TTM ratios — currency-neutral). EV/EBITDA & negatives that read absurd → n/m.
   // Fix 14 Task 5: one EV / EBITDA per company. The app's own figure, the Comparables cell (buildCompany: current EV ÷
   // LTM EBITDA, the one multiples rule), never FMP's key-metrics ratio (OMDA: 40.9x here against 45.2x on Comparables).
-  const evEbitda = col && col.evEbitCell != null ? col.evEbitCell : '—';
+  const evGap = col && col.evEbitCell != null && col.evEbitCell !== '—' ? null : balanceSheetGap(target?.ticker || 'Target', target);   // Fix 21 Task 4
+  const evEbitda = col && col.evEbitCell != null && col.evEbitCell !== '—' ? col.evEbitCell : evGap ? `— (${evGap})` : '—';
   const evEbitdaPeriod = col && col.ltmAsOf ? 'LTM' : 'FY';
   // Faculty (7D-5): every ratio carries an explicit period, consistent with the rest of the deck (LTM / FY).
   // The four return/yield ratios are trailing-twelve-month (FMP key-metrics-ttm) — labeled LTM; the balance-

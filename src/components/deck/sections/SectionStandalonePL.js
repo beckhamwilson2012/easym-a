@@ -10,7 +10,7 @@ import { TOTAL_COSTS_LABEL, forwardTotalCosts } from '../../../lib/forwardCosts'
 import { ExplainButton } from '../../shared/ExplainButton';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
-import { netCashDebt } from '../../../lib/netDebt';
+import { netCashDebt, balanceSheetGap } from '../../../lib/netDebt';
 import { composeSourceLine, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
 import { forwardNetIncome, forwardShareCount } from '../../../utils/dealCalc';
 
@@ -506,7 +506,7 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
     if (ngEbitda && ngEbitda.value != null) lines.push(`${ngEbitda.name} of ${fmtUSDmAcct(ngEbitda.value)} (non-GAAP, ${ngEbitda.computed ? 'computed by EasyM&A' : 'company reported'}).`);
     if (netDebt != null) lines.push(`Net ${netDebt < 0 ? 'cash' : 'debt'} position of ${fmtMoneyTable(Math.abs(netDebt))}${target?.debtLabel ? `; total debt ${target.debtLabel}` : ''}.`);
     else if (target?.debtReason) lines.push(`Net cash / (debt) position: N/A — total debt is not shown: ${target.debtReason}.`);
-    else lines.push(`Net cash / (debt) position: N/A — a balance-sheet figure was unavailable in the filing.`);
+    else lines.push(`Net cash / (debt) position: N/A — ${balanceSheetGap(target?.ticker || 'the company', target) || 'a balance-sheet figure was unavailable in the filing'}.`);
     return lines;
   })();
   const commentary = (showDealCommentary && deal) ? buildFinancialCommentary(target, deal) : standaloneCommentary;

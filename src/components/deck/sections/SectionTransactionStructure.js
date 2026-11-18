@@ -3,7 +3,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
 import { NAVY, SF_BLUE, GRAY_BORDER, ALT_ROW, fmtMoneyTable, isBankDeal, fmtAsOf, fmtInterest } from '../shared/deckTokens';
-import { evClaimsNote, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { evClaimsNote, NET_DEBT_BASIS, dealBalanceSheetGap } from '../../../lib/netDebt';
 import { epsAccretionPct, privateConsideration, DEBT_INTEREST_RATE, TAX_RATE } from '../../../utils/dealCalc';
 import { exhibitLabelOf } from '../deckRegistry';
 import { MIN_CASH_LABEL } from '../../shared/CashFundingBox';
@@ -119,6 +119,9 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
   // ── Deal-size header (link, don't duplicate §8) ─────────────────────────────────────────────────────
   const txnEV = num(d.transactionEV);   // dealCalc's one transaction EV (Fix 10 Task 5), never re-derived here
 
+  // Fix 21 Task 4: why the "—" cells below are blank. No missing cash or debt is treated as $0.
+  const capGap = bankDeal ? null : dealBalanceSheetGap(aTk, acquirer, bTk, target);
+
   const capRows = [
     { k: 'Total debt',            pre: preDebt,     pf: proFormaDebt, impact: sub(proFormaDebt, preDebt) },
     { k: 'Cash, equiv. & ST marketable sec.', pre: preCash, pf: pfCash, impact: sub(pfCash, preCash) },
@@ -157,8 +160,8 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
             — Sources &amp; Uses not footed: {r.fundingGap === 'minCash'
               ? `the minimum cash kept can't be set (${minCashBasisText || 'no revenue basis'}), so the excess cash used and the new debt it drives are unknown.`
               : r.fundingGap === 'cash'
-              ? 'combined cash is unavailable, so the excess cash used and the new debt it drives are unknown.'
-              : `${bTk} total debt is unavailable, so the debt repaid and the funding need it drives are unknown.`}
+              ? `combined cash is unavailable${capGap ? ` (${capGap})` : ''}, so the excess cash used and the new debt it drives are unknown.`
+              : `${capGap || `${bTk} total debt is unavailable`}, so the debt repaid and the funding need it drives are unknown.`}
           </div>
         ) : (
           <div style={{ marginTop: 5, fontSize: 8.5, color: foots ? '#166534' : '#DC2626', fontWeight: 600 }}>
@@ -199,6 +202,7 @@ export function SectionTransactionStructure({ target, acquirer, deal, model, pag
         )}
       </div>
 
+      {capGap && <div data-testid="cap-gap" style={{ padding: '6px 20px 0', fontSize: 9, color: '#6B7280', fontWeight: 600 }}>EV, net debt and leverage are “—”: {capGap}.</div>}
       <BasisNote acquirer={acquirer} target={target} deal={deal} style={{ padding: '6px 20px 0' }} />
       <SynergyLines deal={deal} title="Synergies ($M). Combined EBITDA above includes Year 1 only" style={{ padding: '6px 20px 0' }} />
       <div style={{ padding: '8px 20px 32px', fontSize: 9, color: '#9CA3AF', fontStyle: 'italic', lineHeight: 1.45 }}>

@@ -75,5 +75,19 @@ export function evClaimsFootnote(list) {
 export const claimsOf = (o) => (o ? { nci: o.noncontrollingInterest ?? null, nciTag: o.noncontrollingInterestTag ?? null,
   preferred: o.preferredStock ?? null, preferredTag: o.preferredStockTag ?? null, reason: o.evClaimsReason ?? null } : null);
 
+// Fix 21 Task 4: why net debt, EV and leverage are "—" for one company: which balance-sheet figure is absent. A filed $0 is a
+// figure, not a gap (debt is $0 only through server/services/debtZero.js). null when both are present. Every slide that
+// blanks one of those figures prints this same text.
+export function balanceSheetGap(who, company) {
+  const present = (v) => v != null && v !== '' && Number.isFinite(Number(v));
+  const gaps = [];
+  if (!present(company?.cash)) gaps.push(`${who} cash is not in its filing data`);
+  if (!present(company?.debt)) gaps.push(`${who} total debt is not shown: ${company?.debtReason || 'no total debt figure in its filing data'}`);
+  return gaps.length ? gaps.join('; ') : null;
+}
+// Both companies, for the combined figures (pro forma debt, cash and leverage).
+export const dealBalanceSheetGap = (aWho, acquirer, tWho, target) =>
+  [balanceSheetGap(aWho, acquirer), balanceSheetGap(tWho, target)].filter(Boolean).join('; ') || null;
+
 // Convention label — sourced wording, no adjectives. Rendered wherever net debt / EV appears.
 export const NET_DEBT_BASIS = 'Net cash/(debt) = total debt less cash, cash equivalents and short-term marketable securities.';

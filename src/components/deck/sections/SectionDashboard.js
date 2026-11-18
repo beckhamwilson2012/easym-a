@@ -21,6 +21,7 @@ import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
+import { balanceSheetGap, dealBalanceSheetGap } from '../../../lib/netDebt';
 import { multipleNumber } from '../../../lib/multiples';
 import { isNonGaapDeal, FY_ONLY, computedSides, epsSourceText, combinedEbitdaShort } from '../../../lib/reportingBasis';
 import { NONE_ENTERED, fmtSynergy } from '../../../lib/synergies';
@@ -72,6 +73,8 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
   // Fix 21 Task 2: a missing figure is neither loading nor negative. The tiles below print "—" and say what is absent.
   const absentFigure = (v) => !Number.isFinite(parseFloat(v));
   const tgtTk = target?.ticker || nameB, acqTk = acquirer?.ticker || nameA;
+  const tgtBsGap = balanceSheetGap(tgtTk, target);   // Fix 21 Task 4: why EV, net debt and leverage are "—"
+  const dealBsGap = dealBalanceSheetGap(acqTk, acquirer, tgtTk, target);
   const cet1Why = (c, tk) => ((c?.totalAssets != null || c?.tangibleBookValue != null || c?.netInterestIncome != null)
     ? `${tk}: no CET1 ratio tagged in its XBRL filings` : `${tk}: bank filing data not available`);
   const cet1Tile = (() => {
@@ -307,7 +310,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               // `companyBEBITDA <= 0` read a missing EBITDA as negative (null <= 0 is true): OXY "Target EBITDA is negative".
               value: results.evEBITDA === 'N/A' ? (results.evEBITDAReason ? 'n/m' : '—') : `${multipleNumber(results.evEBITDA)}x`,
               note:  results.evEBITDA === 'N/A'
-                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || (absentFigure(inputs.companyBEBITDA) ? 'Target EBITDA not reported' : 'not available')))
+                ? (ebB && ebB.nonGaap && ebB.value == null ? `${ebB.name}: ${FY_ONLY}` : (results.evEBITDAReason || [absentFigure(inputs.companyBEBITDA) && 'Target EBITDA not reported', results.enterpriseValue == null && tgtBsGap].filter(Boolean).join('; ') || 'not available'))
                 : (ebB ? `on ${ebitdaBasisText(ebB)}` : null),
               explain: () => explainEvEbitda({ ev, ebitda: inputs.companyBEBITDA, multiple: results.evEBITDA }),
             },
@@ -330,7 +333,7 @@ export function SectionDashboard({ target, acquirer, deal, onEditInputs, onNewAn
               note:  results.debtEBITDA === 'N/A'
                 ? ((results.basesDiffer || ebDiffer) ? DIFFERENT_BASES : results.debtEBITDAAboveCap ? results.debtEBITDAReason : results.combinedEBITDA == null ? 'Combined EBITDA not available'
                   : parseFloat(results.combinedEBITDA) <= 0 ? 'Combined EBITDA is non-positive'
-                  : 'Combined debt not available')
+                  : (dealBsGap || 'Combined debt not available'))
                 : (combinedEbitdaBasis ? `on ${combinedEbitdaBasis} combined EBITDA${ebSources ? ` (${ebSources})` : ''}` : null),
               explain: () => explainDebtEbitda({ combinedDebt: combinedDebtForExplain, combinedEbitda: results.combinedEBITDA, multiple: results.debtEBITDA }),
             },

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
-import { evClaimsNote } from '../../../lib/netDebt';
+import { evClaimsNote, balanceSheetGap } from '../../../lib/netDebt';
 import { accretionShareCountLabel } from '../../../lib/composeSourceLine';
 import { useDealVerdict, VerdictBlock } from '../shared/useDealVerdict';
 import { DIFFERENT_BASES } from '../../../lib/companyBasis';
@@ -139,7 +139,7 @@ export function SectionExecutiveSummary({ target, acquirer, deal, model, pageNum
     { label: 'Offer price / share', value: ps(pos(d.offerPrice)) },
     { label: pos(deal?._inputs?.premiumReferencePrice) != null ? 'Premium to price on a date' : 'Premium to market', value: pc(d.premiumPct) },
     { label: 'Equity value (offer × target shares)', value: money(d.totalConsideration), bold: true },
-    { label: 'Enterprise value (acquisition basis)', value: money(d.transactionEV) },
+    { label: 'Enterprise value (acquisition basis)', value: d.transactionEV == null && balanceSheetGap(bTk || T.name || 'Target', target) ? `${DASH} (${balanceSheetGap(bTk || T.name || 'Target', target)})` : money(d.transactionEV) },
     { label: 'Consideration mix', value: mix },
     { label: 'New acquirer shares issued', value: sh(d.newShares) },
     { label: 'Acquirer shares outstanding (pre-deal)', value: sh(pos(d.preDealShares)) },

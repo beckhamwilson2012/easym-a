@@ -156,6 +156,7 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     // valuation multiples + net-debt bridge (Stage 7A) — pre-formatted cells (n/m / footnote markers baked in)
     peCell, peNonOp, evEbitCell, evEbitApprox, netDebt: netDebtLtm,
     // Why EV and net debt are "—" when the debt figure is unknown: /quote's own sourced reason (debtUnknownNote).
+    cashUnknown: cashVal == null && mktCap != null,   // Fix 21 Task 4: the same "—" and footnote when cash is the missing leg
     debtUnknown: debtVal == null && mktCap != null, debtReason: debtVal == null ? (data.debtReason || 'no total debt figure in the filing') : null,
     // raw inputs for the EPS-impact engine
     netIncome: data.netIncome != null ? parseFloat(data.netIncome) : null,
@@ -180,6 +181,12 @@ export function debtUnknownNote(cols) {
   const byReason = new Map();
   cols.filter((c) => !c.loading && c.debtUnknown).forEach((c) => byReason.set(c.debtReason, [...(byReason.get(c.debtReason) || []), c.ticker]));
   return byReason.size ? [...byReason].map(([reason, tickers]) => `Enterprise value, net debt and EV multiples are “—” for ${tickers.join(', ')}: total debt is not shown: ${reason}.`).join(' ') : null;
+}
+
+// The same sentence when cash is the missing figure. A bank deck never nets cash, so it does not call this.
+export function cashUnknownNote(cols) {
+  const tickers = cols.filter((c) => !c.loading && c.cashUnknown).map((c) => c.ticker);
+  return tickers.length ? `Enterprise value, net debt and EV multiples are “—” for ${tickers.join(', ')}: cash is not in the filing data.` : null;
 }
 
 // "AAPL: LTM to 2026-09-26 (latest 10-K; no later 10-Q yet)" for each such column, or null.
@@ -603,6 +610,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
           {grossFilingNote(loadedCols) ? <>{grossFilingNote(loadedCols)} </> : null}
           {latestTenKLtmNote(loadedCols) ?<>{latestTenKLtmNote(loadedCols)} </> : null}
           {debtUnknownNote(loadedCols) ? <>{debtUnknownNote(loadedCols)} </> : null}
+          {!isBankDeal(target, acquirer) && cashUnknownNote(loadedCols) ? <>{cashUnknownNote(loadedCols)} </> : null}
           {anyFyFallback(metrics, loadedCols) ?<><strong>{FY_FALLBACK_NOTE}</strong> (marked “FY” and the fiscal year in the cell). </> : null}
           {isNonGaapDeal(deal) ? <><strong>Reporting basis: </strong>this deck is on Non-GAAP, but the comparables stay on GAAP and computed figures for every column, including {acquirer?.ticker || 'the acquirer'} and {target?.ticker || 'the target'}: the peers carry no company-reported non-GAAP figures, so P/E, EV/EBITDA and EPS Impact if Acquired are on one basis across the row. </> : null}
           Revenue growth and Op Margin/Income (NTM) are FMP consensus (non-GAAP); equity value &amp; cash are point-in-time. Equity value + net debt = enterprise value (reads top-to-bottom). Customer &amp; net-retention metrics, where a company discloses them, are shown as cited callouts on the Target Profile ({exhibitLabelOf('targetprofile')}) — not here, as they are reported on non-comparable definitions. {MULTIPLE_RULE} {evClaimsFootnote(loadedCols.map(c => ({ ticker: c.ticker, claims: c.claims })))} <strong>EPS Impact if Acquired</strong> reuses the deck's accretion engine (same premium and cash-stock mix as the live deal; pre-synergy; on the acquirer's {baseInputs.companyABasis === 'ltm' ? 'LTM' : 'fiscal-year'} GAAP figures) modeling this acquirer buying each company — a real computation, not a fetch. It is not the deal's own figure: with no per-company balance sheet, the cash part is modeled as 100% new debt at the 5% rate (no cash on hand used), so the target's column differs from the deal's Year 1 on the Pro Forma slide.{anyPeNonOp ? <> <strong>ᵃ</strong> P/E is live price ÷ LTM diluted EPS; where a filer's LTM net income includes material non-operating income (marked ᵃ) the multiple reads low on that basis — see the non-operating disclosure on the Standalone P&amp;L (§{pageNumOf('plAcquirer')}/§{pageNumOf('plTarget')}). P/E is n/m where earnings are near zero (ratio &gt; 100).</> : null}{anyEvEbitApprox ? <> <strong>ᵇ</strong> EV/EBITDA is n/mᵇ where D&amp;A is not reported under a combined concept, so LTM EBITDA cannot be computed on a basis comparable to peers — an operating-income proxy is not shown, and components are not summed (a combined tag is not the sum of its parts).</> : null} {peerProvenance && <span>{peerProvenance}.</span>}

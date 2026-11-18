@@ -4,9 +4,9 @@ import React, { useState, useEffect } from 'react';
 import { PageFrame } from '../shared/PageFrame';
 import { PageHeader } from '../shared/PageHeader';
 import { BasisNote } from '../shared/BasisNote';
-import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, isGrossNm, grossNmNote, fmtAsOf } from '../shared/deckTokens';
+import { NAVY, GRAY_BORDER, ALT_ROW, fmtMoneyTable, fmtScaled, pickScale, fmtPct, isFinancial, isGrossNm, grossNmNote, fmtAsOf, isBankDeal } from '../shared/deckTokens';
 import { getCompanyProfile, PROFILES_AS_OF } from '../../../lib/companyProfiles';
-import { enterpriseValue, evClaimsNote, claimsOf, NET_DEBT_BASIS } from '../../../lib/netDebt';
+import { enterpriseValue, evClaimsNote, claimsOf, NET_DEBT_BASIS, dealBalanceSheetGap } from '../../../lib/netDebt';
 import { fcfAndEquity } from '../../../lib/fcfYield';
 
 // US state full-name → 2-letter abbreviation for HQ display ("San Francisco, California" → "…, CA").
@@ -309,6 +309,7 @@ export function SectionCompanyProfiles({ target, acquirer, deal, pageNum, exhibi
         lineHeight: 1.4,
       }}>
         {grossNmNote(acquirerObj, targetObj) ? <>{grossNmNote(acquirerObj, targetObj)} </> : null}
+        {!isBankDeal(targetObj, acquirerObj) && dealBalanceSheetGap(acquirerObj?.ticker || 'Acquirer', acquirerObj, targetObj?.ticker || 'Target', targetObj) ? <>EV and net debt are “—”: {dealBalanceSheetGap(acquirerObj?.ticker || 'Acquirer', acquirerObj, targetObj?.ticker || 'Target', targetObj)}. </> : null}
         {sourceLine}
       </div>
     </PageFrame>
