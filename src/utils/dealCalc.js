@@ -489,15 +489,29 @@ export function epsAccretionPct(offerPrice, synergiesY1, inputs) {
 
 // The inputs for one forward accretion year: net income = consensus EPS × today's diluted shares. Slide 8's
 // accretion table and the input page's premium solve both read this, so they cannot diverge.
+// Fix 20 Task 2: the share count a forward year's net income is built on, per side: the acquirer's one diluted count
+// (acquirerDilutedShares, the count every pro forma EPS divides by) and the target's diluted count, else its shares.
+// The target's `|| 0` is the pre-Fix-20 behavior of forwardYearInputs, kept unchanged here (a missing target count
+// gives a forward target net income of 0 inside the accretion math: a known Pattern B, not fixed in this commit).
+export function forwardShareCount(inputs, side) {
+  return side === 'A'
+    ? acquirerDilutedShares(inputs).shares
+    : (parseFloat(inputs.companyBDilutedShares) || parseFloat(inputs.companyBShares) || 0);
+}
+// The one forward-year net income per company: consensus EPS × forwardShareCount. forwardYearInputs (the Pro Forma
+// tables, the accretion strip, the verdict, the premium solve) and the Standalone P&L forward columns all read this.
+export function forwardNetIncome(inputs, side, eps) {
+  return eps * forwardShareCount(inputs, side);
+}
+
 export function forwardYearInputs(inputs, acquirerEps, targetEps) {
-  const acqDilSh = acquirerDilutedShares(inputs).shares;
-  const tgtDilSh = parseFloat(inputs.companyBDilutedShares) || parseFloat(inputs.companyBShares) || 0;
+  const acqDilSh = forwardShareCount(inputs, 'A');
   return {
     ...inputs,
-    companyANetIncome:     acquirerEps * acqDilSh,
+    companyANetIncome:     forwardNetIncome(inputs, 'A', acquirerEps),
     companyAEPS:           acquirerEps,
     companyADilutedShares: acqDilSh,
-    companyBNetIncome:     targetEps * tgtDilSh,
+    companyBNetIncome:     forwardNetIncome(inputs, 'B', targetEps),
     // Both legs are consensus here, whatever basis the historical figures are on.
     companyABasis:         'consensus',
     companyBBasis:         'consensus',

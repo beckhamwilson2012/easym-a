@@ -11,7 +11,8 @@ import { ExplainButton } from '../../shared/ExplainButton';
 import { efficiencyRatioLabel, cet1Label } from '../../../lib/bankCommentaryThresholds';
 import { useVerifiedData } from '../../../hooks/useVerifiedData';
 import { netCashDebt } from '../../../lib/netDebt';
-import { composeSourceLine } from '../../../lib/composeSourceLine';
+import { composeSourceLine, forwardNetIncomeLabel } from '../../../lib/composeSourceLine';
+import { forwardNetIncome, forwardShareCount } from '../../../utils/dealCalc';
 
 const USED_FIELDS = ['revenue', 'netIncome', 'sharesOutstanding', 'cash', 'totalDebt', 'freeCashFlow'];
 
@@ -76,7 +77,7 @@ function PLRow({ label, value, alt, bold, indent }) {
 // with a Margins & Growth block. Approach (A): basis labeled INLINE on each column header; estimate
 // columns italic + tinted; forward OpEx "—" (basis gap unallocable); forward lines FMP publishes no
 // consensus for are "—" (ⁿ marker). Margins computed PER COLUMN on that column's own basis.
-function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
+function MultiYearPL({ pnl, fwdNiNote, restaurantMode, grossNmMode, grossNote, ngRows }) {
   const cols = pnl.columns || [];
   // $M with accounting parens for negatives; expenses passed as their own sign for parens.
   const fmtM   = (v) => v == null ? '—' : (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString('en-US')})` : `$${Math.round(v).toLocaleString('en-US')}`);
@@ -350,7 +351,8 @@ function MultiYearPL({ pnl, restaurantMode, grossNmMode, grossNote, ngRows }) {
         {ebitdaNote ? <> {ebitdaNote}</> : null}
         {grossNote ? <> {grossNote}</> : null}
         {noiText ? <> <strong style={{ color: NAVY }}>Non-operating income/(expense)</strong> reconciles operating income to net income. {noiText}</> : null}
-        {fwd2d ? <> Forward net income is FMP <strong>consensus (netIncomeAvg)</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}
+        {fwdNiNote ? <> <strong style={{ color: NAVY }}>Forward net income: </strong>{fwdNiNote}</> : null}
+        {fwd2d ? <> Forward net income is <strong>consensus EPS × diluted shares</strong>; {fwd2d.y1} net margin ({fwd2d.m1.toFixed(1)}%) exceeds {fwd2d.y2} ({fwd2d.m2.toFixed(1)}%), reflecting analyst modeling of equity-security gains in the nearer year (values unchanged).</> : null}
         {restaurantMode
           ? <> Gross profit / margin omitted — restaurant cost structure (food-only COGS excludes the dominant labor &amp; occupancy costs) makes the gross split not meaningful; shown Revenue → Operating Income. <sup>n</sup> No consensus available for forward diluted shares.</>
           : <> <sup>n</sup> No consensus available: FMP publishes no forward gross profit or diluted share count, so forward cost of revenue, gross profit, gross margin and diluted shares are not shown. Operating expense is shown for reported periods; it is not shown for forward years — consensus supplies operating income but not gross profit.</>}
@@ -395,6 +397,19 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
       .catch(() => { if (!cancel) setPnl(null); });
     return () => { cancel = true; };
   }, [target?.ticker, bankMode]);
+
+  // Fix 20 Task 2: forward (consensus) net income is the deal model's own figure — consensus EPS × the share count the
+  // Pro Forma slide and the accretion use (dealCalc forwardNetIncome) — not FMP's separate net-income mean, which sat on a
+  // different implied share count (CRM FY2028E: $15,858 here vs $13,576 on Pro Forma = $16.07 × 845M). Actual and LTM
+  // columns are untouched. No EPS or no share count → "—", never FMP's figure and never 0.
+  const fwdInputs = basisDeal?._inputs || null;
+  const fwdShares = fwdInputs ? forwardShareCount(fwdInputs, side) : null;
+  const fwdNi = (eps) => (Number.isFinite(eps) && fwdShares > 0 ? forwardNetIncome(fwdInputs, side, eps) : null);
+  const pnlShown = pnl ? { ...pnl, columns: pnl.columns.map((c) => (c.actual ? c : { ...c, netIncome: fwdNi(c.eps) })) } : null;
+  const fwdNiNote = !(fwdShares > 0) ? null
+    : side === 'A'
+      ? `${forwardNetIncomeLabel(fwdInputs)}: the figure the Pro Forma slide and the accretion use.`
+      : `Target net income = consensus EPS × ${fwdShares.toFixed(1)}M ${parseFloat(fwdInputs.companyBDilutedShares) > 0 ? 'diluted shares' : 'shares outstanding'}: the figure the Pro Forma slide and the accretion use.`;
 
   const rev    = parseFloat(target.revenue)   || 0;
   const ebitda = parseFloat(target.ebitda)    || 0;
@@ -507,7 +522,7 @@ function StandalonePLBody({ company, deal, basisDeal, side, pageNum, role, showD
       />
 
       <BasisNote only={target} fixed={target?.basis === 'ltm' ? 'The commentary and the deal model read the LTM column; the fiscal-year columns are for reference.' : null} style={{ padding: '8px 20px 0' }} />
-      {pnl && <MultiYearPL pnl={pnl} restaurantMode={restaurantMode} grossNmMode={grossNmMode} grossNote={grossNmNote(target)} ngRows={ngRowsFor(ngPlan, ng, ngEbitda, target, ltmCard)} />}
+      {pnlShown && <MultiYearPL pnl={pnlShown} fwdNiNote={fwdNiNote} restaurantMode={restaurantMode} grossNmMode={grossNmMode} grossNote={grossNmNote(target)} ngRows={ngRowsFor(ngPlan, ng, ngEbitda, target, ltmCard)} />}
 
       <div style={{ display: 'flex', gap: 20, padding: pnl ? '4px 20px 30px' : '16px 20px 36px' }}>
         {/* Left: P&L table (single-year). Hidden when the multi-year table above is shown. */}
