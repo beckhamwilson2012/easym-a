@@ -1,5 +1,5 @@
 import { apiUrl } from '../../../api';
-import { marketCapM } from '../../../lib/marketCap';
+import { marketCapM, marketCapCheck, MARKET_CAP_TOLERANCE } from '../../../lib/marketCap';
 import { multipleOf, multipleNumber, RULE_TEXT as MULTIPLE_RULE } from '../../../lib/multiples';
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { PageFrame } from '../shared/PageFrame';
@@ -57,9 +57,13 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   const stiUsed = cashBucket(0, stiVal).stiUsed;   // provenance: false → this column is cash-only (no ST-marketable line)
   const evRev  = ev != null && rev > 0 ? ev / rev : null;
   const opInc  = data.operatingIncome != null ? parseFloat(data.operatingIncome) : null;
-  // Preserve the live-price EV fix: a market cap implausibly small vs revenue for a PROFITABLE company
-  // signals broken shares-outstanding (e.g. WDAY 36M vs ~265M). Flag → don't print Market Cap / EV.
-  const mktCapSane = mktCap != null && rev > 0 && !((mktCap / rev) < 0.8 && (opInc || 0) > 0);
+  // Share-count check (marketCapCheck): price × the app's shares against FMP's own market cap. It replaces a test of market
+  // cap against revenue, which caught WDAY's broken count but also removed every profitable company worth under 0.8× sales
+  // (GM, Toyota, Target, CVS). A disagreement marks the cells and prints both numbers; it never blanks a figure.
+  // An FMP-sourced company (TM, SAP) has its share count derived from FMP's own market cap ÷ price, so comparing the two would
+  // only compare FMP with itself: that is reported as not checked, never as a pass.
+  const capFromFmp = data.dataSource === 'fmp';
+  const capCheck = { ...marketCapCheck(mktCap, capFromFmp ? null : data.profile?.marketCapM), sharesFromFmp: capFromFmp };
   const fcf    = data.freeCashFlow != null ? parseFloat(data.freeCashFlow) : null;
   const fcfMargin = fcf != null && rev > 0 ? fcf / rev * 100 : null;
 
@@ -96,7 +100,7 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   const gmFromLtm = gpLtm != null && revLtm > 0;
   const grossMarginLtm = gmFromLtm ? (gpLtm / revLtm * 100) : grossMargin; // LTM margin, else the FY grossMargin computed above
   // Every multiple on this slide goes through the one rule (src/lib/multiples.js).
-  const evRevLtmM = (mktCapSane && ev != null) ? multipleOf(ev, revActual, { denName: 'revenue' }) : null;
+  const evRevLtmM = ev != null ? multipleOf(ev, revActual, { denName: 'revenue' }) : null;
   const evRevLtm  = evRevLtmM ? evRevLtmM.value : null;           // trailing EV ÷ (LTM|FY) rev
   // null (not "—") when there is no figure, as before: a row whose cells are all null stays hidden (a private target's).
   const evRevLtmCell = evRevLtmM && evRevLtmM.text !== '—' ? evRevLtmM.text : null;
@@ -120,8 +124,8 @@ export function buildCompany(ticker, data, isTarget, displayName) {
   const ebitLtm  = ltmT && ltmT.ebitda != null ? parseFloat(ltmT.ebitda) : (data.ebitda != null ? parseFloat(data.ebitda) : null);
   const ebitReal = ebitLtm != null && oiLtm != null ? ebitLtm > oiLtm : (ebitLtm != null && opInc != null ? ebitLtm > opInc : false);
   const evEbitApprox = ebitLtm != null && !ebitReal;     // EBITDA == operating income → D&A not resolved
-  const evEbitM   = (mktCapSane && ev != null && ebitReal) ? multipleOf(ev, ebitLtm, { denName: 'EBITDA' }) : null;
-  const evEbitCell = (!mktCapSane || ev == null) ? '—'
+  const evEbitM   = (ev != null && ebitReal) ? multipleOf(ev, ebitLtm, { denName: 'EBITDA' }) : null;
+  const evEbitCell = ev == null ? '—'
     : (evEbitApprox ? 'n/mᵇ'
     : (evEbitM ? evEbitM.text : '—'));
 
@@ -145,14 +149,14 @@ export function buildCompany(ticker, data, isTarget, displayName) {
     bsAsOf: data.balanceSheetAsOf || null, bsBasis: data.balanceSheetBasis || null,
     cash: data.cash != null ? parseFloat(data.cash) : null,   // point-in-time (same balance-sheet cash as the EV calc)
     operatingIncome: opInc, fcfMargin,
-    mktCap: mktCapSane ? mktCap : null, evRev: mktCapSane ? evRev : null, mktCapFlagged: !mktCapSane && mktCap != null,
+    mktCap, evRev, mktCapFlagged: capCheck.flagged, capCheck,
     totalAssets: data.totalAssets != null ? parseFloat(data.totalAssets) : null,
     effRatio, ptbv, cet1: data.cet1Ratio != null ? parseFloat(data.cet1Ratio) : null,
     // screen fields
     // n/m for a utility or insurer (SIC), or when the filing gives no gross profit and there is no LTM one: the reason from /quote
     // ("no cost-of-revenue line in the filing"). FMP's gross profit is never shown.
     grossMargin: grossMarginLtm, grossNm: isGrossNm(data) || grossFilingReason != null, grossFilingReason, sic: data.sic, opMarginNG, opIncomeNG, revGrowthProj, evRevProj, employees,
-    ev: mktCapSane ? ev : null,
+    ev,
     // valuation multiples + net-debt bridge (Stage 7A) — pre-formatted cells (n/m / footnote markers baked in)
     peCell, peNonOp, evEbitCell, evEbitApprox, netDebt: netDebtLtm,
     // Why EV and net debt are "—" when the debt figure is unknown: /quote's own sourced reason (debtUnknownNote).
@@ -189,6 +193,21 @@ export function cashUnknownNote(cols) {
   return tickers.length ? `Enterprise value, net debt and EV multiples are “—” for ${tickers.join(', ')}: cash is not in the filing data.` : null;
 }
 
+// The ⚠ legend: each flagged company with both market caps and why they are shown anyway, then any company with no FMP figure.
+const capM = (v) => `$${Math.round(v).toLocaleString('en-US')}M`;
+export function marketCapNote(cols) {
+  const loaded = cols.filter((c) => !c.loading && c.capCheck);
+  const flagged = loaded.filter((c) => c.capCheck.flagged).map((c) => `${c.ticker}: price × shares ${capM(c.capCheck.appCapM)} vs FMP market cap ${capM(c.capCheck.independentCapM)}`);
+  const unchecked = loaded.filter((c) => c.capCheck.appCapM != null && !c.capCheck.checked);
+  const fromFmp = unchecked.filter((c) => c.capCheck.sharesFromFmp).map((c) => c.ticker);
+  const noFigure = unchecked.filter((c) => !c.capCheck.sharesFromFmp).map((c) => c.ticker);
+  const parts = [];
+  if (flagged.length) parts.push(`⚠ Market cap check: ${flagged.join('; ')}. These differ by more than ${Math.round(MARKET_CAP_TOLERANCE * 100)}%, which can mean a wrong share count, share classes counted differently, or a stale outside figure. The slide keeps price × shares; verify before relying on it.`);
+  if (fromFmp.length) parts.push(`Market cap check not run for ${fromFmp.join(', ')}: the share count comes from FMP's own market cap, so there is no independent figure.`);
+  if (noFigure.length) parts.push(`Market cap check not run for ${noFigure.join(', ')}: no FMP market cap.`);
+  return parts.length ? parts.join(' ') : null;
+}
+
 // "AAPL: LTM to 2026-09-26 (latest 10-K; no later 10-Q yet)" for each such column, or null.
 export function latestTenKLtmNote(cols) {
   const labeled = cols.filter((c) => !c.loading && c.ltmLabel);
@@ -204,19 +223,20 @@ export function fiscalYearLabel(data) {
 export const FY_FALLBACK_NOTE = 'FY figure shown where LTM is unavailable';
 
 // The text of one comparables cell. One place, so the slide and its tests read cells the same way. A figure that fell back from
-// LTM to the fiscal year carries its marker ("74.1% FY25"); "—", "n/m" and "⚠" are not figures and carry none.
+// LTM to the fiscal year carries its marker ("74.1% FY25"); "—" and "n/m" are not figures and carry none. A figure the market
+// cap check flagged keeps its value and gains "⚠" (marketCapNote gives the reason on the slide).
 export function comparablesCellText(m, c) {
   if (c.loading) return '…';
-  if (m.flagged && m.flagged(c)) return '⚠';
   if (m.nm?.(c)) return 'n/m';
   const text = m.fmt(m.get(c));
   const isFigure = text !== '—' && !/^n\/m/.test(text);
-  return isFigure && m.fyKey && c.fyBasis?.[m.fyKey] ? `${text} ${c.fyLabel}` : text;
+  const cell = isFigure && m.fyKey && c.fyBasis?.[m.fyKey] ? `${text} ${c.fyLabel}` : text;
+  return isFigure && m.flagged?.(c) ? `${cell} ⚠` : cell;
 }
 
 // True when any loaded column shows a fiscal-year fallback in a row on the slide, which is when the footnote is printed.
 export function anyFyFallback(metrics, cols) {
-  return metrics.some((m) => m.fyKey && cols.some((c) => !c.loading && / FY\d{0,2}$/.test(comparablesCellText(m, c))));
+  return metrics.some((m) => m.fyKey && cols.some((c) => !c.loading && / FY\d{0,2}( ⚠)?$/.test(comparablesCellText(m, c))));
 }
 
 // Footnote label for each auto-selected peer on the slide, grouped by where it came from (/api/peers
@@ -598,6 +618,9 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
 
       {editOpen && (
         <EditPeersModal autoPeers={autoPeers} customPeers={customPeers} onSave={handleSavePeers} onClose={() => setEditOpen(false)} />
+      )}
+      {marketCapNote(loadedCols) && (
+        <div data-testid="market-cap-legend" style={{ padding: '0 22px 6px', fontSize: 9.5, color: '#B45309', fontWeight: 600, lineHeight: 1.4 }}>{marketCapNote(loadedCols)}</div>
       )}
       <BasisNote acquirer={acquirer} target={target} fixed="Actuals on this slide are LTM for every company with trusted LTM, whichever basis the card is on. Forward growth is against the last fiscal year, never LTM." style={{ padding: '0 22px 6px' }} />
       {(sourceLine || peerProvenance) && (

@@ -34,12 +34,13 @@ describe('FY fallback markers', () => {
     const c = buildCompany('X', cci({ ltm: { trusted: true, asOf: '2026-06-30', revenue: 4084, grossProfit: 3000, operatingIncome: 2000, ebitda: 2700, eps: 2.4 } }), false);
     [GM, REV, PE, EBITDA].forEach((m) => expect(comparablesCellText(m, c)).not.toMatch(/FY/));
   });
-  test('"—", "n/m" and "⚠" carry no marker: they are not figures', () => {
+  test('"—" and "n/m" carry no marker or ⚠: they are not figures', () => {
     const none = buildCompany('X', cci({ grossProfit: null, ltm: { trusted: false } }), false);
     expect(comparablesCellText(GM, none)).toBe('—');
     const insurer = buildCompany('UNH', cci({ sic: '6324' }), false);
     expect(comparablesCellText(GM, insurer)).toBe('n/m');
-    expect(comparablesCellText({ ...REV, flagged: () => true }, insurer)).toBe('⚠');
+    expect(comparablesCellText({ ...GM, flagged: () => true }, insurer)).toBe('n/m');
+    expect(comparablesCellText({ ...GM, flagged: () => true }, none)).toBe('—');
   });
   test('rows with no LTM label (forward growth) are never marked', () => {
     const c = buildCompany('X', cci({ ltm: { trusted: false } }), false);

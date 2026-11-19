@@ -1860,6 +1860,8 @@ app.get('/api/profile/:ticker', async (req, res) => {
       ok: true,
       ticker,
       image: j.image || null,   // company logo URL (FMP) for the Company Profiles slide
+      // FMP's own market cap, $M: the independent figure the Comparables share-count check compares with (marketCapCheck).
+      marketCapM: Number.isFinite(parseFloat(j.marketCap)) && parseFloat(j.marketCap) > 0 ? parseFloat(j.marketCap) / 1e6 : null,
       beta, avgVolume,          // for the Trading Profile slide (Beta, Avg Daily Volume/Value)
       ceo: j.ceo || null,
       employees: Number.isFinite(emp) && emp > 0 ? emp : null,

@@ -1,6 +1,6 @@
 // Stage 17 — §2 comps revenue null-honesty (SectionComparables:39). Exercises the exported, pure
 // buildCompany. Absent revenue → col.revenue null (→ "—" via fmtIntParens); a genuine reported 0 → 0
-// (→ "0"); the three derived consumers (evRev, margins, mktCapSane-gated mktCap/EV) already render "—".
+// (→ "0"); the derived consumers (evRev, margins) render "—". Equity value and EV need no revenue (Fix 22 Task 2).
 import { buildCompany } from '../../components/deck/sections/SectionComparables';
 
 const peer = (over = {}) => ({
@@ -14,8 +14,8 @@ describe('SectionComparables.buildCompany — Stage 17 revenue null-honesty', ()
     const c = buildCompany('PEER', peer({ revenue: undefined }), false, 'Peer');
     expect(c.revenue).toBe(null);   // fmtIntParens(null) → "—"
     expect(c.evRev).toBe(null);
-    expect(c.mktCap).toBe(null);
-    expect(c.ev).toBe(null);
+    expect(c.mktCap).toBe(12750);   // price × shares does not depend on revenue
+    expect(c.ev).toBe(12950);
     expect(c.fcfMargin).toBe(null);
   });
 
@@ -32,12 +32,12 @@ describe('SectionComparables.buildCompany — Stage 17 revenue null-honesty', ()
     expect(c.evRev).toBeGreaterThan(0);
   });
 
-  it('mktCapSane UNCHANGED (defect #5 untouched): mktCap/EV withheld for BOTH null and 0 revenue', () => {
-    // `rev > 0` is false for null AND 0, so mktCapSane is identical either way — the fix does not move #5.
+  it('Fix 22: equity value and EV stay on the slide for null and 0 revenue; EV / revenue has no denominator', () => {
     const absent = buildCompany('PEER', peer({ revenue: undefined }), false, 'Peer');
     const zero   = buildCompany('PEER', peer({ revenue: 0 }), false, 'Peer');
-    expect(absent.mktCap).toBe(null);
-    expect(zero.mktCap).toBe(null);
-    expect(absent.evRev).toBe(zero.evRev);   // both null — byte-identical behavior
+    expect(absent.mktCap).toBe(12750);
+    expect(zero.mktCap).toBe(12750);
+    expect(absent.evRev).toBe(null);
+    expect(zero.evRev).toBe(null);
   });
 });
