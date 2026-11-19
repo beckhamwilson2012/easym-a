@@ -29,10 +29,11 @@ export function oneTimeItems(u) {
   return out;
 }
 
-export const oneTimeText = (company, item, period) =>
-  `${company} GAAP net income includes a ${money(item.value)} ${item.name}${period ? ` (${period})` : ''}; the GAAP result reflects it. See Non-GAAP.`;
+// "See Non-GAAP" only when this deck has a Non-GAAP view to see (Fix 23): seeNonGaap is the toggle's own availability.
+export const oneTimeText = (company, item, period, seeNonGaap = false) =>
+  `${company} GAAP net income includes a ${money(item.value)} ${item.name}${period ? ` (${period})` : ''}; the GAAP result reflects it.${seeNonGaap ? ' See Non-GAAP.' : ''}`;
 
 // Both companies' flags for the deal, each with its sentence. companies = [{ name, unusual, period }].
-export function oneTimeNotes(companies) {
-  return companies.flatMap((c) => oneTimeItems(c.unusual).map((item) => ({ ...item, company: c.name, period: c.period, text: oneTimeText(c.name, item, c.period) })));
+export function oneTimeNotes(companies, { seeNonGaap = false } = {}) {
+  return companies.flatMap((c) => oneTimeItems(c.unusual).map((item) => ({ ...item, company: c.name, period: c.period, text: oneTimeText(c.name, item, c.period, seeNonGaap) })));
 }

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { pnlFetch } from '../sections/SectionProFormaPL';
 import { buildDeckModel } from '../../../lib/deckModel';
 import { dealVerdict } from '../../../lib/dealVerdict';
+import { nonGaapAvailability } from '../../../lib/reportingBasis';
 
 // The verdict for Deal Summary and Executive Summary. Forecast columns come from the same cached /api/pnl fetch
 // slide 8 reads, so the ladder's forward EPS test is slide 8's own row.
@@ -21,6 +22,9 @@ export function useDealVerdict({ deal, acquirer, target, model }) {
     acquirerFwd: fwd(pnl.a), targetFwd: fwd(pnl.b), fwdLoading: pnl.loading,
     acquirerName: aTk || acquirer?.name, targetName: bTk || target?.name,
     acquirerDisplayName: acquirer?.name, targetDisplayName: target?.name,
+    // The toggle's own test (reportingBasis.nonGaapAvailability) on the payloads the deck already carries (Fix 23).
+    nonGaapAvailable: nonGaapAvailability({ ngA: acquirer?.nonGaap, ngB: target?.nonGaap, tickerA: aTk, tickerB: bTk,
+      privateA: !!deal?._inputs?.companyAPrivate, privateB: !!deal?._inputs?.companyBPrivate }).available,
   });
 }
 

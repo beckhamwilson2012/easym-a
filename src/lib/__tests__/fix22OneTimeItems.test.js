@@ -12,7 +12,9 @@ describe('the rule', () => {
   test('a tax benefit above 25% of |pre-tax income| flags, with the filed amount', () => {
     const [f] = oneTimeItems(lyft);
     expect(f).toMatchObject({ key: 'incomeTaxBenefit', name: 'income tax benefit' });
-    expect(oneTimeText('Lyft, Inc.', f, 'LTM to Sep 30, 2026')).toBe('Lyft, Inc. GAAP net income includes a $2,854M income tax benefit (LTM to Sep 30, 2026); the GAAP result reflects it. See Non-GAAP.');
+    expect(oneTimeText('Lyft, Inc.', f, 'LTM to Sep 30, 2026', true)).toBe('Lyft, Inc. GAAP net income includes a $2,854M income tax benefit (LTM to Sep 30, 2026); the GAAP result reflects it. See Non-GAAP.');
+    // Fix 23: no Non-GAAP view on the deck → the sentence ends after "reflects it."
+    expect(oneTimeText('Lyft, Inc.', f, 'LTM to Sep 30, 2026')).toBe('Lyft, Inc. GAAP net income includes a $2,854M income tax benefit (LTM to Sep 30, 2026); the GAAP result reflects it.');
   });
   test('tax is tested only as a benefit: ordinary tax expense never flags', () => {
     expect(oneTimeItems({ netIncome: 790, incomeTax: 210, pretaxIncome: 1000, items: [] })).toEqual([]);
@@ -90,6 +92,8 @@ describe('on the verdict', () => {
     const without = dealVerdict(args(deal({ companyBUnusualItems: null })));
     expect(v.oneTimeNotes[0].text).toContain('$2,854M income tax benefit');
     expect(verdictFlags(v).some((f) => f.text.startsWith('Lyft, Inc. GAAP net income includes a $2,854M'))).toBe(true);
+    expect(v.oneTimeNotes[0].text.endsWith('the GAAP result reflects it.')).toBe(true);
+    expect(dealVerdict({ ...args(d), nonGaapAvailable: true }).oneTimeNotes[0].text.endsWith('reflects it. See Non-GAAP.')).toBe(true);
     const { oneTimeNotes: _, ...rest } = v;
     expect(rest).toEqual(without);
     expect(d._results.proFormaEPS).toBe(deal({ companyBUnusualItems: null })._results.proFormaEPS);

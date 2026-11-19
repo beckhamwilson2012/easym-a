@@ -94,7 +94,7 @@ export function dealVerdict(args) {
   const notes = oneTimeNotes([
     { name: args.acquirerDisplayName || args.acquirerName || 'The acquirer', unusual: inputs.companyAUnusualItems, period: inputs.companyAPeriodLabel },
     { name: args.targetDisplayName || args.targetName || 'The target', unusual: inputs.companyBUnusualItems, period: inputs.companyBPeriodLabel },
-  ]);
+  ], { seeNonGaap: args.nonGaapAvailable === true });
   return notes.length ? { ...v, oneTimeNotes: notes } : v;
 }
 
