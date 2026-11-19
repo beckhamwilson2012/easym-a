@@ -16,6 +16,9 @@ const EPS_CONCEPTS = ['EarningsPerShareDiluted'];
 const TO_COMMON = ['NetIncomeLossAvailableToCommonStockholdersDiluted', 'NetIncomeLossAvailableToCommonStockholdersBasic'];
 const NON_GAAP = /non-?gaap|adjusted|core|comparable|pro\s*forma/i;
 const QUARTER_TEXT = /three\s+months|fourth\s+quarter|\bq4\b|quarter\s+ended|1[2-7]\s+weeks/i;
+// A per-share row that names net income but not "diluted". PRU prints "Net income (loss) attributable to Prudential Financial,
+// Inc." under "Earnings per share of Common Stock:"; MET prints "Net income (loss) per share" and defines it as per diluted share.
+const NET_INCOME_ROW = /\bnet\s+(income|earnings|\(?loss\)?)/i;
 const r2 = (v) => Math.round(v * 100) / 100;
 
 function durations(ns, concepts, unit) {
@@ -60,6 +63,7 @@ function releaseQuarterEps(html, { fyEndYear, fyEps }) {
   // of the SAME row label must equal the 10-K's filed diluted EPS, or nothing is taken.
   const PER_SHARE = /per\s+(common\s+)?share|\beps\b/i;
   const quarters = [], years = [];
+  const unnamed = [];   // net income per-share rows that do not say "diluted": { value (Q4), year (full year) }, one per row
   for (const t of parseTables(html)) {
     t.rows.forEach((cells, ri) => {
       const { label, values } = splitRow(cells);
@@ -73,10 +77,17 @@ function releaseQuarterEps(html, { fyEndYear, fyEps }) {
       const SHARE_COUNT = /weighted|shares\s+used|number\s+of\s+shares/i;
       const perShare = PER_SHARE.test(label) ? !SHARE_COUNT.test(label)
         : !!(header && PER_SHARE.test(header.label) && !SHARE_COUNT.test(header.label));
-      if (!diluted || !perShare) return;
+      if (!perShare) return;
+      if (!diluted && (!NET_INCOME_ROW.test(label) || /basic/i.test(label))) return;
       if (NON_GAAP.test(label.replace(/^GAAP\b/i, '')) || headers.some((x) => NON_GAAP.test(x.label.replace(/^GAAP\b/i, '')))) return;
       const cols = rowColumns(t.rows, ri);
       if (!cols || cols.length < values.length) return;
+      if (!diluted) {
+        const at = (test) => values.find((v, i) => v.value != null && cols[i] && cols[i].year === fyEndYear && cols[i].period && test(cols[i].period));
+        const q = at((p) => !isFullYearText(p) && QUARTER_TEXT.test(p)), y = at(isFullYearText);
+        if (q && y) unnamed.push({ value: q.value, year: y.value, row: label });
+        return;
+      }
       const key = normLabel(label);
       values.forEach((v, i) => {
         const c = cols[i];
@@ -98,6 +109,13 @@ function releaseQuarterEps(html, { fyEndYear, fyEps }) {
     if (hits.length && hits.every((h) => h === hits[0])) {
       return { value: hits[0], row: `release text: "$${hits[0].toFixed(2)} per diluted share, for the fourth quarter of ${fyEndYear}"`, table: null };
     }
+  }
+  // No row says "diluted" and ties: a net income per-share row counts only when its OWN full-year figure is the 10-K's filed
+  // diluted EPS. That tie is what makes it the diluted figure (PRU: 9.99 diluted against 10.05 basic). Same row, as filed.
+  const tiedRows = unnamed.filter((r) => Math.abs(r.year - fyEps) <= 0.005);
+  if (tiedRows.length) {
+    if (tiedRows.some((r) => r.value !== tiedRows[0].value)) return { reason: 'the release prints two different Q4 diluted EPS figures' };
+    return { value: tiedRows[0].value, row: tiedRows[0].row, table: null };
   }
   return { reason: `no GAAP diluted EPS row in the release with a ${fyEndYear} quarter figure whose full-year figure ties to the filed FY EPS ${fyEps}` };
 }
