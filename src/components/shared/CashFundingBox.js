@@ -15,6 +15,8 @@ function Row({ label, value, strong, testId }) {
 }
 
 // Shows the deal model's own sources-of-funds result (dealCalc.acquisitionNewDebt). Displays it, computes nothing.
+// f.bank is dealCalc's one exemption (fundingExempt: the deck's bank test or both companies on the insurer list). It does not
+// say which, so the box names the class both share (Fix 23): an insurer deal no longer reads "Bank deal".
 export function CashFundingBox({ funding, targetName }) {
   const [open, setOpen] = useState(false);
   const f = funding;
@@ -29,7 +31,7 @@ export function CashFundingBox({ funding, targetName }) {
         <div data-testid="cash-box" style={{ background: '#F9FAFB', border: '1px solid #E5E7EB', borderRadius: 6, padding: '6px 10px', marginTop: 6, fontSize: 12 }}>
           {f?.bank ? (
             <div style={{ color: '#6B7280', lineHeight: 1.4 }}>
-              Bank deal: cash on hand is not used, so the whole cash part ({money(f.cashConsideration)}) is new debt.
+              Financial institution deal: cash on hand is not used, so the whole cash part ({money(f.cashConsideration)}) is new debt.
             </div>
           ) : (
             <>
