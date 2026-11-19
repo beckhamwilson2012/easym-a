@@ -7,6 +7,14 @@
 // release (8-K item 2.02, EX-99), three-month column, and accepted only when the SAME row's full-year figure equals the
 // 10-K's filed diluted EPS. HNGE: Q4 2025 $0.37 (release 0001628280-26-006826) + 9M 2026 $1.58 (10-Q) = $1.95.
 // Any leg missing → null with the reason.
+//
+// Fix 22/23 order, one reader:
+//   (a) the sum of four filed quarters, above (unchanged for every company it resolves);
+//   (b) otherwise the standard LTM, every figure filed diluted EPS: the fiscal year (10-K) + the current year-to-date (latest
+//       10-Q) − the prior-year year-to-date, taken from the comparative column of that SAME 10-Q (it may be restated);
+//       periods matched by start and end dates, never by labels;
+//   (c) otherwise null with both reasons. A stock split or a restated share count inside the window also gives null.
+//   EPS is never computed from net income ÷ shares.
 
 const { parseTables, splitRow, rowColumns, isFullYearText } = require('./nonGaapTables');
 
@@ -20,6 +28,18 @@ const QUARTER_TEXT = /three\s+months|fourth\s+quarter|\bq4\b|quarter\s+ended|1[2
 // Inc." under "Earnings per share of Common Stock:"; MET prints "Net income (loss) per share" and defines it as per diluted share.
 const NET_INCOME_ROW = /\bnet\s+(income|earnings|\(?loss\)?)/i;
 const r2 = (v) => Math.round(v * 100) / 100;
+const usd = (v) => `${v < 0 ? '(' : ''}$${Math.abs(v).toFixed(2)}${v < 0 ? ')' : ''}`;
+// Comparability checks for (b). FY − prior YTD is only a quarter's EPS when both are per-share on about the same share count.
+//   • any non-zero split fact dated inside the window;
+//   • a diluted share count for one of the three periods that two filings report more than 20% apart (a retroactive split);
+//   • the three periods' diluted share counts more than 20% apart from each other (an IPO, a split, a large issuance):
+//     VIA, IPO September 2025, averaged 16.8M diluted shares over 9M 2025, 32.9M over FY2025 and 81.4M over 9M 2026, and
+//     FY + YTD − prior YTD gives +$0.79 for a loss-making company;
+//   • no filed diluted share count for one of the periods, so comparability cannot be confirmed.
+// Each gives null with the reason. The counts are only checked, never used in the figure.
+const SPLIT_CONCEPTS = ['StockholdersEquityNoteStockSplitConversionRatio1', 'StockholdersEquityNoteStockSplitConversionRatio', 'StockIssuedDuringPeriodSharesStockSplits'];
+const DILUTED_SHARES = ['WeightedAverageNumberOfDilutedSharesOutstanding', 'WeightedAverageNumberOfShareOutstandingBasicAndDiluted'];
+const SHARE_SPREAD = 1.2;
 
 function durations(ns, concepts, unit) {
   const out = [];
@@ -131,7 +151,63 @@ const qLabel = (end) => { const m = Number(end.slice(5, 7)); return `${end.slice
 
 // LTM EPS from filed legs. readRelease() → { html, accession } | null, called only when Q4 is not in companyfacts.
 // Returns { value, label, legs } or { value: null, reason }.
-async function resolveLtmEps(ns, periods, { fyEps, readRelease }) {
+// (b) Pure: FY + current YTD − prior YTD, all filed diluted EPS. { value, label, legs } or { value: null, reason }.
+function standardLtmEps(ns, periods) {
+  const { annual, latestInterim: li, priorInterim: pi } = periods;
+  if (!annual?.start || !li?.start || !pi?.start) return { value: null, reason: 'the LTM periods are not dated' };
+  const eps = durations(ns, EPS_CONCEPTS, 'USD/shares');
+  if (!eps.length) return { value: null, reason: 'no diluted EPS is tagged' };
+  const fy = valueFor(eps.filter((e) => /^10-K/.test(e.form)), annual.start, annual.end);
+  if (!fy) return { value: null, reason: `no filed FY diluted EPS for ${annual.start} – ${annual.end}` };
+  const ytd = valueFor(eps.filter((e) => /^10-Q/.test(e.form)), li.start, li.end);
+  if (!ytd) return { value: null, reason: `no filed year-to-date diluted EPS for ${li.start} – ${li.end}` };
+  const prior = valueFor(eps.filter((e) => e.accn === ytd.accn), pi.start, pi.end);
+  if (!prior) return { value: null, reason: `the latest 10-Q (${ytd.accn}) files no prior-year diluted EPS for ${pi.start} – ${pi.end}` };
+  const from = annual.start, to = li.end;
+  for (const c of SPLIT_CONCEPTS) {
+    for (const e of Object.values(ns[c]?.units || {}).flat()) {
+      if (e.val && e.end >= from && e.end <= to) return { value: null, reason: `a stock split is filed inside the LTM window (${c} ${e.val}, ${e.end})` };
+    }
+  }
+  // The first share concept that is filed for all three periods (latest filing of each), as with the EPS legs.
+  const count = (c, p) => valueFor(durations(ns, [c], 'shares'), p.start, p.end);
+  const concept = DILUTED_SHARES.find((c) => [annual, li, pi].every((p) => count(c, p)));
+  if (!concept) return { value: null, reason: 'no diluted share count is filed for all three periods, so FY and YTD EPS cannot be confirmed comparable' };
+  for (const p of [annual, li, pi]) {
+    // A count tagged in thousands in one filing (ECHO: 287,362 and 287,362,000 for the same nine months) is a unit difference,
+    // not a restatement: each value is put on the latest filing's scale by a power of 1,000 before comparing.
+    const filed = durations(ns, [concept], 'shares').filter((e) => Math.abs(days(e.start, p.start)) <= 3 && Math.abs(days(e.end, p.end)) <= 3);
+    const ref = count(concept, p).val;
+    const v = filed.map((e) => { let x = e.val; while (x > 0 && x * 1000 <= ref * 1.5) x *= 1000; while (x / 1000 >= ref / 1.5) x /= 1000; return x; });
+    if (Math.max(...v) > SHARE_SPREAD * Math.min(...v)) {
+      return { value: null, reason: `the diluted share count for ${p.start} – ${p.end} is filed both as ${Math.min(...v).toLocaleString('en-US')} and ${Math.max(...v).toLocaleString('en-US')} (a split or share-class change)` };
+    }
+  }
+  const [sFy, sYtd, sPrior] = [annual, li, pi].map((p) => count(concept, p).val);
+  if (Math.max(sFy, sYtd, sPrior) > SHARE_SPREAD * Math.min(sFy, sYtd, sPrior)) {
+    const m = (v) => `${(v / 1e6).toFixed(1)}M`;
+    return { value: null, reason: `diluted shares moved inside the window (FY ${m(sFy)}, YTD ${m(sYtd)}, prior YTD ${m(sPrior)}), so FY and YTD EPS are not comparable` };
+  }
+  const value = r2(fy.val + ytd.val - prior.val);
+  const months = Math.round(days(li.end, li.start) / 30.44);
+  const label = `LTM EPS = FY${annual.end.slice(2, 4)} + ${months}M YTD − prior YTD (filed): ${usd(fy.val)} + ${usd(ytd.val)} − ${usd(prior.val)}`;
+  return { value, label, legs: [
+    { period: `fiscal year to ${annual.end}`, value: fy.val, source: `${fy.form} ${fy.accn}` },
+    { period: `${months} months to ${li.end}`, value: ytd.val, source: `${ytd.form} ${ytd.accn}` },
+    { period: `less ${months} months to ${pi.end} (comparative)`, value: -prior.val, source: `${prior.form} ${prior.accn}` },
+  ] };
+}
+
+// (a), then (b): the one LTM EPS. Both reasons are kept when neither resolves.
+async function resolveLtmEps(ns, periods, opts) {
+  const a = await quarterSumLtmEps(ns, periods, opts);
+  if (a.value != null) return a;
+  const b = standardLtmEps(ns, periods);
+  if (b.value != null) return b;
+  return { value: null, reason: `four filed quarters: ${a.reason}; FY + YTD − prior YTD: ${b.reason}` };
+}
+
+async function quarterSumLtmEps(ns, periods, { fyEps, readRelease }) {
   const legs = filedEpsLegs(ns, periods);
   if (legs.reason) return { value: null, reason: legs.reason };
   let q4 = legs.q4 ? { value: legs.q4.val, source: `${legs.q4.form} ${legs.q4.accn}` } : null;
@@ -147,7 +223,6 @@ async function resolveLtmEps(ns, periods, { fyEps, readRelease }) {
     { period: `quarter to ${legs.annualEnd}`, value: q4.value, source: q4.source },
     { period: `${legs.ytdQuarters * 3} months to ${legs.ytd.end}`, value: legs.ytd.val, source: `${legs.ytd.form} ${legs.ytd.accn}` }];
   const value = r2(parts.reduce((s, p) => s + p.value, 0));
-  const usd = (v) => `${v < 0 ? '(' : ''}$${Math.abs(v).toFixed(2)}${v < 0 ? ')' : ''}`;
   const label = `sum of 4 filed quarters: ${parts.map((p) => `${p.period} ${usd(p.value)}`).join(' + ')}`;
   return { value, label, legs: parts };
 }
@@ -171,4 +246,4 @@ function ltmEpsNumerator(ns, periods) {
   return null;
 }
 
-module.exports = { filedEpsLegs, releaseQuarterEps, resolveLtmEps, epsNumeratorAt, ltmEpsNumerator };
+module.exports = { filedEpsLegs, releaseQuarterEps, resolveLtmEps, standardLtmEps, epsNumeratorAt, ltmEpsNumerator };
