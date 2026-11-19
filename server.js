@@ -34,6 +34,7 @@ const { extractPage } = require('./server/services/extractorAgent');    // Phase
 const { validate: validateExtraction } = require('./server/services/validator'); // Phase 4 — pure-JS validator
 const { mapFields } = require('./server/services/fieldMapper');         // Phase 5 — extraction → 6 fields + page cites
 const { readNonGaapTables, reconcileCheck, fullYearReconciliation } = require('./server/services/nonGaapTables'); // non-GAAP from the exhibit's own reconciliation tables (no model) + the one reconcile check
+const { unusualItemsFy, unusualItemsLtm } = require('./server/services/unusualItems'); // filed tax, impairment and gain/loss figures behind the GAAP one-time flag
 const { adjustedComponents, disclosedNonGaapTaxRate, taxEvidence } = require('./server/services/adjustedComponents'); // filed inputs of a computed adjusted figure (Fix 13); the arithmetic is src/lib/computedAdjusted
 const filingInstance = require('./server/services/filingInstance');
 const { classifySector, SECTORS: CLASSIFIER_SECTORS } = require('./server/services/classifierAgent'); // Phase 9 — Haiku sector classifier (private valuation)
@@ -920,6 +921,9 @@ async function fetchFromEDGAR(symbol, cik) {
   if (!useIfrs && ltm && ltm.trusted && ltm.basis !== 'latest-10-K' && ltmRaw && ltmRaw.periods) {
     Object.assign(ltm, await filedLtmEps(symbol, cik, gaap, ltmRaw, currentEps, revenueEntry?.end ?? null));
   }
+  // One-time items and tax, on the same periods as each net income below. US-GAAP tags only; an IFRS filer has none here.
+  const unusualFy = useIfrs ? null : unusualItemsFy(gaap, revenueEntry?.end ?? null);
+  if (!useIfrs && ltm && ltm.trusted) ltm.unusualItems = ltm.basis !== 'latest-10-K' && ltmRaw && ltmRaw.periods ? unusualItemsLtm(gaap, ltmRaw.periods) : unusualFy;
 
   const edgarResult = {
     name:           cleanEntityTitle(titleBySymbol[symbol]) || facts.entityName || symbol,  // registry title (BAC fix) > entityName (can be a subsidiary shell) > ticker
@@ -951,6 +955,7 @@ async function fetchFromEDGAR(symbol, cik) {
     // Last 4 annual revenues (oldest→newest) for the §6 multi-year revenue-trajectory line chart.
     revenueHistory: annualSeries((useIfrs ? ifrs : gaap)[revenueConcept], 'USD', 4),
     netIncome:      netIncome != null ? inM(netIncome) : null,
+    unusualItems:   unusualFy,            // fiscal-year tax and one-time items for the GAAP flag (src/lib/oneTimeItems); LTM's are on ltm
     // The filed EPS numerator: net income (loss) attributable to common stockholders for this fiscal year, when the filing reports
     // it (HNGE FY2025 $(424.087)M vs net loss $(528.261)M). Pro forma EPS uses this so it sits on the same basis as reported EPS.
     epsNetIncome:   (() => { const n = useIfrs ? null : epsNumeratorAt(gaap, revenueEntry?.end); return n ? inM(n.value) : null; })(),

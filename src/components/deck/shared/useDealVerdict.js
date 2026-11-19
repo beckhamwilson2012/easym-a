@@ -20,6 +20,7 @@ export function useDealVerdict({ deal, acquirer, target, model }) {
     deal, model: model || buildDeckModel({ target, acquirer, deal }),
     acquirerFwd: fwd(pnl.a), targetFwd: fwd(pnl.b), fwdLoading: pnl.loading,
     acquirerName: aTk || acquirer?.name, targetName: bTk || target?.name,
+    acquirerDisplayName: acquirer?.name, targetDisplayName: target?.name,
   });
 }
 
@@ -35,6 +36,9 @@ export function VerdictBlock({ verdict, dark, size = 28 }) {
         <div data-testid="deal-verdict-tag" style={{ display: 'inline-block', marginTop: 4, fontSize: 11, fontWeight: 600, color: dark ? '#A8C4DC' : '#4B5563', border: `1px solid ${dark ? '#3B5B85' : '#D1D5DB'}`, borderRadius: 4, padding: '1px 6px' }}>{verdict.tag}</div>
       )}
       {verdict.line && <div data-testid="deal-verdict-line" style={{ marginTop: 4, fontSize: 12, color: dark ? '#C7D7EA' : '#6B7280' }}>{verdict.line}</div>}
+      {(verdict.oneTimeNotes || []).map((n) => (
+        <div key={`${n.company}-${n.key}`} data-testid="deal-verdict-one-time" style={{ marginTop: 4, fontSize: 12, fontWeight: 600, color: dark ? '#FCD34D' : '#B45309' }}>⚠ {n.text}</div>
+      ))}
     </div>
   );
 }

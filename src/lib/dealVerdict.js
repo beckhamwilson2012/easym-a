@@ -3,6 +3,7 @@ import { accretionVerdict } from '../components/deck/shared/deckTokens';
 import { NON_GAAP, computedSides } from './reportingBasis';
 import { selectForwardYears, slotName, CONSENSUS_BASIS, synergyForSlot } from './forwardYears';
 import { DIFFERENT_BASES } from './companyBasis';
+import { oneTimeNotes } from './oneTimeItems';
 
 // The deal verdict ladder. Deal Summary and Executive Summary both render this one result. It uses the first test
 // that this deal's own data can compute, and names the missing input when none can:
@@ -84,7 +85,20 @@ const verdictText = (t) => `${VERDICT_TEXT[t.verdict]} (${t.pct != null ? fmtSig
 
 // deal: the deck's deal object (deal._inputs, deal._results, deal.synergies). model: buildDeckModel's output.
 // acquirerFwd / targetFwd: the forecast columns of /api/pnl (slide 8's source), or null while loading.
-export function dealVerdict({ deal, model, acquirerFwd, targetFwd, fwdLoading, acquirerName, targetName }) {
+// Fix 22 Task 3: a GAAP deck's verdict carries the one-time items inside either company's GAAP net income. They are printed beside
+// it and in the risk flags; the ladder's result is not touched. A Non-GAAP deck is not on those figures, so it carries none.
+export function dealVerdict(args) {
+  const v = verdictLadder(args);
+  const inputs = args.deal?._inputs || {};
+  if (inputs.reportingBasis === NON_GAAP) return v;
+  const notes = oneTimeNotes([
+    { name: args.acquirerDisplayName || args.acquirerName || 'The acquirer', unusual: inputs.companyAUnusualItems, period: inputs.companyAPeriodLabel },
+    { name: args.targetDisplayName || args.targetName || 'The target', unusual: inputs.companyBUnusualItems, period: inputs.companyBPeriodLabel },
+  ]);
+  return notes.length ? { ...v, oneTimeNotes: notes } : v;
+}
+
+function verdictLadder({ deal, model, acquirerFwd, targetFwd, fwdLoading, acquirerName, targetName }) {
   const A = acquirerName || 'the acquirer';
   const T = targetName || 'the target';
   const inputs = deal?._inputs || {};
@@ -284,6 +298,12 @@ function withYears(line, used, skipped = []) {
 // when this list and the structural flags are both empty: a dilutive verdict, synergies short of the premium, a
 // breakeven above the synergies entered, or a verdict that can't be computed are flags themselves, with their numbers.
 export function verdictFlags(v) {
+  const out = ladderFlags(v);
+  for (const n of v?.oneTimeNotes || []) out.push({ level: 'warning', icon: '⚠️', text: n.text });
+  return out;
+}
+
+function ladderFlags(v) {
   const out = [];
   if (!v || v.text === '—' && v.line === 'Forward estimates are still loading.') return out;
   if (v.step == null) {
