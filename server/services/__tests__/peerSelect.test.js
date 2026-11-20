@@ -287,6 +287,19 @@ test('rule 5: an override with fewer than 3 survivors shows them with the reason
   assert.match(r.reason, /^Only 1 company passed the peer screen \(need 3\): of the hand-set list, /);
 });
 
+test('rule 5: an override whose every name fails keeps source "override" (the slide says set by hand), with no peers', async () => {
+  const { sel } = build((w) => {
+    co(w, 'SMALL', { cap: 1e9 });
+    w.profiles = { SMALL: { exchange: 'NYSE', currency: 'USD', marketCap: 1e9 } };
+    w.overrides = { TGT: ['ACQ', 'SMALL'] };
+  });
+  const r = await sel.selectPeers('TGT', { acquirer: 'ACQ' });
+  assert.deepStrictEqual(r.peers, []);
+  assert.strictEqual(r.source, 'override');
+  assert.strictEqual(r.trust, 'untrusted');
+  assert.match(r.reason, /^Only 0 companies passed the peer screen \(need 3\): of the hand-set list, /);
+});
+
 test('no target market cap → no peer set, not cached (the band is never applied to a guessed cap)', async () => {
   const { sel, w } = build((w) => { co(w, 'P1'); w.stockPeers = ['P1']; }, { targetCap: null });
   const r = await sel.selectPeers('TGT');

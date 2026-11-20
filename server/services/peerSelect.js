@@ -340,7 +340,7 @@ function createPeerSelector(deps) {
       const head = kept.length === 0 && base.targetForeign
         ? 'No comparable US-listed peers found'
         : `Only ${kept.length} compan${kept.length === 1 ? 'y' : 'ies'} passed the peer screen (need ${MIN_PEERS})`;
-      return finish({ ...base, screened, peers, peerSources, source: kept.length ? label : 'none', trust: 'untrusted',
+      return finish({ ...base, screened, peers, peerSources, source: (kept.length || isOverride) ? label : 'none', trust: 'untrusted',   // an emptied hand-set list is still hand-set
         reason: `${head}: ${whyFew(decided, isOverride)}` });
     }
     return finish({ ...base, screened, peers, peerSources, source: label, trust: 'trusted', reason: null });

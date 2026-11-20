@@ -51,3 +51,12 @@ test('Fix 24: a hand-set peer set says so in the header, not "Auto-selected"', a
   expect(container.textContent).toMatch(/Peers: TDOC, PGNY, HIMS \(hand-set\)/);
   expect(container.textContent).not.toMatch(/Auto-selected/);
 });
+
+test('Fix 24: a hand-set list that the screen emptied shows the banner, and the header still says "Set by hand"', async () => {
+  const reason = "Only 0 companies passed the peer screen (need 3): of the hand-set list, 3 outside 0.2×–5× the target's market cap (SNAP, PINS, MTCH)";
+  mockFetch(() => Promise.resolve({ json: () => Promise.resolve({ peers: [], peerSources: {}, trust: 'untrusted', source: 'override', reason }) }));
+  const { container } = render(<SectionComparables target={{ ticker: 'META', name: 'Meta' }} acquirer={{ ticker: 'GOOGL', name: 'Alphabet' }} deal={deal} />);
+  await waitFor(() => expect(screen.getAllByTestId('peers-hidden').length).toBeGreaterThan(0));
+  expect(container.textContent).toMatch(/Set by hand/);
+  expect(container.textContent).not.toMatch(/Auto-selected/);
+});
