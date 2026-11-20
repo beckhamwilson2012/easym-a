@@ -110,7 +110,7 @@ const NONGAAP_CACHE_TTL_MS = 86_400_000; // 24h
 // Idle time only, so a long download that keeps sending is untouched.
 const HTTP_IDLE_TIMEOUT_MS = 30_000;
 
-function get(url, extraHeaders = {}) {
+function get(url, extraHeaders = {}, { text = false } = {}) {
   return new Promise((resolve, reject) => {
     const parsed = new URL(url);
     const req = https.get(
@@ -135,6 +135,7 @@ function get(url, extraHeaders = {}) {
         let data = '';
         stream.on('data', (chunk) => (data += chunk));
         stream.on('end', () => {
+          if (text) return resolve(data);   // Fix 24: the EDGAR company list by SIC is Atom XML
           try { resolve(JSON.parse(data)); }
           catch (e) { reject(new Error('JSON parse error')); }
         });
@@ -151,6 +152,7 @@ function get(url, extraHeaders = {}) {
 let tickerCache = null;
 let tickerListLoadedAt = 0;   // when company_tickers.json was read (it is read once per server start)
 let cikBySymbol = {};
+let tickersByCik = {};    // CIK → its tickers in SEC list order (Fix 24: one peer entry per registrant, GOOGL/GOOG)
 let titleBySymbol = {};   // EDGAR ticker-registry title (authoritative) — used for the DISPLAY name, since
                           // companyfacts.entityName can be a subsidiary shell (BAC's CIK 70858 entityName
                           // = "BofA Finance LLC" though the registry title is "BANK OF AMERICA CORP /DE/").
@@ -222,18 +224,23 @@ const SECTOR_PEERS = {
   '5813': ['MCD', 'DRI', 'TXRH', 'CAKE', 'EAT', 'BLMN'],     // drinking places — same restaurant pool
 };
 
-// FMP profile industry for a ticker — the peer picker's same-industry screener key.
-const fmpIndustryCache = new Map(); // ticker → raw FMP industry string | null
-async function fmpIndustryFor(ticker) {
-  if (fmpIndustryCache.has(ticker)) return fmpIndustryCache.get(ticker);
-  let industry = null;
+// FMP profile for a ticker — the peer picker's industry, sector, exchange and currency (Fix 24; was industry only).
+const fmpProfileCache = new Map(); // ticker → { industry, sector, marketCap, exchange, currency, country, isAdr, isActivelyTrading } | null
+async function fmpProfileFor(ticker) {
+  if (fmpProfileCache.has(ticker)) return fmpProfileCache.get(ticker);
+  let prof = null;
   try {
     const r = await get(`https://financialmodelingprep.com/stable/profile?symbol=${encodeURIComponent(ticker)}&apikey=${FMP_KEY}`);
     const j = Array.isArray(r) ? r[0] : r;
-    industry = (j && j.symbol && j.industry) ? String(j.industry) : null;
-    fmpIndustryCache.set(ticker, industry); // cache only a completed lookup; a failed fetch retries next time
-  } catch (_) { industry = null; }
-  return industry;
+    prof = (j && j.symbol) ? {
+      industry: j.industry ? String(j.industry) : null, sector: j.sector ? String(j.sector) : null,
+      marketCap: Number.isFinite(j.marketCap) ? j.marketCap : (Number.isFinite(j.mktCap) ? j.mktCap : null),
+      exchange: j.exchange || j.exchangeShortName || null, currency: j.currency || null, country: j.country || null,
+      isAdr: j.isAdr === true, isActivelyTrading: j.isActivelyTrading,
+    } : null;
+    fmpProfileCache.set(ticker, prof); // cache only a completed lookup; a failed fetch retries next time
+  } catch (_) { prof = null; }
+  return prof;
 }
 
 // Map a target SIC → a curated sector pool. Returns { pool, exact } (or null if no match):
@@ -261,6 +268,7 @@ async function loadTickers() {
   tickerListLoadedAt = Date.now();
   for (const entry of tickerCache) {
     cikBySymbol[entry.symbol] = entry.cik;
+    (tickersByCik[entry.cik] = tickersByCik[entry.cik] || []).push(entry.symbol);
     titleBySymbol[entry.symbol] = entry.name;   // e.title from company_tickers.json (authoritative registry name)
   }
 }
@@ -1705,27 +1713,41 @@ app.get('/api/prices/:ticker', async (req, res) => {
 });
 
 // ── Peer resolution ───────────────────────────────────────────────────────────
-// ONE path: server/services/peerSelect.js (FMP stock-peers + filters, SIC-matched screener backfill, hand-set
-// overrides first). Used by /api/peers (Comparables slide) and /api/sector-multiple. No SIC-cache matching, no
-// SECTOR_PEERS, no mega-cap default: fewer than 3 survivors → no peer set (trust 'untrusted'), with the reason.
+// ONE path: server/services/peerSelect.js — one rule for every target (Fix 24): FMP stock-peers plus EDGAR registrants
+// with the target's 4-digit SIC; same FMP industry or SIC; 0.2×–5× the target's USD market cap; US-listed, registered
+// (Fix 21's check) and with the data Comparables needs; hand-set overrides through the same filters except industry.
+// Used by /api/peers (Comparables slide) and /api/sector-multiple. Fewer than 3 → one widening step, then the peers that
+// exist with the reason (trust 'untrusted'). No SECTOR_PEERS, no default list.
 const { createPeerSelector } = require('./server/services/peerSelect');
+const { createSicCompanies } = require('./server/services/sicCompanies');
+const sicCompanies = createSicCompanies({ getText: (url) => get(url, {}, { text: true }) });
+const US_EXCHANGES = 'NYSE,NASDAQ,AMEX';
 const peerSelector = createPeerSelector({
   overrides: PEER_OVERRIDES,
   cikFor: (t) => cikBySymbol[t] || null,
-  fetchSubmissions: (cik) => get(`https://data.sec.gov/submissions/CIK${cik}.json`),
+  tickersForCik: (cik) => tickersByCik[cik] || [],
+  // The submissions JSON is the app's SIC source; the SIC it carries also seeds the SIC cache (fetchSubmissions' entry).
+  fetchSubmissions: async (cik) => {
+    const data = await get(`https://data.sec.gov/submissions/CIK${cik}.json`);
+    if (data && !sicCache.has(cik)) { sicCache.set(cik, { sic: data.sic ? String(data.sic) : null, sicDescription: data.sicDescription || null }); debouncedSicWrite(); }
+    return data;
+  },
   fmpStockPeers: async (t) => {
     if (!FMP_KEY) throw new Error('no FMP key');
     const r = await get(`https://financialmodelingprep.com/stable/stock-peers?symbol=${encodeURIComponent(t)}&apikey=${FMP_KEY}`);
     if (!Array.isArray(r)) throw new Error('unexpected stock-peers response');
     return r;
   },
-  fmpIndustry: (t) => fmpIndustryFor(t),
-  fmpScreener: async (industry) => {
+  fmpProfile: (t) => fmpProfileFor(t),
+  // Every actively traded company on a US exchange inside the size band, with FMP's USD market cap, industry and sector.
+  fmpUniverse: async (lo, hi) => {
     if (!FMP_KEY) throw new Error('no FMP key');
-    const r = await get(`https://financialmodelingprep.com/stable/company-screener?industry=${encodeURIComponent(industry)}&country=US&isEtf=false&isFund=false&limit=5000&apikey=${FMP_KEY}`);
+    const r = await get(`https://financialmodelingprep.com/stable/company-screener?marketCapMoreThan=${Math.floor(lo)}&marketCapLowerThan=${Math.ceil(hi)}&exchange=${US_EXCHANGES}&isEtf=false&isFund=false&isActivelyTrading=true&limit=10000&apikey=${FMP_KEY}`);
     if (!Array.isArray(r)) throw new Error('unexpected screener response');
     return r;
   },
+  sicCompanies: (sic) => sicCompanies.ciksForSic(sic),
+  registrationBlock: (t) => registrationBlock(t),   // Fix 21's check, unchanged: only a successful EDGAR answer blocks
   // The app's own market cap for the target: live price (/api/price) × /quote shares ($M → $). The same two
   // inputs the Comparables slide multiplies for the target column. Absent either → null, never estimated.
   targetMarketCap: async (t) => {
@@ -1736,12 +1758,16 @@ const peerSelector = createPeerSelector({
     const value = capM != null ? capM * 1e6 : null;
     return { value, detail: { price, priceSource: p?.source ?? null, sharesM: shares, sharesSource: q?.dataSource ?? null } };
   },
-  // Revenue the slide would show for this ticker (fiscal-year, or trusted LTM).
-  revenueAvailable: async (t) => {
-    const q = await quotePayload(t);
+  // What the slide needs for a peer column: a live price, a share count, and revenue (fiscal-year, or trusted LTM).
+  // A price that no source could return is transient (not cached), not "this company has no price".
+  dataAvailable: async (t) => {
+    let q, p;
+    try { [q, p] = await Promise.all([quotePayload(t), livePricePayload(t)]); }
+    catch (e) { console.warn(`[peers] ${t}: data check failed (${e.message})`); return { price: false, shares: false, revenue: false, transient: true }; }
     const fy = q && Number.isFinite(q.revenue);
     const ltm = q && q.ltm && q.ltm.trusted === true && Number.isFinite(q.ltm.revenue);
-    return !!(fy || ltm);
+    const price = !!(p && Number.isFinite(p.price) && p.price > 0);
+    return { price, shares: !!(q && Number.isFinite(q.shares) && q.shares > 0), revenue: !!(fy || ltm), transient: !price };
   },
 });
 
