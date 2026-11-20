@@ -1,5 +1,5 @@
 // Comparables never mix FY and LTM in one column unmarked: a cell that fell back from LTM to the fiscal year says so.
-import { buildCompany, comparablesCellText, anyFyFallback, fiscalYearLabel, FY_FALLBACK_NOTE, latestTenKLtmNote, grossFilingNote, peerSourceNote } from '../SectionComparables';
+import { buildCompany, comparablesCellText, anyFyFallback, fiscalYearLabel, FY_FALLBACK_NOTE, latestTenKLtmNote, grossFilingNote, peerSourceNote, peerFootnote } from '../SectionComparables';
 
 const pct = (v) => (v == null ? '—' : `${v.toFixed(1)}%`);
 const passthru = (v) => (v == null ? '—' : v);
@@ -97,18 +97,26 @@ describe('fix 3 task 5: no FMP-only gross margin', () => {
   });
 });
 
-describe('fix 8: each peer is labeled with its source on the footnote', () => {
-  test('FMP peers, SIC-matched backfill and hand-set peers are grouped in slide order', () => {
-    const note = peerSourceNote(['ZS', 'FFIV', 'SNPS', 'AKAM'], { ZS: 'fmp-peers', FFIV: 'fmp-peers', AKAM: 'fmp-peers', SNPS: 'fmp-industry-sic' }, '737');
-    expect(note).toBe('Peers: ZS, FFIV, AKAM (FMP peers); SNPS (FMP industry + SIC 737)');
+describe('fix 24: each peer is labeled with why it is a peer, in one footnote line', () => {
+  test('industry + SIC, industry, SIC and hand-set peers are grouped in slide order', () => {
+    const note = peerSourceNote(['RACE', 'PCAR', 'VIA', 'TDOC'], { RACE: 'industry-sic', PCAR: 'sic', VIA: 'industry', TDOC: 'override' }, null);
+    expect(note).toBe('Peers: RACE (industry + SIC match); PCAR (SIC match); VIA (industry match); TDOC (hand-set)');
   });
-  test('an override reads "set by hand"', () => {
-    expect(peerSourceNote(['OMDA', 'TDOC', 'PGNY'], { OMDA: 'override', TDOC: 'override', PGNY: 'override' }, null))
-      .toBe('Peers: OMDA, TDOC, PGNY (set by hand)');
+  test('a broadened peer names the step', () => {
+    expect(peerSourceNote(['P1', 'E7374'], { P1: 'industry-sic', E7374: 'broadened' }, { step: '3-digit SIC 737', why: 'only 1 company matched' }))
+      .toBe('Peers: P1 (industry + SIC match); E7374 (broadened: 3-digit SIC 737)');
   });
   test('only peers actually shown are labeled; nothing to label → no note', () => {
-    expect(peerSourceNote(['GSAT'], { GSAT: 'fmp-peers', VSAT: 'fmp-peers' }, '489')).toBe('Peers: GSAT (FMP peers)');
-    expect(peerSourceNote([], { GSAT: 'fmp-peers' }, '489')).toBeNull();
+    expect(peerSourceNote(['GSAT'], { GSAT: 'industry-sic', VSAT: 'sic' }, null)).toBe('Peers: GSAT (industry + SIC match)');
+    expect(peerSourceNote([], { GSAT: 'sic' }, null)).toBeNull();
     expect(peerSourceNote(['GSAT'], null, null)).toBeNull();
+  });
+  test('the footnote line adds why the screen widened and, under 3 peers, the reason', () => {
+    const b = { step: '3-digit SIC 371', why: 'only 2 companies matched the target\'s FMP industry or 4-digit SIC' };
+    expect(peerFootnote(['RACE', 'PCAR', 'X'], { RACE: 'industry-sic', PCAR: 'sic', X: 'broadened' }, b, null))
+      .toBe('Peers: RACE (industry + SIC match); PCAR (SIC match); X (broadened: 3-digit SIC 371). Broadened to 3-digit SIC 371 because only 2 companies matched the target\'s FMP industry or 4-digit SIC');
+    expect(peerFootnote(['RACE', 'PCAR'], { RACE: 'industry-sic', PCAR: 'sic' }, b, 'Only 2 companies passed the peer screen (need 3): 3 outside 0.2×–5× the target\'s market cap (F, HMC, TSLA)'))
+      .toBe('Peers: RACE (industry + SIC match); PCAR (SIC match). Only 2 companies passed the peer screen (need 3): 3 outside 0.2×–5× the target\'s market cap (F, HMC, TSLA)');
+    expect(peerFootnote([], {}, null, null)).toBeNull();
   });
 });
