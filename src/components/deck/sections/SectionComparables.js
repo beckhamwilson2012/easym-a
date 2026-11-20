@@ -239,16 +239,19 @@ export function anyFyFallback(metrics, cols) {
   return metrics.some((m) => m.fyKey && cols.some((c) => !c.loading && / FY\d{0,2}( ⚠)?$/.test(comparablesCellText(m, c))));
 }
 
-// Footnote label for each peer on the slide, grouped by why it is a peer (/api/peers `peerSources`, Fix 24): "industry +
-// SIC match", "industry match", "SIC match", "broadened: 3-digit SIC 371", or "hand-set". Only the peers actually shown.
-const PEER_SOURCE_TEXT = { 'industry-sic': 'industry + SIC match', industry: 'industry match', sic: 'SIC match', override: 'hand-set' };
+// Footnote label for each peer on the slide, grouped by why it is a peer (/api/peers `peerSources`, Fix 24): "FMP peer +
+// industry match", "industry + SIC match", "industry match", "SIC match", "broadened: size", "broadened: industry
+// (3-digit SIC 371)", or "hand-set". Only the peers actually shown.
+const PEER_SOURCE_TEXT = { 'fmp-industry': 'FMP peer + industry match', 'industry-sic': 'industry + SIC match', industry: 'industry match', sic: 'SIC match', 'broadened-size': 'broadened: size', override: 'hand-set' };
+const broadenedStep = (broadened, kind) => (Array.isArray(broadened) ? broadened.find((b) => b.kind === kind) : null);
 export function peerSourceNote(shownPeers, peerSources, broadened) {
   if (!shownPeers || !shownPeers.length || !peerSources) return null;
   const groups = [];
   for (const t of shownPeers) {
     const src = peerSources[t];
     if (!src) continue;
-    const label = src === 'broadened' ? `broadened: ${(broadened && broadened.step) || 'one step'}` : (PEER_SOURCE_TEXT[src] || src);
+    const ind = src === 'broadened-industry' ? broadenedStep(broadened, 'industry') : null;
+    const label = src === 'broadened-industry' ? `broadened: industry${ind ? ` (${ind.step})` : ''}` : (PEER_SOURCE_TEXT[src] || src);
     let g = groups.find((x) => x.label === label);
     if (!g) { g = { label, tickers: [] }; groups.push(g); }
     g.tickers.push(t);
@@ -260,7 +263,10 @@ export function peerSourceNote(shownPeers, peerSources, broadened) {
 // than 3 peers passed. One line; null when there is nothing to say.
 export function peerFootnote(shownPeers, peerSources, broadened, reason) {
   const parts = [peerSourceNote(shownPeers, peerSources, broadened)];
-  if (broadened && shownPeers.some((t) => peerSources && peerSources[t] === 'broadened')) parts.push(`Broadened to ${broadened.step} because ${broadened.why}`);
+  // Each widening step that put a shown peer on the slide, and why it ran (size first, then industry).
+  for (const b of (Array.isArray(broadened) ? broadened : [])) {
+    if (shownPeers.some((t) => peerSources && peerSources[t] === `broadened-${b.kind}`)) parts.push(`Broadened to ${b.step} because ${b.why}`);
+  }
   if (reason) parts.push(reason);
   const out = parts.filter(Boolean).join('. ');
   return out || null;
@@ -321,7 +327,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
   const [peerSource, setPeerSource]   = useState(null); // coverage tier from /api/peers (provenance only)
   const [peerTrust, setPeerTrust]     = useState(null); // 'trusted' | 'untrusted' — untrusted → suppress peer cols
   const [peerSources, setPeerSources] = useState(null); // per-peer source from /api/peers (footnote label)
-  const [peerBroadened, setPeerBroadened] = useState(null); // { step, why } when the screen widened one step (Fix 24)
+  const [peerBroadened, setPeerBroadened] = useState(null); // [{ kind: 'size'|'industry', step, why }] when the screen widened (Fix 24)
   const [peerReason, setPeerReason]   = useState(null); // why no peer set survived the screen
   const [customPeers, setCustomPeers] = useState(() => {
     if (!targetTicker) return null;
@@ -556,7 +562,7 @@ export function SectionComparables({ target, acquirer, deal, pageNum, exhibitLab
           <div style={{ fontSize: 10, color: '#78350F', lineHeight: 1.45 }}>
             {hiddenReason.charAt(0).toUpperCase() + hiddenReason.slice(1)}. The screen takes FMP's peer list and the SEC
             filers with the target's 4-digit SIC, and keeps US-listed, registered companies in the same FMP industry or SIC,
-            0.2×–5× the target's market cap, with a price, share count and revenue; with fewer than 3 it widens one step.
+            0.1×–10× the target's market cap, with a price, share count and revenue; with fewer than 3 it widens size, then industry.
             Rather than fill the slot with a default list, the peer columns are withheld; only {acquirerTicker ? 'the acquirer and target' : 'the target'} — real, deal-specific — are
             shown, and the sector-median EV/Revenue is likewise suppressed from the valuation. Use “Edit Peers” to
             set a custom comparable set, or see the target's latest 10-K for its stated peer group.

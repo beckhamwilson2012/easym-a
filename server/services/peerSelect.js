@@ -4,54 +4,63 @@
 // Every consumer of auto-selected peers (/api/peers → Comparables slide, /api/sector-multiple) calls
 // selectPeers() through server.js. There is no second picker and no default list.
 //
-// THE RULE (Fix 24). Every candidate that is not kept is recorded in `dropped` with the rule that dropped it.
+// THE RULE (Fix 24, as revised in its follow-up). Every candidate not kept is in `dropped` with the rule that dropped it.
 //   1. Candidates: FMP stock-peers for the target, plus the EDGAR registrants that carry the target's 4-digit SIC
 //      (EDGAR's company list by SIC; SIC from the same submissions JSON the app's SIC cache reads). A catch-all SIC
-//      (CATCH_ALL_SIC: 7389 business services, 6770 blank checks, 9995 non-operating) lists "anything", so its EDGAR
-//      list is not used and a shared catch-all SIC is not a match.
+//      (CATCH_ALL_SIC: 7389 business services, 6770 blank checks, 6798 REITs, 9995 non-operating) lists "anything", so
+//      its EDGAR list is not used and a shared catch-all SIC is not a match.
 //      A hand-set override (peerOverrides.js) replaces the candidates and the industry test (it IS the industry
-//      judgment); it passes through every other keep-filter below.
+//      judgment), and is exempt from the size band; it passes every other keep-filter below.
 //   2. Keep a candidate only if all of:
 //      a. same FMP industry, or same 4-digit SIC (not a catch-all)                        [not for overrides]
-//      b. market cap 0.2×–5× the target's, in USD: the candidate's cap is FMP's, from its screen of actively traded
+//      b. market cap 0.1×–10× the target's, in USD: the candidate's cap is FMP's, from its screen of actively traded
 //         companies on NYSE, Nasdaq or NYSE American (USD-quoted), so a cap in yen or won never meets a cap in dollars
-//      c. US-listed: on that screen AND in SEC company_tickers.json; and Fix 21's registration check does not block it
-//         (a failed check never blocks); and a 10-K/10-Q (or, see e, a 20-F/40-F) filed in the past 12 months
+//                                                                                         [not for overrides]
+//      c. US-listed: on that screen (or, for a hand-set name outside the band, on a US exchange per its FMP profile)
+//         AND in SEC company_tickers.json; Fix 21's registration check does not block it (a failed check never
+//         blocks); and a 10-K/10-Q (or, see e, a 20-F/40-F) filed in the past 12 months
 //      d. Comparables has its data: a live price, a share count and revenue in the app's own /quote
 //      e. a 20-F/40-F filer (an ADR) is a peer only of a foreign target (one that files 20-F/40-F), and only with the
 //         same FMP industry                                                               [not for overrides]
 //      f. not the acquirer or the target, and one entry per registrant (GOOGL/GOOG are one company: same CIK)
-//   3. Rank: same FMP industry AND same SIC first, then either one, then closeness of market cap (|ln(cap ÷ target)|),
-//      ticker as the tie-break. Keep up to 5.
-//   4. Fewer than 3: widen exactly one step and mark those peers 'broadened' with the reason:
+//   3. Rank: (a) in FMP's peer list AND same FMP industry; (b) same FMP industry AND same 4-digit SIC; (c) one of the
+//      two; within each tier, closeness of market cap (|ln(cap ÷ target)|), ticker as the tie-break. Keep up to 5.
+//   4. Fewer than 3: first widen the size band to 0.05×–20× ('broadened-size'); still fewer, take the one industry
+//      step inside that band ('broadened-industry'):
 //        target SIC specific → 3-digit SIC (the other codes of the target's SIC group, and stock-peers sharing it);
 //        target SIC catch-all or absent → the stock-peers in the same FMP sector whose industry shares its keyword
 //        ("Software - Application" → "Software").
 //      Still fewer than 3 → the peers there are, with the reason (trust 'untrusted', so no sector median uses them).
-//      Never filled with unrelated companies.
+//      Never filled with unrelated companies. Hand-set lists are never widened.
 //
 // Market cap: the target's is the app's own (live price × /quote shares, the figure the slide's target column shows),
 // passed in by server.js. Nothing here estimates or defaults a figure: a missing market cap, price, share count or
 // revenue drops the candidate, it never becomes 0.
 
-const BAND_LO = 0.2;
-const BAND_HI = 5;
+const BAND_LO = 0.1;
+const BAND_HI = 10;
+const WIDE_LO = 0.05;   // rule 4a, the size step
+const WIDE_HI = 20;
+const US_EXCHANGES = new Set(['NYSE', 'NASDAQ', 'AMEX']);
 const MAX_PEERS = 5;
 const MIN_PEERS = 3;
 const FILING_LOOKBACK_DAYS = 365;
 const DOMESTIC_FORMS = new Set(['10-K', '10-Q', '10-K/A', '10-Q/A', '10-KT', '10-KT/A']);
 const FOREIGN_FORMS = new Set(['20-F', '40-F', '20-F/A', '40-F/A']);
-// Catch-all SIC codes: a shared code says nothing about the business (Fix 24 brief, TRAPS).
-const CATCH_ALL_SIC = new Set(['7389', '6770', '9995']);
+// Catch-all SIC codes: a shared code says nothing about the business (Fix 24 brief, TRAPS; 6798 REITs in its follow-up:
+// towers, data centres, billboards and timber all file under it).
+const CATCH_ALL_SIC = new Set(['7389', '6770', '6798', '9995']);
 const SUBMISSIONS_TTL_MS = 24 * 60 * 60 * 1000;
 const RESULT_TTL_MS = 24 * 60 * 60 * 1000;
 
 // Footnote label per source (the slide prints these; SectionComparables.peerSourceNote).
 const SOURCE_LABEL = {
+  'fmp-industry': 'FMP peer + industry match',
   'industry-sic': 'industry + SIC match',
   industry: 'industry match',
   sic: 'SIC match',
-  broadened: 'broadened',
+  'broadened-size': 'broadened: size',
+  'broadened-industry': 'broadened: industry',
   override: 'hand-set',
 };
 
@@ -123,7 +132,7 @@ function createPeerSelector(deps) {
   async function select(target, acquirer) {
     const T = up(target);
     const A = up(acquirer);
-    const base = { target: T, acquirer: A, band: [BAND_LO, BAND_HI], dropped: [] };
+    const base = { target: T, acquirer: A, band: [BAND_LO, BAND_HI], wideBand: [WIDE_LO, WIDE_HI], dropped: [] };
     let cacheable = true;
     const decided = new Map(); // symbol → drop record (rebuilt into base.dropped at the end)
     const drop = (c, rule, detail) => { decided.set(c.symbol, { ticker: c.symbol, stage: c.stage, rule, detail: detail ?? null }); return false; };
@@ -152,7 +161,8 @@ function createPeerSelector(deps) {
     const tSicSpecific = !!tSic && !CATCH_ALL_SIC.has(tSic);
     base.sic3 = tSicSpecific ? tSic.slice(0, 3) : null;
 
-    const lo = BAND_LO * targetCap, hi = BAND_HI * targetCap;
+    // One screen at the WIDE band: the strict pass keeps 0.1×–10×; the size step (rule 4) may use 0.05×–20×.
+    const lo = WIDE_LO * targetCap, hi = WIDE_HI * targetCap;
     let universeRows;
     try { universeRows = await fmpUniverse(lo, hi); }
     catch (e) { cacheable = false; return noPeers(`FMP company screen unavailable (${e.message})`); }
@@ -168,8 +178,12 @@ function createPeerSelector(deps) {
     const seenSym = new Set();
     const seenCik = new Map(); // cik → first symbol considered
     const isOverride = !!overrides[T];
+    const inBand = (r) => r >= BAND_LO && r <= BAND_HI;
+    const inWide = (r) => r >= WIDE_LO && r <= WIDE_HI;
 
-    // ── Cheap checks: deal party, duplicate, SEC filer, US-listed in band (USD) ──
+    // ── Cheap checks: deal party, duplicate, SEC filer, US-listed, USD market cap ──
+    // Returns true when the candidate may go on. c.sizeWide marks one that is inside 0.05×–20× but outside 0.1×–10×
+    // (kept for the size step only). A hand-set name has no size test at all (rule 2b exemption).
     async function cheap(c) {
       if (seenSym.has(c.symbol)) return false; // the same ticker twice (stock-peer and EDGAR list): first source wins
       seenSym.add(c.symbol);
@@ -180,34 +194,45 @@ function createPeerSelector(deps) {
       if (seenCik.has(c.cik)) return drop(c, 'same-company', `same SEC registrant as ${seenCik.get(c.cik)} (one entry per company)`);
       seenCik.set(c.cik, c.symbol);
       const u = universe.get(c.symbol);
-      if (!u || posNum(u.marketCap) == null) {
-        // Say which test failed where it is cheap to know (stock-peers and overrides); an EDGAR-list name is simply
-        // absent from the screen of US-listed companies in the band.
-        if (c.stage.startsWith('edgar-')) return drop(c, 'not-in-screen', `not in FMP's screen of actively traded US-listed companies at ${BAND_LO}×–${BAND_HI}× (${fmtCapM(lo)}–${fmtCapM(hi)})`);
+      if (u && posNum(u.marketCap) != null) {
+        c.cap = u.marketCap; c.industry = u.industry || null; c.sector = u.sector || null;
+      } else {
+        // Not on the wide screen. An EDGAR-list name is simply absent from it; for a stock-peer or a hand-set name the
+        // FMP profile says which test failed (a hand-set name outside the band is still a candidate).
+        if (c.stage.startsWith('edgar-')) return drop(c, 'not-in-screen', `not in FMP's screen of actively traded US-listed companies at ${WIDE_LO}×–${WIDE_HI}× (${fmtCapM(lo)}–${fmtCapM(hi)})`);
         const p = await fmpProfile(c.symbol);
         if (!p) return drop(c, 'not-us-listed', 'no FMP profile');
         if (p.isActivelyTrading === false) return drop(c, 'not-actively-trading', 'FMP isActivelyTrading is false');
-        if (!['NYSE', 'NASDAQ', 'AMEX'].includes(String(p.exchange || '').toUpperCase())) return drop(c, 'not-us-listed', `listed on ${p.exchange || 'no exchange'}`);
+        if (!US_EXCHANGES.has(String(p.exchange || '').toUpperCase())) return drop(c, 'not-us-listed', `listed on ${p.exchange || 'no exchange'}`);
         const cap = posNum(p.marketCap);
         if (cap == null || (p.currency && p.currency !== 'USD')) return drop(c, 'no-market-cap', cap == null ? 'FMP returned no market cap' : `market cap in ${p.currency}, not USD`);
         const r = cap / targetCap;
-        if (r >= BAND_LO && r <= BAND_HI) return drop(c, 'not-in-screen', `profile cap ${r.toFixed(3)}× target, but absent from FMP's screen of actively traded US-listed companies`);
-        return drop(c, 'size-band', `${r.toFixed(3)}× target`);
+        if (c.stage !== 'override') {
+          if (inWide(r)) return drop(c, 'not-in-screen', `profile cap ${r.toFixed(3)}× target, but absent from FMP's screen of actively traded US-listed companies`);
+          return drop(c, 'size-band', `${r.toFixed(3)}× target`);
+        }
+        c.cap = cap; c.industry = p.industry || null; c.sector = p.sector || null;
       }
-      c.cap = u.marketCap;
       c.ratio = c.cap / targetCap;
-      if (c.ratio < BAND_LO || c.ratio > BAND_HI) return drop(c, 'size-band', `${c.ratio.toFixed(3)}× target`);
-      c.industry = u.industry || null;
-      c.sector = u.sector || null;
+      if (c.stage !== 'override') {
+        if (!inWide(c.ratio)) return drop(c, 'size-band', `${c.ratio.toFixed(3)}× target`);
+        c.sizeWide = !inBand(c.ratio);
+      }
       return true;
     }
 
     // ── Industry test (rule 2a) and tier (rule 3) ────────────────────────────
+    //   tier 0: in FMP's peer list AND same FMP industry
+    //   tier 1: same FMP industry AND same 4-digit SIC (not a catch-all)
+    //   tier 2: one of the two
+    //   tier 3: neither (dropped, unless hand-set or a widening step admits it)
     function classify(c) {
       c.indMatch = !!(base.industry && c.industry && c.industry === base.industry);
       c.sicMatch = !!(tSicSpecific && c.sic && c.sic === tSic);
-      c.tier = c.indMatch && c.sicMatch ? 0 : (c.indMatch || c.sicMatch ? 1 : 2);
-      c.source = c.stage === 'override' ? 'override' : (c.tier === 0 ? 'industry-sic' : c.indMatch ? 'industry' : 'sic');
+      c.inPeers = c.stage === 'fmp-peers';
+      c.tier = c.inPeers && c.indMatch ? 0 : (c.indMatch && c.sicMatch ? 1 : (c.indMatch || c.sicMatch ? 2 : 3));
+      c.source = c.stage === 'override' ? 'override'
+        : (['fmp-industry', 'industry-sic', c.indMatch ? 'industry' : 'sic', 'none'][c.tier]);
     }
     const dist = (c) => Math.abs(Math.log(c.ratio));
     const byRank = (a, b) => (a.tier - b.tier) || (dist(a) - dist(b)) || (a.symbol < b.symbol ? -1 : a.symbol > b.symbol ? 1 : 0);
@@ -230,7 +255,7 @@ function createPeerSelector(deps) {
         }
         const block = await registrationBlock(c.symbol);
         if (block) { drop(c, 'deregistered', `Form ${block.form} ${block.date}`); continue; }
-        if (kept.length >= MAX_PEERS) { drop(c, 'ranked-out', `passed every check except data, which was not checked; ${MAX_PEERS} closer-ranked peers already kept`); continue; }
+        if (kept.length >= MAX_PEERS) { drop(c, 'ranked-out', `passed every check except data, which was not checked; ${MAX_PEERS} higher-ranked peers already kept`); continue; }
         const d = await dataAvailable(c.symbol);
         const missing = ['price', 'shares', 'revenue'].filter((k) => !(d && d[k]));
         if (missing.length) {
@@ -248,6 +273,12 @@ function createPeerSelector(deps) {
       if (!c.sic) { c.sub = await submissionsFor(c.cik); c.sic = c.sub.sic; }
       return c;
     }
+    const listCands = (ciks, stage, sic) => [...new Set(ciks)].map((cik) => {
+      const tickers = tickersForCik(cik);
+      if (!tickers.length) return null; // no current ticker: not listed
+      const sym = tickers.find((t) => universe.has(t)) || tickers[0];
+      return { symbol: up(sym), stage, sic };
+    }).filter(Boolean).sort((a, b) => (a.symbol < b.symbol ? -1 : 1));
 
     // ── Rule 1: candidates ───────────────────────────────────────────────────
     let cands;
@@ -268,12 +299,7 @@ function createPeerSelector(deps) {
         try {
           const ciks = await sicCompanies(tSic);
           base.sicListCount = ciks.length;
-          sicCands = [...new Set(ciks)].map((cik) => {
-            const tickers = tickersForCik(cik);
-            if (!tickers.length) return null; // no current ticker: not listed
-            const sym = tickers.find((t) => universe.has(t)) || tickers[0];
-            return { symbol: up(sym), stage: 'edgar-sic', sic: tSic };
-          }).filter(Boolean).sort((a, b) => (a.symbol < b.symbol ? -1 : 1));
+          sicCands = listCands(ciks, 'edgar-sic', tSic);
         } catch (e) {
           cacheable = false;
           base.sicList = `EDGAR company list for SIC ${tSic} unavailable (${e.message}); FMP stock-peers only`;
@@ -288,15 +314,30 @@ function createPeerSelector(deps) {
     const passed = [];
     for (const c of cands) if (await cheap(c)) passed.push(c);
     for (const c of passed) { await withSic(c); classify(c); }
-    const strict = isOverride ? passed : passed.filter((c) => (c.tier < 2 ? true : drop(c, 'industry-mismatch',
-      `FMP industry ${c.industry || '—'} vs ${base.industry || '—'}; SIC ${c.sic || '—'} vs ${tSic || '—'}${tSic && !tSicSpecific ? ' (catch-all)' : ''}`)));
+    const strict = isOverride ? passed : passed.filter((c) => {
+      if (c.tier === 3) return drop(c, 'industry-mismatch', `FMP industry ${c.industry || '—'} vs ${base.industry || '—'}; SIC ${c.sic || '—'} vs ${tSic || '—'}${tSic && !tSicSpecific ? ' (catch-all)' : ''}`);
+      if (c.sizeWide) return drop(c, 'size-band', `${c.ratio.toFixed(3)}× target`);
+      return true;
+    });
     await evaluate(strict.sort(byRank));
 
-    // ── Rule 4: widen exactly one step ───────────────────────────────────────
+    // ── Rule 4: fewer than 3 → widen size, then the one industry step ────────
+    const broadened = [];
+    let sizeWidened = false;
     if (!isOverride && kept.length < MIN_PEERS) {
-      const nStrict = kept.length;
+      // 4a. Size: the industry/SIC matches between 0.05×–0.1× and 10×–20×.
+      const n0 = kept.length;
+      const sizePool = passed.filter((c) => c.tier < 3 && c.sizeWide);
+      sizePool.forEach((c) => { c.source = 'broadened-size'; decided.delete(c.symbol); });
+      await evaluate(sizePool.sort(byRank));
+      sizeWidened = true;
+      broadened.push({ kind: 'size', step: `size band ${WIDE_LO}×–${WIDE_HI}×`, why: `only ${n0} compan${n0 === 1 ? 'y' : 'ies'} matched within ${BAND_LO}×–${BAND_HI}×`, added: kept.length - n0 });
+    }
+    if (!isOverride && kept.length < MIN_PEERS) {
+      // 4b. Industry: one step, inside the widened size band.
+      const n1 = kept.length;
       let step, pool = [];
-      const mismatched = passed.filter((c) => c.tier === 2);
+      const mismatched = passed.filter((c) => c.tier === 3);
       if (tSicSpecific) {
         const sic3 = tSic.slice(0, 3);
         step = `3-digit SIC ${sic3}`;
@@ -308,12 +349,7 @@ function createPeerSelector(deps) {
           let ciks;
           try { ciks = await sicCompanies(code); }
           catch (e) { cacheable = false; base.sicList = `${base.sicList ? `${base.sicList}; ` : ''}EDGAR company list for SIC ${code} unavailable (${e.message})`; continue; }
-          for (const cik of [...new Set(ciks)]) {
-            const tickers = tickersForCik(cik);
-            if (!tickers.length) continue;
-            const sym = tickers.find((t) => universe.has(t)) || tickers[0];
-            extra.push({ symbol: up(sym), stage: 'edgar-sic3', sic: code });
-          }
+          extra.push(...listCands(ciks, 'edgar-sic3', code));
         }
         extra.sort((a, b) => (a.symbol < b.symbol ? -1 : 1));
         for (const c of extra) if (await cheap(c)) { classify(c); pool.push(c); }
@@ -323,15 +359,14 @@ function createPeerSelector(deps) {
         pool = mismatched.filter((c) => c.sector === base.sector && keywordOf(c.industry) === kw);
       }
       if (step) {
-        base.broadened = { step, why: `only ${nStrict} compan${nStrict === 1 ? 'y' : 'ies'} matched the target's FMP industry or 4-digit SIC` };
-        pool.forEach((c) => { c.tier = 3; c.source = 'broadened'; decided.delete(c.symbol); });
-        const before = kept.length;
-        await evaluate(pool.sort(byRank));
-        base.broadened.added = kept.length - before;
+        pool.forEach((c) => { c.source = 'broadened-industry'; decided.delete(c.symbol); });
+        await evaluate(pool.sort((a, b) => (dist(a) - dist(b)) || (a.symbol < b.symbol ? -1 : 1)));
+        broadened.push({ kind: 'industry', step, why: `only ${n1} compan${n1 === 1 ? 'y' : 'ies'} matched the target's FMP industry or 4-digit SIC`, added: kept.length - n1 });
       }
     }
+    if (broadened.length) base.broadened = broadened;
 
-    const screened = kept.map((c) => ({ ticker: c.symbol, source: c.source, stage: c.stage, ratio: +c.ratio.toFixed(4), sic: c.sic || null, industry: c.industry || null }));
+    const screened = kept.map((c) => ({ ticker: c.symbol, source: c.source, tier: c.tier, stage: c.stage, ratio: +c.ratio.toFixed(4), sic: c.sic || null, industry: c.industry || null }));
     const peers = kept.map((c) => c.symbol);
     const peerSources = Object.fromEntries(kept.map((c) => [c.symbol, c.source]));
     const label = isOverride ? 'override' : 'fmp';
@@ -341,17 +376,18 @@ function createPeerSelector(deps) {
         ? 'No comparable US-listed peers found'
         : `Only ${kept.length} compan${kept.length === 1 ? 'y' : 'ies'} passed the peer screen (need ${MIN_PEERS})`;
       return finish({ ...base, screened, peers, peerSources, source: (kept.length || isOverride) ? label : 'none', trust: 'untrusted',   // an emptied hand-set list is still hand-set
-        reason: `${head}: ${whyFew(decided, isOverride)}` });
+        reason: `${head}: ${whyFew(decided, isOverride, sizeWidened)}` });
     }
     return finish({ ...base, screened, peers, peerSources, source: label, trust: 'trusted', reason: null });
   }
 
   // One short clause naming what removed the candidates, most common rule first, up to 3 tickers each.
-  function whyFew(decided, isOverride) {
+  function whyFew(decided, isOverride, sizeWidened) {
+    const [blo, bhi] = sizeWidened ? [WIDE_LO, WIDE_HI] : [BAND_LO, BAND_HI];
     const TEXT = {
       'target-or-acquirer': 'the deal parties', 'not-sec-filer': 'not SEC filers', 'same-company': 'another class of a listed company',
-      'size-band': `outside ${BAND_LO}×–${BAND_HI}× the target's market cap`, 'not-us-listed': 'not US-listed', 'not-actively-trading': 'not trading',
-      'no-market-cap': 'no USD market cap', 'not-in-screen': `not US-listed and trading within ${BAND_LO}×–${BAND_HI}×`, 'industry-mismatch': 'a different FMP industry and SIC', 'no-recent-periodic-report': 'no periodic report in 12 months',
+      'size-band': `outside ${blo}×–${bhi}× the target's market cap`, 'not-us-listed': 'not US-listed', 'not-actively-trading': 'not trading',
+      'no-market-cap': 'no USD market cap', 'not-in-screen': `not US-listed and trading within ${WIDE_LO}×–${WIDE_HI}×`, 'industry-mismatch': 'a different FMP industry and SIC', 'no-recent-periodic-report': 'no periodic report in 12 months',
       'foreign-filer': 'foreign filers (20-F/40-F) not admitted', deregistered: 'deregistered', 'no-data': 'no price, share count or revenue',
     };
     const by = new Map();
@@ -378,4 +414,4 @@ function createPeerSelector(deps) {
   return { selectPeers, _select: async (t, a) => { const { cacheable, ...r } = await select(t, a); return r; } };
 }
 
-module.exports = { createPeerSelector, summarizeSubmissions, filerKind, keywordOf, SOURCE_LABEL, CATCH_ALL_SIC, BAND_LO, BAND_HI, MAX_PEERS, MIN_PEERS };
+module.exports = { createPeerSelector, summarizeSubmissions, filerKind, keywordOf, SOURCE_LABEL, CATCH_ALL_SIC, BAND_LO, BAND_HI, WIDE_LO, WIDE_HI, MAX_PEERS, MIN_PEERS };

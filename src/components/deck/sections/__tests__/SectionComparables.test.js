@@ -102,21 +102,23 @@ describe('fix 24: each peer is labeled with why it is a peer, in one footnote li
     const note = peerSourceNote(['RACE', 'PCAR', 'VIA', 'TDOC'], { RACE: 'industry-sic', PCAR: 'sic', VIA: 'industry', TDOC: 'override' }, null);
     expect(note).toBe('Peers: RACE (industry + SIC match); PCAR (SIC match); VIA (industry match); TDOC (hand-set)');
   });
-  test('a broadened peer names the step', () => {
-    expect(peerSourceNote(['P1', 'E7374'], { P1: 'industry-sic', E7374: 'broadened' }, { step: '3-digit SIC 737', why: 'only 1 company matched' }))
-      .toBe('Peers: P1 (industry + SIC match); E7374 (broadened: 3-digit SIC 737)');
+  test('a broadened peer names its step: size, or industry with the step taken', () => {
+    const b = [{ kind: 'size', step: 'size band 0.05×–20×', why: 'only 1 company matched within 0.1×–10×' }, { kind: 'industry', step: '3-digit SIC 737', why: 'only 2 companies matched' }];
+    expect(peerSourceNote(['P1', 'S1', 'E7374'], { P1: 'fmp-industry', S1: 'broadened-size', E7374: 'broadened-industry' }, b))
+      .toBe('Peers: P1 (FMP peer + industry match); S1 (broadened: size); E7374 (broadened: industry (3-digit SIC 737))');
   });
   test('only peers actually shown are labeled; nothing to label → no note', () => {
     expect(peerSourceNote(['GSAT'], { GSAT: 'industry-sic', VSAT: 'sic' }, null)).toBe('Peers: GSAT (industry + SIC match)');
     expect(peerSourceNote([], { GSAT: 'sic' }, null)).toBeNull();
     expect(peerSourceNote(['GSAT'], null, null)).toBeNull();
   });
-  test('the footnote line adds why the screen widened and, under 3 peers, the reason', () => {
-    const b = { step: '3-digit SIC 371', why: 'only 2 companies matched the target\'s FMP industry or 4-digit SIC' };
-    expect(peerFootnote(['RACE', 'PCAR', 'X'], { RACE: 'industry-sic', PCAR: 'sic', X: 'broadened' }, b, null))
-      .toBe('Peers: RACE (industry + SIC match); PCAR (SIC match); X (broadened: 3-digit SIC 371). Broadened to 3-digit SIC 371 because only 2 companies matched the target\'s FMP industry or 4-digit SIC');
-    expect(peerFootnote(['RACE', 'PCAR'], { RACE: 'industry-sic', PCAR: 'sic' }, b, 'Only 2 companies passed the peer screen (need 3): 3 outside 0.2×–5× the target\'s market cap (F, HMC, TSLA)'))
-      .toBe('Peers: RACE (industry + SIC match); PCAR (SIC match). Only 2 companies passed the peer screen (need 3): 3 outside 0.2×–5× the target\'s market cap (F, HMC, TSLA)');
+  test('the footnote line adds why each widening step ran and, under 3 peers, the reason', () => {
+    const b = [{ kind: 'size', step: 'size band 0.05×–20×', why: 'only 2 companies matched within 0.1×–10×', added: 1 }, { kind: 'industry', step: '3-digit SIC 371', why: 'only 3 companies matched', added: 0 }];
+    expect(peerFootnote(['F', 'HMC', 'X'], { F: 'fmp-industry', HMC: 'fmp-industry', X: 'broadened-size' }, b, null))
+      .toBe('Peers: F, HMC (FMP peer + industry match); X (broadened: size). Broadened to size band 0.05×–20× because only 2 companies matched within 0.1×–10×');
+    expect(peerFootnote(['RACE', 'PCAR'], { RACE: 'industry-sic', PCAR: 'sic' }, b, 'Only 2 companies passed the peer screen (need 3): 3 outside 0.05×–20× the target\'s market cap (A, B, C)'))
+      .toBe('Peers: RACE (industry + SIC match); PCAR (SIC match). Only 2 companies passed the peer screen (need 3): 3 outside 0.05×–20× the target\'s market cap (A, B, C)');
     expect(peerFootnote([], {}, null, null)).toBeNull();
   });
+
 });

@@ -385,7 +385,7 @@ export function buildStrategicSection(target, acquirer, deal) {
 // US G-SIBs (Globally Systemically Important Banks) — stable list per FSB annual designation.
 // Mergers between two G-SIBs face near-certain regulatory rejection under Dodd-Frank and
 // Federal Reserve concentration limits.
-export const US_GSIBS = ['JPM', 'BAC', 'C', 'WFC', 'GS', 'MS', 'BK', 'STT'];
+export const US_GSIBS = ['JPM', 'BAC', 'C', 'WFC', 'GS', 'MS', 'BNY', 'STT'];   // BNY: Bank of New York Mellon's ticker (was BK; Fix 24)
 export const isGSIB = (ticker) => US_GSIBS.includes(ticker?.toUpperCase());
 
 // Pass the OBJECTS (not target.companyType strings) so isFinancial's SIC fallback fires — banks that
